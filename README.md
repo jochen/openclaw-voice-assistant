@@ -1,70 +1,72 @@
-# openclaw-voice-assist
+# openclaw-voice-assistant
 
-Wakeword-gesteuerter Sprachassistent für Raspberry Pi. Verbindet lokale Spracheingabe mit [OpenClaw](https://github.com/openclaw/openclaw) als KI-Backend und [Speaches](https://github.com/speaches-ai/speaches) für GPU-beschleunigtes STT/TTS.
+> [Deutsche Version](README.de.md)
+
+Wakeword-driven voice assistant for Raspberry Pi. Connects local speech input to [OpenClaw](https://github.com/openclaw/openclaw) as the AI backend and [Speaches](https://github.com/speaches-ai/speaches) for GPU-accelerated STT/TTS.
 
 ## Pipeline
 
 ```
-Mikrofon → openWakeWord ("hey jarvis")
-  → WebRTC VAD + Aufnahme
-  → STT: Speaches /v1/audio/transcriptions  (Fallback: faster-whisper lokal)
-  → Bestätigung vorlesen ("Ich habe verstanden…") — paralleler Thread
-  → POST /v1/responses → OpenClaw (vollständiger Agentic Loop)
-  → Antwort Satz für Satz via TTS: Speaches /v1/audio/speech  (Fallback: Piper lokal)
-  → Antwort + Anfrage per Telegram spiegeln
+Microphone → openWakeWord ("hey jarvis")
+  → WebRTC VAD + recording
+  → STT: Speaches /v1/audio/transcriptions  (fallback: faster-whisper local)
+  → Confirmation TTS ("I understood…") — parallel thread
+  → POST /v1/responses → OpenClaw (full agentic loop incl. tool calls)
+  → Reply TTS sentence by sentence: Speaches /v1/audio/speech  (fallback: Piper local)
+  → Mirror query + reply to Telegram
 ```
 
-## Voraussetzungen
+## Requirements
 
-- Raspberry Pi (getestet: Pi 4/5, ARM64, Raspberry Pi OS Bookworm)
-- **Python 3.11.9** (exakt — `openwakeword` + `tflite-runtime` erfordern diese Version, siehe unten)
-- [OpenClaw](https://openclaw.dev) läuft lokal auf `http://127.0.0.1:18789`
-- [Speaches](https://github.com/speaches-ai/speaches) GPU-Container erreichbar (Standard: `http://192.168.111.126:8000`)
-- Mikrofon mit ALSA-Unterstützung
-- Optional: WLED-Controller für LED-Status, Piper TTS für lokalen Fallback
+- Raspberry Pi (tested: Pi 4/5, ARM64, Raspberry Pi OS Bookworm)
+- **Python 3.11.9** (exact — `openwakeword` + `tflite-runtime` require this version on ARM64, see below)
+- [OpenClaw](https://openclaw.dev) running locally on `http://127.0.0.1:18789`
+- [Speaches](https://github.com/speaches-ai/speaches) GPU container reachable (default: `http://192.168.111.126:8000`)
+- Microphone supported by ALSA
+- Optional: WLED controller for LED status, Piper TTS for local fallback
 
 ## Installation
 
-### 1. Repository klonen
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/jochen/openclaw-voice-assistant.git
 cd openclaw-voice-assistant
 ```
 
-### 2. Python 3.11.9 via pyenv installieren
+### 2. Install Python 3.11.9 via pyenv
 
-`openwakeword` und `tflite-runtime` sind auf neueren Python-Versionen auf ARM64 nicht verfügbar. Daher wird **exakt Python 3.11.9** benötigt.
+`openwakeword` and `tflite-runtime` are not available for newer Python versions on ARM64. **Exactly Python 3.11.9** is required.
 
 ```bash
-# pyenv installieren (falls noch nicht vorhanden)
+# Install pyenv (if not already present)
 curl https://pyenv.run | bash
 
-# Shell-Integration (in ~/.bashrc oder ~/.zshrc eintragen):
+# Add to ~/.bashrc or ~/.zshrc:
 export PYENV_ROOT="$HOME/.pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init -)"
 
-# Python 3.11.9 bauen (Buildabhängigkeiten vorher installieren)
+# Install build dependencies
 sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
   libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
 
 pyenv install 3.11.9
 ```
 
-Das Repo enthält eine `.python-version`-Datei — `pyenv` aktiviert 3.11.9 automatisch sobald du in das Verzeichnis wechselst.
+The repo includes a `.python-version` file — pyenv activates 3.11.9 automatically when you enter the directory.
 
-### 3. Venv anlegen und Dependencies installieren
+### 3. Create venv and install dependencies
 
 ```bash
-# Im Projektverzeichnis (pyenv aktiviert automatisch 3.11.9)
+# Inside the project directory (pyenv activates 3.11.9 automatically)
 python -m venv ~/ow-venv
 source ~/ow-venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-### 3. openwakeword-Modelle herunterladen
+### 4. Download openWakeWord models
 
 ```bash
 python -c "
@@ -73,81 +75,82 @@ Model(wakeword_models=['hey_jarvis'], inference_framework='tflite')
 "
 ```
 
-Modelle landen unter `/tmp/ow_models_min` (konfigurierbar im Script).
+Models are downloaded to `/tmp/ow_models_min` (configurable in the script).
 
-### 4. Konfiguration anlegen
+### 5. Create configuration
 
 ```bash
 cp config.example.yaml config.yaml
 ```
 
-`config.yaml` editieren — mindestens diese Felder für dein Profil ausfüllen:
+Edit `config.yaml` — fill in at least these fields for your profile:
 
-| Feld | Beschreibung |
+| Field | Description |
 |---|---|
-| `device_index` | ALSA-Mikrofon-Index (`arecord -l` zeigt verfügbare Geräte) |
-| `rate_in` | Samplerate des Mikrofons (48000 oder 16000) |
-| `speaches_base` | URL des Speaches-Containers |
-| `openclaw_token` | API-Token aus OpenClaw-Dashboard |
-| `openclaw_session` | Session-Key (siehe unten) |
-| `telegram_bot_token` | Telegram Bot Token von @BotFather |
-| `telegram_chat_id` | Telegram Gruppen-ID (mit `-` prefix) |
+| `device_index` | ALSA microphone index (`arecord -l` lists available devices) |
+| `rate_in` | Microphone sample rate (48000 or 16000) |
+| `speaches_base` | URL of the Speaches container |
+| `openclaw_token` | API token from the OpenClaw dashboard |
+| `openclaw_session` | Session key (see below) |
+| `telegram_bot_token` | Telegram bot token from @BotFather |
+| `telegram_chat_id` | Telegram group ID (with `-` prefix) |
+| `wled_host` | Hostname or IP of the WLED controller |
 
-## OpenClaw-Integration
+## OpenClaw Integration
 
-### Session-Key
+### Session Key
 
-Der `openclaw_session` bestimmt, **in welcher Session** Voice-Anfragen landen. Damit Voice und Telegram-Chat denselben Kontext teilen, muss dieser Key mit der Session-Key deiner Telegram-Gruppe übereinstimmen.
+`openclaw_session` determines **which session** voice requests land in. For voice and Telegram chat to share the same context, this key must match the session key of your Telegram group.
 
-Den Key findest du im OpenClaw-Dashboard unter **Sessions** oder in:
+Find it in the OpenClaw dashboard under **Sessions** or in:
 ```
 ~/.openclaw/agents/main/sessions/sessions.json
 ```
 
-Typisches Format: `agent:main:telegram:group:-1003XXXXXXXXX`
+Typical format: `agent:main:telegram:group:-1003XXXXXXXXX`
 
-**Warum das wichtig ist:** Das Script setzt den HTTP-Header `x-openclaw-session-key`, der in OpenClaw Vorrang vor dem automatisch generierten Namespace hat. Ohne diesen Header würde OpenClaw einen separaten `openresponses-user:`-Namespace anlegen und Voice-Turns wären vom Chat-Verlauf getrennt.
+**Why this matters:** The script sets the HTTP header `x-openclaw-session-key`, which takes precedence over OpenClaw's auto-generated namespace. Without this header, OpenClaw creates a separate `openresponses-user:` namespace and voice turns are isolated from the chat history.
 
-### AGENTS.md konfigurieren
+### AGENTS.md configuration
 
-Für korrektes Voice-Verhalten ergänze in `~/.openclaw/workspace/AGENTS.md` die Sektion `## Sprachbefehle (Voice)`. Vorlage:
+For correct voice behaviour, add a `## Voice Commands` section to `~/.openclaw/workspace/AGENTS.md`:
 
 ```markdown
-## Sprachbefehle (Voice)
+## Voice Commands
 
-Nachrichten die mit 🎤 beginnen sind Sprachbefehle via Spracherkennung.
-Für diese Nachrichten gelten STRENGE Regeln — keine Ausnahmen:
+Messages starting with 🎤 are voice commands from speech recognition.
+Strict rules apply — no exceptions:
 
-- Antworte IMMER auf Deutsch
-- Maximal 2-3 kurze Sätze
-- Absolut kein Markdown, keine Listen, keine Nummerierungen
-- Keine Emojis
-- Natürliche gesprochene Sprache
+- Always respond in the user's language
+- Maximum 2-3 short sentences
+- No markdown, no lists, no numbering
+- No emojis
+- Natural spoken language — imagine speaking, not writing
 
-### Voice → Chat Übergänge
+### Voice → Chat transitions
 
-Wenn nach einer 🎤-Nachricht eine normale Chat-Nachricht folgt (zeitnah, thematisch verwandt),
-ist das eine Fortsetzung oder Korrektur des letzten Voice-Tasks:
+If a regular chat message follows a 🎤 message (within a few minutes, same topic),
+treat it as a continuation or correction of the last voice task:
 
-1. Original-Task aus dem Kontext rekonstruieren
-2. Task mit der Korrektur neu ausführen — vollständig
-3. Kein Meta-Kommentar über den eigenen Fehler
-4. Für Chat-Antworten gilt die 2-3-Satz-Beschränkung nicht
+1. Reconstruct the original task from context
+2. Re-execute the task with the correction applied — fully
+3. No meta-commentary about your own mistake
+4. The 2-3 sentence limit does not apply to chat replies
 ```
 
-## Speaches-Integration
+## Speaches Integration
 
-Speaches läuft als Docker-Container mit OpenAI-kompatibler API.
+Speaches runs as a Docker container with an OpenAI-compatible API.
 
-### STT (Sprache → Text)
+### STT (speech → text)
 
 ```
 POST {speaches_base}/v1/audio/transcriptions
-model: guillaumekln/faster-whisper-medium   # oder anderes Modell
+model: guillaumekln/faster-whisper-medium
 language: de
 ```
 
-### TTS (Text → Sprache)
+### TTS (text → speech)
 
 ```
 POST {speaches_base}/v1/audio/speech
@@ -155,53 +158,56 @@ model: speaches-ai/piper-de_DE-thorsten-medium
 voice: de_DE-thorsten-medium
 ```
 
-Beide Dienste haben einen 60-Sekunden-Cooldown nach Verbindungsfehlern bevor ein Retry versucht wird (`SpeachesState`-Klasse im Script). Bei Ausfall greift automatisch der lokale Fallback:
-- STT: `faster-whisper` (Modell `small`, läuft direkt auf dem Pi)
+Both services have a 60-second cooldown after connection failures before retrying (`SpeachesState` class). On failure the local fallback kicks in automatically:
+- STT: `faster-whisper` (model `small`, runs on the Pi)
 - TTS: Piper (`~/.local/share/piper/de_DE-thorsten-low.onnx`)
 
-## Piper TTS installieren (lokaler Fallback)
+## Piper TTS (local fallback)
 
 ```bash
 pip install piper-tts
 
-# Deutsches Modell herunterladen
 mkdir -p ~/.local/share/piper
 cd ~/.local/share/piper
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/low/de_DE-thorsten-low.onnx
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/low/de_DE-thorsten-low.onnx.json
 ```
 
-## Profile
+## Profiles
 
-Zwei Profile sind vorkonfiguriert (in `config.yaml`). Das aktive Profil wird automatisch per Hostname erkannt oder via Umgebungsvariable gesetzt:
+Two profiles are pre-configured in `config.yaml`. The active profile is detected automatically by hostname or set via environment variable:
 
 ```bash
 GASTON_PROFILE=openclaw python voice_assistant.py
 ```
 
-| Profil | Hostname-Match | Mikrofon | Besonderheit |
+| Profile | Hostname match | Microphone | Notes |
 |---|---|---|---|
-| `clawdpi` | `clawdpi*` | Index 1, 48kHz (resampelt) | Hauptgerät |
-| `openclaw` | `openclaw*` | Index 0, 16kHz nativ | Zweiter Pi |
+| `clawdpi` | `clawdpi*` | Index 1, 48kHz (resampled) | Primary device |
+| `openclaw` | `openclaw*` | Index 0, 16kHz native | Second Pi |
 
-## Starten
+## Running
 
 ```bash
 source ~/ow-venv/bin/activate
 python voice_assistant.py
 ```
 
-Das Script erkennt selbst ob es im richtigen Venv läuft und startet sich bei Bedarf neu.
+The script detects whether it is running inside the correct venv and re-execs itself if needed.
 
-## LED-Status (WLED)
+## LED Status (WLED)
 
-| LED | Farbe | Zustand |
+| LED | Color | State |
 |---|---|---|
-| 0 | Blau | Bereit, warte auf Wakeword |
-| 1 | Grün | Wakeword erkannt, höre zu |
-| 2 | Gelb | STT verarbeitet |
-| 3 | Rot | Kurze Pause nach Aufnahme |
-| 4 | Lila | Warte auf OpenClaw-Antwort |
-| 5 | Cyan | Liest Antwort vor |
+| 0 | Blue | Ready, waiting for wakeword |
+| 1 | Green | Wakeword detected, recording |
+| 2 | Yellow | STT processing |
+| 3 | Red | Short pause after recording |
+| 4 | Purple | Waiting for OpenClaw response |
+| 5 | Cyan | Speaking reply |
 
-WLED-Controller: `~/.openclaw/workspace/wled/wled_controller.py`
+WLED controller: `wled_controller.py` — host configured via `wled_host` in `config.yaml`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
