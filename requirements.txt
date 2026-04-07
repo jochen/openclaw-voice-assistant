@@ -1,0 +1,16 @@
+# Core
+pyaudio==0.2.14
+numpy==1.26.4
+scipy==1.17.1
+webrtcvad-wheels==2.0.14
+PyYAML==6.0.3
+requests==2.32.5
+
+# Wake word detection
+openwakeword==0.6.0
+tflite-runtime==2.14.0
+onnxruntime==1.24.3
+
+# STT fallback (local)
+faster-whisper==1.2.1
+ctranslate2==4.7.1
