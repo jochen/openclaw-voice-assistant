@@ -1,0 +1,53 @@
+# Voice Assistant - Profil-Konfiguration
+# Kopiere diese Datei nach config.yaml und trage deine Werte ein.
+# config.yaml ist in .gitignore und wird nie eingecheckt (enthält Secrets).
+
+profiles:
+  # Profil-Name entspricht Hostname-Substring (lowercase) oder GASTON_PROFILE env var
+  clawdpi:
+    # Audio
+    device_index: 1          # ALSA-Geräteindex (arecord -l)
+    rate_in: 48000            # Mikrofon-Samplerate; wird intern auf 16kHz resampelt
+    resample: true            # true = rate_in → 16k resampeln
+
+    # Speaches GPU-Container (OpenAI-kompatibler STT/TTS-Server)
+    speaches_base: "http://192.168.111.126:8000"
+    speaches_stt_model: "guillaumekln/faster-whisper-medium"
+    speaches_tts_model: "speaches-ai/piper-de_DE-thorsten-medium"
+    speaches_tts_voice: "de_DE-thorsten-medium"
+
+    # OpenClaw (lokale KI-Instanz)
+    openclaw_token: "DEIN_TOKEN_HIER"
+    openclaw_session: "agent:main:telegram:group:DEINE_CHAT_ID"
+
+    # Telegram (für Spiegelung von Voice-Anfragen und Antworten)
+    telegram_bot_token: "DEIN_BOT_TOKEN_HIER"
+    telegram_chat_id: "-DEINE_CHAT_ID"
+
+    # TTS-Prefix (leerer String = keiner; z.B. "hm " für natürlicheres Sprechen)
+    wled_host: "wled.local"       # Hostname/IP des WLED-Controllers
+    tts_prefix: ""
+
+  openclaw:
+    device_index: 0
+    rate_in: 16000            # Mikrofon liefert direkt 16kHz, kein Resample nötig
+    resample: false
+
+    speaches_base: "http://192.168.111.126:8000"
+    speaches_stt_model: "xkeyC/whisper-large-v3-turbo-gguf"
+    speaches_tts_model: "speaches-ai/piper-de_DE-thorsten_emotional-medium"
+    speaches_tts_voice: "de_DE-thorsten_emotional-medium"
+
+    openclaw_token: "DEIN_TOKEN_HIER"
+    openclaw_session: "agent:main:telegram:group:DEINE_CHAT_ID"
+
+    telegram_bot_token: "DEIN_BOT_TOKEN_HIER"
+    telegram_chat_id: "-DEINE_CHAT_ID"
+
+    wled_host: "wled.local"
+    tts_prefix: "hm "
+
+# Hostname-Zuordnung: Welcher Hostname-Substring → welches Profil
+hostname_map:
+  clawdpi: clawdpi
+  openclaw: openclaw
