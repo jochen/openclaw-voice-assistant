@@ -116,9 +116,10 @@ print(f"🖥️  Profil: {PROFILE_NAME} (Hostname: {socket.gethostname()})")
 # ===========================================================================
 
 # Audio
-DEVICE_INDEX  = CFG["device_index"]
-RATE_IN       = CFG["rate_in"]
-DO_RESAMPLE   = CFG["resample"]
+DEVICE_INDEX     = CFG["device_index"]
+PLAYBACK_DEVICE  = CFG.get("playback_device", None)
+RATE_IN          = CFG["rate_in"]
+DO_RESAMPLE      = CFG["resample"]
 
 # Speaches
 SPEACHES_BASE        = CFG["speaches_base"]
@@ -334,8 +335,11 @@ def is_speech_chunk(audio_16: np.ndarray) -> bool:
     return result
 
 def play_wav(path: str):
-    subprocess.run(["aplay", "-q", path],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = ["aplay", "-q"]
+    if PLAYBACK_DEVICE:
+        cmd += ["-D", PLAYBACK_DEVICE]
+    cmd.append(path)
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def play_ja():
     if os.path.exists(PIPER_OUT):
