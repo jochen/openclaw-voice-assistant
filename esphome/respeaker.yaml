@@ -1,0 +1,258 @@
+# ESPHome-Firmware für ReSpeaker XVF3800 + XIAO ESP32-S3
+# Wird vom OpenClaw Voice Assistant über ESPHome Native API (Port 6053) gesteuert.
+# Kein Home Assistant erforderlich — Python-Client nutzt aioesphomeapi direkt.
+#
+# Flashen:
+#   cd /home/pi/openclaw_voice_assist
+#   esphome-venv/bin/esphome run esphome/respeaker.yaml --device /dev/ttyACM0
+#
+# Nach dem ersten Flash: WLAN automatisch via secrets.yaml, kein Captive Portal nötig.
+#
+# Wakeword-Modell: "okay_nabu" (Standard).
+# Eigene Wakewords: https://github.com/kahrendt/microWakeWord/releases
+
+substitutions:
+  device_name: respeaker-openclaw
+  friendly_name: "ReSpeaker OpenClaw"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.4.0
+  on_boot:
+    - priority: -100
+      then:
+        - script.execute: control_leds
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: "y"
+      CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY: "y"
+      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  reboot_timeout: 10min
+  on_connect:
+    - script.execute: control_leds
+  on_disconnect:
+    - script.execute: control_leds
+
+logger:
+  level: INFO
+  logs:
+    i2s_audio: WARN
+    respeaker_xvf3800: INFO
+    micro_wake_word: INFO
+    voice_assistant: INFO
+
+# ESPHome Native API — darüber spricht der Python-Client (aioesphomeapi, Port 6053)
+api:
+  # encryption:
+  #   key: !secret api_encryption_key  # aktivieren wenn aioesphomeapi encryption_key gesetzt
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+i2c:
+  - id: internal_i2c
+    sda: GPIO5
+    scl: GPIO6
+    scan: true
+    frequency: 100kHz
+
+# I2S-Audio — LRCLK/BCLK werden von XIOS XVF3800 als Master getrieben
+i2s_audio:
+  - id: i2s_output
+    i2s_lrclk_pin:
+      number: GPIO7
+      allow_other_uses: true
+    i2s_bclk_pin:
+      number: GPIO8
+      allow_other_uses: true
+
+  - id: i2s_input
+    i2s_lrclk_pin:
+      number: GPIO7
+      allow_other_uses: true
+    i2s_bclk_pin:
+      number: GPIO8
+      allow_other_uses: true
+
+microphone:
+  - platform: i2s_audio
+    id: i2s_mics
+    i2s_din_pin: GPIO43
+    adc_type: external
+    pdm: false
+    sample_rate: 48000
+    bits_per_sample: 32bit
+    i2s_mode: secondary
+    i2s_audio_id: i2s_input
+    channel: stereo
+
+speaker:
+  - platform: i2s_audio
+    id: i2s_speaker
+    sample_rate: 48000
+    i2s_mode: secondary
+    i2s_dout_pin: GPIO44
+    bits_per_sample: 32bit
+    i2s_audio_id: i2s_output
+    dac_type: external
+    channel: stereo
+    timeout: never
+    buffer_duration: 100ms
+    audio_dac: aic3104_dac
+
+  # Resampler damit voice_assistant TTS (16 kHz) zum 48-kHz-Speaker passt
+  - platform: resampler
+    id: tts_resampling_speaker
+    output_speaker: i2s_speaker
+    sample_rate: 48000
+    bits_per_sample: 16
+
+audio_dac:
+  - platform: aic3104
+    id: aic3104_dac
+    i2c_id: internal_i2c
+
+external_components:
+  # Gepatchtés i2s_audio mit Respeaker-Mic-Unterstützung
+  - source:
+      type: git
+      url: https://github.com/formatBCE/esphome
+      ref: respeaker_microphone
+    components:
+      - i2s_audio
+    refresh: 0s
+  # ReSpeaker XVF3800 Komponente (I2C-Steuerung: Mute, LED, Firmware-Update)
+  - source:
+      type: git
+      url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
+      ref: main
+    components:
+      - respeaker_xvf3800
+      - aic3104
+    refresh: 0s
+
+# XVF3800-DSP über I2C — steuert Mute, LED-Ring und hält Firmware aktuell
+respeaker_xvf3800:
+  id: respeaker
+  address: 0x2C
+  mute_switch:
+    id: mic_mute_switch
+    name: "Microphone Mute"
+    update_interval: 1s
+  dfu_version:
+    name: "DSP Firmware Version"
+    update_interval: 120s
+  led_beam_sensor:
+    name: "Voice Direction"
+    id: beam_direction
+    internal: true
+  # XVF3800-Firmware automatisch aktuell halten
+  firmware:
+    url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration/raw/refs/heads/main/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
+    version: "1.0.7"
+    md5: 043a848f544ff2c7265ac19685daf5de
+
+micro_wake_word:
+  id: mww
+  microphone:
+    microphone: i2s_mics
+    channels: 1
+  stop_after_detection: false
+  models:
+    # "okay nabu" — Standard-Wakeword, läuft vollständig auf dem ESP
+    # Eigene Modelle: https://github.com/kahrendt/microWakeWord/releases
+    - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
+      id: okay_nabu
+
+# voice_assistant — stellt das Audio-Streaming-Protokoll bereit, das
+# aioesphomeapi auf dem Pi via subscribe_voice_assistant() nutzt.
+# Kein Home Assistant nötig — der Python-Client übernimmt STT/TTS/OpenClaw.
+voice_assistant:
+  id: va
+  microphone:
+    microphone: i2s_mics
+    channels: 1
+  speaker: tts_resampling_speaker
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  on_wake_word_detected:
+    - script.execute: led_listening
+  on_listening:
+    - script.execute: led_listening
+  on_stt_vad_end:
+    - script.execute: led_thinking
+  on_tts_start:
+    - script.execute: led_replying
+  on_end:
+    - script.execute: led_idle
+  on_error:
+    - script.execute: led_idle
+
+# --- LED-Steuerung ---
+globals:
+  - id: va_phase
+    type: int
+    restore_value: no
+    initial_value: '0'
+    # 0=idle, 1=listening, 2=thinking, 3=replying
+
+script:
+  - id: control_leds
+    mode: restart
+    then:
+      - lambda: |-
+          std::array<uint32_t, 12> colors;
+          int phase = id(va_phase);
+          uint32_t col = 0x000000;
+          if (phase == 0) col = 0x000050;        // Blau — idle
+          else if (phase == 1) col = 0x005000;   // Grün — listening
+          else if (phase == 2) col = 0x503C00;   // Gelb — thinking
+          else if (phase == 3) col = 0x003C3C;   // Cyan — replying
+          for (auto& c : colors) c = col;
+          id(respeaker).set_led_ring(colors.data());
+
+  - id: led_idle
+    then:
+      - lambda: id(va_phase) = 0;
+      - script.execute: control_leds
+
+  - id: led_listening
+    then:
+      - lambda: id(va_phase) = 1;
+      - script.execute: control_leds
+
+  - id: led_thinking
+    then:
+      - lambda: id(va_phase) = 2;
+      - script.execute: control_leds
+
+  - id: led_replying
+    then:
+      - lambda: id(va_phase) = 3;
+      - script.execute: control_leds

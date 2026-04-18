@@ -1,4 +1,7 @@
 config.yaml
+esphome/secrets.yaml
+esphome/.esphome/
+esphome-venv/
 ow-venv/
 __pycache__/
 *.pyc
