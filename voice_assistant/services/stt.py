@@ -46,6 +46,9 @@ class SpeachesStt:
             f'Content-Disposition: form-data; name="language"\r\n\r\n'
             f"de\r\n"
             f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="response_format"\r\n\r\n'
+            f"verbose_json\r\n"
+            f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
             f"Content-Type: audio/wav\r\n\r\n"
         ).encode() + wav_bytes + f"\r\n--{boundary}--\r\n".encode()
@@ -59,9 +62,19 @@ class SpeachesStt:
         try:
             with urllib.request.urlopen(req, timeout=SPEACHES_TIMEOUT) as resp:
                 result = json.loads(resp.read())
-                text = result.get("text", "").strip()
-                self.state.mark_stt_ok()
-                return text if text else None
+
+            # Halluzinations-Filter: no_speech_prob über alle Segmente mitteln
+            segments = result.get("segments", [])
+            if segments:
+                avg_no_speech = sum(s.get("no_speech_prob", 0.0) for s in segments) / len(segments)
+                if avg_no_speech > 0.6:
+                    print(f"⚠️  STT verworfen (no_speech_prob={avg_no_speech:.2f}) — wahrscheinlich Halluzination")
+                    self.state.mark_stt_ok()
+                    return None
+
+            text = result.get("text", "").strip()
+            self.state.mark_stt_ok()
+            return text if text else None
         except urllib.error.HTTPError as e:
             body_err = e.read().decode(errors="replace")
             print(f"⚠️  Speaches STT HTTP {e.code}: {body_err[:120]}")

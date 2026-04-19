@@ -126,7 +126,16 @@ class RespeakerClient:
             noise_psk=self._cfg.encryption_key or None,
         )
         log.info("Verbinde mit ReSpeaker %s:%d …", self._cfg.host, self._cfg.port)
-        await self._api.connect(login=True)
+
+        done: asyncio.Future = asyncio.get_event_loop().create_future()
+
+        async def _on_stop(expected: bool) -> None:
+            if not done.done():
+                done.set_exception(
+                    ConnectionError(f"API-Verbindung getrennt (expected={expected})")
+                )
+
+        await self._api.connect(login=True, on_stop=_on_stop)
         log.info("ReSpeaker verbunden")
 
         entities, _ = await self._api.list_entities_services()
@@ -184,7 +193,8 @@ class RespeakerClient:
 
         await asyncio.sleep(2)
         await self._press_start_button()
-        await asyncio.Future()  # run forever
+
+        await done  # bricht aus wenn _on_stop feuert (Verbindungsabbruch)
 
     async def _press_start_button(self) -> None:
         if self._api and self._button_key is not None:
