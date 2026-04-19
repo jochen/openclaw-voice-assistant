@@ -61,7 +61,7 @@ def _make_audio(profile: Profile):
 def _make_wakeword(profile: Profile):
     if profile.mode == "respeaker":
         return RespeakerWakeword(profile.respeaker)
-    return OpenWakewordEngine("hey jarvis")
+    return OpenWakewordEngine("hey_jarvis")
 
 
 def _make_leds(profile: Profile) -> LedDirector:
@@ -69,7 +69,7 @@ def _make_leds(profile: Profile) -> LedDirector:
     if profile.leds.wled_enabled:
         sinks.append(WledLeds(profile.leds.wled_host, enabled=True))
     if profile.leds.respeaker_ring_enabled and profile.mode == "respeaker":
-        sinks.append(RespeakerRing(enabled=True))
+        sinks.append(RespeakerRing(profile.respeaker, enabled=True))
     return LedDirector(*sinks)
 
 
@@ -121,7 +121,7 @@ def run() -> None:
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)
     print("🔧 Initialisiere WebRTC VAD...")
-    vad = webrtcvad.Vad(1)
+    vad = webrtcvad.Vad(3)
     print("✅ WebRTC VAD bereit")
 
     # --- Services zusammenstecken ---
@@ -144,6 +144,7 @@ def run() -> None:
     recorded_chunks: list = []
     silence_counter = 0
     speech_detected = False
+    wake_hits = 0  # Debounce: aufeinanderfolgende Frames über Threshold
 
     print("\n🎤 Bereit – warte auf 'hey jarvis'...\n")
 
@@ -155,13 +156,18 @@ def run() -> None:
             # --- LISTENING ---
             if state == STATE_LISTENING:
                 score = wakeword.feed(audio_16)
-                if score > 0.5:
+                if score > 0.65:
+                    wake_hits += 1
+                else:
+                    wake_hits = 0
+                if wake_hits >= 2:
                     print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}")
                     leds.clear()
                     leds.single(1, 0, 255, 0)
                     if os.path.exists(PIPER_OUT):
                         print("🔊 Spiele Ja? ...")
                         audio_sink.play_wav(PIPER_OUT)
+                    wake_hits = 0
                     wakeword.reset()
                     audio_source.flush()
                     state = STATE_RECORDING

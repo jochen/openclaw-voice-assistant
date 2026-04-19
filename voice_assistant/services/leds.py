@@ -41,20 +41,55 @@ class WledLeds:
 
 
 class RespeakerRing:
-    """Platzhalter für den LED-Ring am ReSpeaker (ESPHome).
+    """LED-Ring am ReSpeaker via ESPHome Number-Entity 'LED Phase'.
 
-    Wird in Schritt 2 gefüllt. Aktuell nop, damit parallele Nutzung mit
-    WLED bereits vorbereitet ist und keine NotImplementedError wirft.
+    Phasen: 0=idle(blau), 1=listening(grün), 2=thinking(gelb), 3=replying(cyan)
     """
 
-    def __init__(self, enabled: bool = False) -> None:
+    # assistant.py LED-Index → ESP-Phase
+    _PHASE: dict[int, int] = {0: 0, 1: 1, 2: 2, 3: 0, 4: 2, 5: 3}
+
+    def __init__(self, cfg: object, enabled: bool = True) -> None:
+        import asyncio
+        from voice_assistant.audio.respeaker import get_client
+        self._client = get_client(cfg)  # type: ignore[arg-type]
         self.enabled = enabled
+        self._key: int | None = None
+        self._asyncio = asyncio
+
+    def _find_key(self) -> bool:
+        if self._key is not None:
+            return True
+        if self._client._api is None or self._client._loop is None:
+            return False
+        fut = self._asyncio.run_coroutine_threadsafe(
+            self._client._api.list_entities_services(),
+            self._client._loop,
+        )
+        try:
+            entities, _ = fut.result(timeout=5.0)
+            for e in entities:
+                if hasattr(e, "name") and "LED Phase" in e.name:
+                    self._key = e.key
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _set_phase(self, phase: int) -> None:
+        if not self.enabled:
+            return
+        if not self._find_key() or self._key is None:
+            return
+        api = self._client._api
+        if api:
+            api.number_command(self._key, float(phase))
 
     def single(self, idx: int, r: int, g: int, b: int) -> None:
-        return
+        self._set_phase(self._PHASE.get(idx, 0))
 
     def clear(self) -> None:
-        return
+        self._set_phase(0)
 
 
 class LedDirector:
