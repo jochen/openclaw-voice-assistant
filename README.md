@@ -7,7 +7,8 @@ Wakeword-driven voice assistant for Raspberry Pi. Connects local speech input to
 ## Pipeline
 
 ```
-Microphone → openWakeWord ("hey jarvis")
+Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
+  → openWakeWord ("hey jarvis")
   → WebRTC VAD + recording
   → STT: Speaches /v1/audio/transcriptions  (fallback: faster-whisper local)
   → Confirmation TTS ("I understood…") — parallel thread
@@ -19,11 +20,13 @@ Microphone → openWakeWord ("hey jarvis")
 ## Requirements
 
 - Raspberry Pi (tested: Pi 4/5, ARM64, Raspberry Pi OS Bookworm)
-- **Python 3.11.9** (exact — `openwakeword` + `tflite-runtime` require this version on ARM64, see below)
+- **Python 3.11.9** (exact — `openwakeword` + `tflite-runtime` require this version on ARM64)
 - [OpenClaw](https://openclaw.dev) running locally on `http://127.0.0.1:18789`
 - [Speaches](https://github.com/speaches-ai/speaches) GPU container reachable (default: `http://192.168.111.126:8000`)
-- Microphone supported by ALSA
-- Optional: WLED controller for LED status, Piper TTS for local fallback
+
+**Mode: local** — ALSA microphone + ALSA speaker + optional WLED LED strip
+
+**Mode: respeaker** — ReSpeaker XVF3800 4-mic array + XIAO ESP32-S3, controlled via ESPHome Native API (`aioesphomeapi`). No Home Assistant required.
 
 ## Installation
 
@@ -39,7 +42,6 @@ cd openclaw-voice-assistant
 `openwakeword` and `tflite-runtime` are not available for newer Python versions on ARM64. **Exactly Python 3.11.9** is required.
 
 ```bash
-# Install pyenv (if not already present)
 curl https://pyenv.run | bash
 
 # Add to ~/.bashrc or ~/.zshrc:
@@ -47,22 +49,19 @@ export PYENV_ROOT="$HOME/.pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init -)"
 
-# Install build dependencies
 sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
   libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
 
 pyenv install 3.11.9
 ```
 
-The repo includes a `.python-version` file — pyenv activates 3.11.9 automatically when you enter the directory.
+The repo includes a `.python-version` file — pyenv activates 3.11.9 automatically.
 
 ### 3. Create venv and install dependencies
 
 ```bash
-# Inside the project directory (pyenv activates 3.11.9 automatically)
 python -m venv ~/ow-venv
 source ~/ow-venv/bin/activate
-
 pip install -r requirements.txt
 ```
 
@@ -75,7 +74,7 @@ Model(wakeword_models=['hey_jarvis'], inference_framework='tflite')
 "
 ```
 
-Models are downloaded to `/tmp/ow_models_min` (configurable in the script).
+Models are downloaded to `/tmp/ow_models_min`.
 
 ### 5. Create configuration
 
@@ -83,24 +82,81 @@ Models are downloaded to `/tmp/ow_models_min` (configurable in the script).
 cp config.example.yaml config.yaml
 ```
 
-Edit `config.yaml` — fill in at least these fields for your profile:
+Edit `config.yaml`. Common fields:
 
 | Field | Description |
 |---|---|
-| `device_index` | ALSA microphone index (`arecord -l` lists available devices) |
-| `rate_in` | Microphone sample rate (48000 or 16000) |
 | `speaches_base` | URL of the Speaches container |
 | `openclaw_token` | API token from the OpenClaw dashboard |
 | `openclaw_session` | Session key (see below) |
 | `telegram_bot_token` | Telegram bot token from @BotFather |
 | `telegram_chat_id` | Telegram group ID (with `-` prefix) |
-| `wled_host` | Hostname or IP of the WLED controller |
+
+**Mode: local** — additional fields:
+
+| Field | Description |
+|---|---|
+| `device_index` | ALSA microphone index (`arecord -l`) |
+| `rate_in` | Microphone sample rate (48000 or 16000) |
+| `wled_host` | Hostname or IP of the WLED controller (optional) |
+
+**Mode: respeaker** — additional fields:
+
+| Field | Description |
+|---|---|
+| `respeaker.host` | Hostname or IP of the ESP32-S3 (e.g. `respeaker-openclaw.local`) |
+| `respeaker.volume` | Speaker volume 0.0–1.0 (set at connect, no OTA needed) |
+| `respeaker.use_speaker` | `true` = TTS via ReSpeaker DAC; `false` = local ALSA speaker |
+
+## Running
+
+```bash
+source ~/ow-venv/bin/activate
+python -m voice_assistant
+```
+
+The entry point re-execs itself inside the correct venv automatically.
+
+Override profile: `GASTON_PROFILE=clawdpi_rs python -m voice_assistant`
+
+## Profiles
+
+Profile is selected automatically by hostname, or set via `GASTON_PROFILE`:
+
+| Profile | Hostname match | Mode | Notes |
+|---|---|---|---|
+| `clawdpi` | `clawdpi*` | local | Index 1, 48kHz (resampled), WLED |
+| `openclaw` | `openclaw*` | local | Index 0, 16kHz native |
+| `clawdpi_rs` | — | respeaker | ReSpeaker XVF3800 on `clawdpi` |
+
+## ReSpeaker Setup (mode: respeaker)
+
+The ESP32-S3 firmware is in `esphome/respeaker.yaml`. Flash via:
+
+```bash
+# Initial (USB):
+esphome-venv/bin/esphome run esphome/respeaker.yaml --device /dev/ttyACM0
+
+# OTA:
+esphome-venv/bin/esphome run esphome/respeaker.yaml --device respeaker-openclaw.local
+```
+
+The ESPHome venv is separate from `ow-venv`:
+
+```bash
+python -m venv esphome-venv
+esphome-venv/bin/pip install esphome
+```
+
+**How it works:** The Pi connects to the ESP via ESPHome Native API (port 6053, `aioesphomeapi`). Audio streams continuously via the `voice_assistant` component in API_AUDIO mode. TTS output is sent back as WAV via the ESP's `media_player` announce API — the Pi serves the WAV over HTTP (port 18800) and the ESP fetches and plays it.
+
+Wakeword detection (`openwakeword`) runs on the Pi against the audio stream.
 
 ## OpenClaw Integration
 
 ### Session Key
 
-`openclaw_session` determines **which session** voice requests land in. For voice and Telegram chat to share the same context, this key must match the session key of your Telegram group.
+`openclaw_session` determines which session voice requests land in. For voice and Telegram chat to share context, this key must match the Telegram session key.
 
 Find it in the OpenClaw dashboard under **Sessions** or in:
 ```
@@ -109,23 +165,23 @@ Find it in the OpenClaw dashboard under **Sessions** or in:
 
 Typical format: `agent:main:telegram:group:-1003XXXXXXXXX`
 
-**Why this matters:** The script sets the HTTP header `x-openclaw-session-key`, which takes precedence over OpenClaw's auto-generated namespace. Without this header, OpenClaw creates a separate `openresponses-user:` namespace and voice turns are isolated from the chat history.
+The script sets the HTTP header `x-openclaw-session-key`. Without it, OpenClaw creates a separate `openresponses-user:` namespace and voice turns are isolated from chat history.
 
-### AGENTS.md configuration
+### AGENTS.md
 
-For correct voice behaviour, add a `## Voice Commands` section to `~/.openclaw/workspace/AGENTS.md`:
+For correct voice behaviour, add to `~/.openclaw/workspace/AGENTS.md`:
 
 ```markdown
 ## Voice Commands
 
 Messages starting with 🎤 are voice commands from speech recognition.
-Strict rules apply — no exceptions:
+Strict rules — no exceptions:
 
 - Always respond in the user's language
 - Maximum 2-3 short sentences
 - No markdown, no lists, no numbering
 - No emojis
-- Natural spoken language — imagine speaking, not writing
+- Natural spoken language
 
 ### Voice → Chat transitions
 
@@ -140,73 +196,53 @@ treat it as a continuation or correction of the last voice task:
 
 ## Speaches Integration
 
-Speaches runs as a Docker container with an OpenAI-compatible API.
+STT: `POST {speaches_base}/v1/audio/transcriptions` — model `guillaumekln/faster-whisper-medium`
 
-### STT (speech → text)
+TTS: `POST {speaches_base}/v1/audio/speech` — model `speaches-ai/piper-de_DE-thorsten-medium`
 
-```
-POST {speaches_base}/v1/audio/transcriptions
-model: guillaumekln/faster-whisper-medium
-language: de
-```
+60-second cooldown after connection failures. On failure the local fallback activates automatically:
+- STT fallback: `faster-whisper` (model `small`, runs on the Pi)
+- TTS fallback: Piper (`~/.local/share/piper/de_DE-thorsten-low.onnx`)
 
-### TTS (text → speech)
-
-```
-POST {speaches_base}/v1/audio/speech
-model: speaches-ai/piper-de_DE-thorsten-medium
-voice: de_DE-thorsten-medium
-```
-
-Both services have a 60-second cooldown after connection failures before retrying (`SpeachesState` class). On failure the local fallback kicks in automatically:
-- STT: `faster-whisper` (model `small`, runs on the Pi)
-- TTS: Piper (`~/.local/share/piper/de_DE-thorsten-low.onnx`)
-
-## Piper TTS (local fallback)
+### Piper TTS (local fallback)
 
 ```bash
 pip install piper-tts
-
-mkdir -p ~/.local/share/piper
-cd ~/.local/share/piper
+mkdir -p ~/.local/share/piper && cd ~/.local/share/piper
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/low/de_DE-thorsten-low.onnx
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/low/de_DE-thorsten-low.onnx.json
 ```
 
-## Profiles
+## LED Status
 
-Two profiles are pre-configured in `config.yaml`. The active profile is detected automatically by hostname or set via environment variable:
+WLED (mode: local) and ReSpeaker LED ring (mode: respeaker) are mutually exclusive.
 
-```bash
-GASTON_PROFILE=openclaw python voice_assistant.py
-```
+### ReSpeaker LED Ring — 12 phases
 
-| Profile | Hostname match | Microphone | Notes |
-|---|---|---|---|
-| `clawdpi` | `clawdpi*` | Index 1, 48kHz (resampled) | Primary device |
-| `openclaw` | `openclaw*` | Index 0, 16kHz native | Second Pi |
+| Phase | State | Animation |
+|---|---|---|
+| 0 | BOOT | LEDs light up sequentially: WiFi(1–3) → API(4–6) → Speaches(7–9) → Wakeword(10–12) |
+| 1 | IDLE | All LEDs very dim blue; one slightly brighter dot travels extremely slowly (~36s/rotation) |
+| 2 | WAKEWORD | All 12 LEDs bright red |
+| 3 | RECORDING | Red base + beam direction highlight (XVF3800 DOA, ESP-internal) |
+| 4 | STT | Rotating dot, blue, slow (150ms/step) |
+| 5 | CONFIRMATION | Rotating dot, blue, faster (100ms/step) |
+| 6 | OPENCLAW_WAIT | Rotating dot, red-purple, fast (50ms/step) |
+| 7 | ANSWER_GLOW | All LEDs green, static |
+| 8 | AUDIO_OUT | All LEDs green, pulsing |
+| 9 | END | All off — Pi transitions to IDLE after 1s pause |
+| 10 | ERROR | 6 LEDs (half ring), red, static |
+| 11 | FOLLOWUP | Warm yellow, gentle pulse — reserved for future follow-up question feature |
 
-## Running
-
-```bash
-source ~/ow-venv/bin/activate
-python voice_assistant.py
-```
-
-The script detects whether it is running inside the correct venv and re-execs itself if needed.
-
-## LED Status (WLED)
+### WLED Strip (mode: local)
 
 | LED | Color | State |
 |---|---|---|
-| 0 | Blue | Ready, waiting for wakeword |
-| 1 | Green | Wakeword detected, recording |
-| 2 | Yellow | STT processing |
-| 3 | Red | Short pause after recording |
-| 4 | Purple | Waiting for OpenClaw response |
-| 5 | Cyan | Speaking reply |
-
-WLED controller: `wled_controller.py` — host configured via `wled_host` in `config.yaml`.
+| 0 | Blue | Idle |
+| 1 | Red | Wakeword / Recording |
+| 2 | Orange | STT / Confirmation |
+| 4 | Purple | Waiting for OpenClaw |
+| 5 | Green | Speaking reply |
 
 ## License
 

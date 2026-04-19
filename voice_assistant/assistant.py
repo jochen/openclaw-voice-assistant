@@ -21,7 +21,11 @@ from voice_assistant.config import (
     load_profile,
 )
 from voice_assistant.services import speaches as speaches_mod
-from voice_assistant.services.leds import LedDirector, RespeakerRing, WledLeds
+from voice_assistant.services.leds import (
+    LED_BOOT, LED_IDLE, LED_WAKEWORD, LED_RECORDING,
+    LED_STT, LED_CONFIRMATION, LED_ERROR,
+    LedDirector, RespeakerRing, WledLeds,
+)
 from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import LocalWhisperStt, SpeachesStt, SttPipeline
 from voice_assistant.services.tts import (
@@ -85,11 +89,10 @@ def _is_speech_chunk(vad: webrtcvad.Vad, audio_16) -> bool:
 def run() -> None:
     profile = load_profile()
 
-    # --- LEDs (initial: blau = bereit) ---
+    # --- LEDs — Boot-Sequenz startet ---
     leds = _make_leds(profile)
-    leds.clear()
-    leds.single(0, 0, 0, 255)
-    time.sleep(0.2)
+    leds.set_phase(LED_BOOT)
+    leds.set_boot_step(0)
 
     # --- Speaches-Zustand + Service-Wrapper ---
     speaches = SpeachesState()
@@ -106,6 +109,7 @@ def run() -> None:
     # --- Audio (Source + Sink) baut und startet ---
     audio_source, audio_sink = _make_audio(profile)
     audio_source.start()
+    leds.set_boot_step(4)   # Audio-Source gestartet (ESP-Verbindung läuft an)
 
     # --- Lokale STT + TTS-Hilfen ---
     local_stt = LocalWhisperStt()
@@ -115,6 +119,7 @@ def run() -> None:
         profile.speaches_stt_model,
         profile.speaches_tts_model,
     )
+    leds.set_boot_step(8)   # Speaches-Check abgeschlossen
 
     prerender_ja()
 
@@ -123,6 +128,7 @@ def run() -> None:
     print("🔧 Initialisiere WebRTC VAD...")
     vad = webrtcvad.Vad(3)
     print("✅ WebRTC VAD bereit")
+    leds.set_boot_step(12)  # Wakeword-Modell geladen
 
     # --- Services zusammenstecken ---
     stt_pipeline = SttPipeline(speaches_stt, local_stt)
@@ -146,6 +152,7 @@ def run() -> None:
     speech_detected = False
     wake_hits = 0  # Debounce: aufeinanderfolgende Frames über Threshold
 
+    leds.set_phase(LED_IDLE)
     print("\n🎤 Bereit – warte auf 'hey jarvis'...\n")
 
     try:
@@ -162,11 +169,11 @@ def run() -> None:
                     wake_hits = 0
                 if wake_hits >= 2:
                     print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}")
-                    leds.clear()
-                    leds.single(1, 0, 255, 0)
+                    leds.set_phase(LED_WAKEWORD)
                     if os.path.exists(PIPER_OUT):
                         print("🔊 Spiele Ja? ...")
                         audio_sink.play_wav(PIPER_OUT)
+                    leds.set_phase(LED_RECORDING)
                     wake_hits = 0
                     wakeword.reset()
                     audio_source.flush()
@@ -195,14 +202,12 @@ def run() -> None:
                         f"{len(recorded_chunks) * 1280 / RATE_OW:.1f}s Audio"
                     )
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
-                        leds.clear()
-                        leds.single(2, 255, 180, 0)
+                        leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
                     else:
                         print(f"[{now:.1f}s] ⚠️  Keine Sprache erkannt")
-                        leds.clear()
-                        leds.single(0, 0, 0, 255)
+                        leds.set_phase(LED_IDLE)
                         state = STATE_LISTENING
 
             # --- PROCESSING (STT läuft) ---
@@ -211,15 +216,12 @@ def run() -> None:
                     text = stt_queue.get_nowait()
                     if text:
                         print(f"[{now:.1f}s] 📤 Sende an OpenClaw: '{text}'")
+                        leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
                         reply_done_event.clear()
                         pending_reply_text[0] = None
                         thinking.start()
                         workers.start_openclaw_turn(text)
-
-                        leds.clear()
-                        leds.single(3, 255, 0, 0)
-                        leds.single(4, 128, 0, 255)
                         state = STATE_WAITING
                         state_start = now
                         print(
@@ -227,14 +229,12 @@ def run() -> None:
                         )
                     else:
                         print(f"[{now:.1f}s] ⚠️  Leere Transkription")
-                        leds.clear()
-                        leds.single(0, 0, 0, 255)
+                        leds.set_phase(LED_IDLE)
                         state = STATE_LISTENING
                 except queue.Empty:
                     if now - state_start > 60.0:
                         print("⚠️  STT Timeout!")
-                        leds.clear()
-                        leds.single(0, 0, 0, 255)
+                        leds.set_phase(LED_ERROR)
                         state = STATE_LISTENING
 
             # --- WAITING (auf OpenClaw-Antwort + TTS) ---
@@ -242,13 +242,10 @@ def run() -> None:
                 if now - state_start > OPENCLAW_TIMEOUT + 30:
                     print(f"[{now:.1f}s] ⚠️  Gesamt-Timeout überschritten")
                     thinking.stop()
-                    leds.clear()
-                    leds.single(0, 0, 0, 255)
+                    leds.set_phase(LED_ERROR)
                     state = STATE_LISTENING
                 elif reply_done_event.is_set():
                     reply_done_event.clear()
-                    leds.clear()
-                    leds.single(0, 0, 0, 255)
                     state = STATE_PAUSE
                     state_start = now
 
@@ -257,8 +254,7 @@ def run() -> None:
                 if now - state_start > 1.0:
                     audio_source.flush()
                     wakeword.reset()
-                    leds.clear()
-                    leds.single(0, 0, 0, 255)
+                    leds.set_phase(LED_IDLE)
                     state = STATE_LISTENING
                     print(f"[{now:.1f}s] 🎤 Bereit – warte auf 'hey jarvis'...")
 
@@ -266,5 +262,5 @@ def run() -> None:
 
     except KeyboardInterrupt:
         print("\n🛑 Beende...")
-        leds.clear()
+        leds.set_phase(LED_END)
         audio_source.close()
