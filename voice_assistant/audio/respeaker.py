@@ -71,8 +71,10 @@ class RespeakerClient:
         self._api: aioesphomeapi.APIClient | None = None
         self._button_key: int | None = None
         self._player_key: int | None = None
+        self._beam_key: int | None = None
         self.led_phase_key: int | None = None   # von RespeakerRing gelesen
         self.boot_step_key: int | None = None   # von RespeakerRing.set_boot_step gelesen
+        self.beam_angle: float = 0.0            # aktueller Beam-Winkel in Grad (0–360)
         self._buf = b""
         self._in_session = False
         self._thread = threading.Thread(
@@ -141,6 +143,9 @@ class RespeakerClient:
             if hasattr(e, "name") and "Boot Step" in e.name:
                 self.boot_step_key = e.key
                 log.info("Boot-Step-Number key=%d", e.key)
+            if hasattr(e, "name") and "Voice Direction" in e.name:
+                self._beam_key = e.key
+                log.info("Beam-Sensor key=%d", e.key)
 
         if self._player_key is not None:
             self._api.media_player_command(self._player_key, volume=self._cfg.volume)
@@ -170,6 +175,12 @@ class RespeakerClient:
             handle_stop=handle_stop,
             handle_audio=handle_audio,
         )
+
+        def on_state(state: object) -> None:
+            if self._beam_key is not None and getattr(state, "key", None) == self._beam_key:
+                self.beam_angle = float(getattr(state, "state", 0.0))
+
+        self._api.subscribe_states(on_state)
 
         await asyncio.sleep(2)
         await self._press_start_button()
@@ -276,6 +287,10 @@ class RespeakerSource:
 
     def close(self) -> None:
         pass
+
+    @property
+    def beam_angle(self) -> float:
+        return self._client.beam_angle
 
 
 class RespeakerSink:

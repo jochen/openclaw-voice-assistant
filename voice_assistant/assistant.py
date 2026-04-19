@@ -168,7 +168,9 @@ def run() -> None:
                 else:
                     wake_hits = 0
                 if wake_hits >= 2:
-                    print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}")
+                    beam = getattr(audio_source, "beam_angle", None)
+                    beam_str = f"  Beam: {beam:.0f}°" if beam is not None else ""
+                    print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}{beam_str}")
                     leds.set_phase(LED_WAKEWORD)
                     if os.path.exists(PIPER_OUT):
                         print("🔊 Spiele Ja? ...")
