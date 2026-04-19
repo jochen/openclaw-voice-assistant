@@ -188,6 +188,46 @@ laufen sequenziell über denselben Announce-Kanal.
 
 ---
 
+### 9. 2-3s Verzögerung zwischen Wakeword und "Ja?"-Ausgabe
+
+**Symptom:** Wakeword erkannt, aber "Ja?" kommt erst 2-3 Sekunden später.
+Führt dazu dass der Nutzer schon gesprochen hat bevor die Aufnahme beginnt.
+
+**Ursachen:**
+- `WledLeds._run()` nutzte `subprocess.run()` → blockiert bis wled_controller.py
+  fertig ist (HTTP-Call zum WLED, kann bei nicht erreichbarem Gerät 1-2s dauern).
+  Wird zweimal aufgerufen (`clear()` + `single()`).
+- `RespeakerRing._find_key()` rief beim **ersten** LED-Kommando
+  `list_entities_services()` über die API auf (Netzwerkaufruf, bis zu 5s Timeout).
+
+**Lösung:**
+- `WledLeds`: `subprocess.run` → `subprocess.Popen` (fire-and-forget).
+- LED-Phase-Key wird jetzt beim Client-Connect gecacht (zusammen mit Button/Player
+  in `list_entities_services()`). `_find_key()` liest nur noch das Feld.
+- WLED kann via `leds.wled.enabled: false` in config.yaml deaktiviert werden
+  (kein OTA nötig).
+
+**Lesson:** Alle LED-Operationen im Hauptloop müssen non-blocking sein —
+jeder blockierende Call verzögert direkt die Nutzerreaktion.
+
+---
+
+### 10. Knacken mitten in der Wiedergabe
+
+**Symptom:** Kein Knacken am Anfang/Ende, aber hörbare Knack-Artefakte
+während der Wiedergabe.
+
+**Ursache:** `resample_poly()` erzeugt durch Filterringing Werte außerhalb
+von [-32768, 32767]. `.astype(np.int16)` **wrappte** statt zu clippen —
+ein Wert von 32800 wird zu -32736 → plötzlicher Amplitudensprung → Knack.
+
+**Lösung:**
+```python
+samples = np.clip(resample_poly(samples, up, down), -32768, 32767).astype(np.int16)
+```
+
+---
+
 ## Volumen-Konfiguration (ohne OTA)
 
 ```yaml
