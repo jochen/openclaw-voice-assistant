@@ -73,6 +73,11 @@ http_request:
 api:
   # encryption:
   #   key: !secret api_encryption_key
+  on_client_disconnected:
+    - lambda: |-
+        id(va_phase) = 0;
+        id(boot_step) = 3;  // WiFi läuft noch, Pi-Script nicht
+    - script.execute: animation_loop
 
 ota:
   - platform: esphome
