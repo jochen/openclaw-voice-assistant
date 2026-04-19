@@ -1,7 +1,8 @@
-"""LED-Status — WLED über das vorhandene wled_controller.py Skript.
+"""LED-Status — WLED (lokal) oder ReSpeaker LED-Ring (exklusiv je Modus).
 
-Das Skript läuft bewusst als Subprozess (wie bisher), weil es im Venv liegt
-und wir keine zusätzliche Importzeit im Hauptprozess haben wollen.
+WLED und ReSpeaker werden nie gleichzeitig verwendet:
+  mode=local  → WledLeds
+  mode=respeaker → RespeakerRing
 """
 
 from __future__ import annotations
@@ -12,6 +13,36 @@ import sys
 
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _CONTROLLER = os.path.join(_PROJECT_DIR, "wled_controller.py")
+
+# Phasenkonstanten — müssen mit esphome/respeaker.yaml übereinstimmen
+LED_BOOT         = 0
+LED_IDLE         = 1
+LED_WAKEWORD     = 2
+LED_RECORDING    = 3
+LED_STT          = 4
+LED_CONFIRMATION = 5
+LED_OPENCLAW     = 6
+LED_ANSWER_GLOW  = 7
+LED_AUDIO_OUT    = 8
+LED_END          = 9
+LED_ERROR        = 10
+LED_FOLLOWUP     = 11
+
+# WLED: Phase → (LED-Index, R, G, B) oder None = alles aus
+_WLED_PHASE: dict[int, tuple[int, int, int, int] | None] = {
+    LED_BOOT:         None,
+    LED_IDLE:         (0, 0, 0, 50),
+    LED_WAKEWORD:     (1, 255, 0, 0),
+    LED_RECORDING:    (1, 255, 0, 0),
+    LED_STT:          (2, 255, 165, 0),
+    LED_CONFIRMATION: (2, 255, 200, 0),
+    LED_OPENCLAW:     (4, 128, 0, 255),
+    LED_ANSWER_GLOW:  (5, 0, 128, 0),
+    LED_AUDIO_OUT:    (5, 0, 220, 0),
+    LED_END:          None,
+    LED_ERROR:        (0, 128, 0, 0),
+    LED_FOLLOWUP:     (0, 200, 150, 0),
+}
 
 
 class WledLeds:
@@ -31,62 +62,50 @@ class WledLeds:
             stderr=subprocess.DEVNULL,
         )
 
-    def single(self, idx: int, r: int, g: int, b: int) -> None:
-        self._run(["single", str(idx), str(r), str(g), str(b)])
-
-    def clear(self) -> None:
+    def set_phase(self, phase: int) -> None:
+        entry = _WLED_PHASE.get(phase)
         self._run(["clear"])
+        if entry is not None:
+            idx, r, g, b = entry
+            self._run(["single", str(idx), str(r), str(g), str(b)])
+
+    def set_boot_step(self, step: int) -> None:
+        pass  # WLED hat keine Boot-Sequenz
 
 
 class RespeakerRing:
-    """LED-Ring am ReSpeaker via ESPHome Number-Entity 'LED Phase'.
-
-    Phasen: 0=idle(blau), 1=listening(grün), 2=thinking(gelb), 3=replying(cyan)
-    """
-
-    # assistant.py LED-Index → ESP-Phase
-    _PHASE: dict[int, int] = {0: 0, 1: 1, 2: 2, 3: 0, 4: 2, 5: 3}
+    """LED-Ring am ReSpeaker via ESPHome Number-Entities."""
 
     def __init__(self, cfg: object, enabled: bool = True) -> None:
         from voice_assistant.audio.respeaker import get_client
         self._client = get_client(cfg)  # type: ignore[arg-type]
         self.enabled = enabled
-        self._key: int | None = None
 
-    def _find_key(self) -> bool:
-        if self._key is not None:
-            return True
-        if self._client.led_phase_key is not None:
-            self._key = self._client.led_phase_key
-            return True
-        return False
-
-    def _set_phase(self, phase: int) -> None:
-        if not self.enabled:
-            return
-        if not self._find_key() or self._key is None:
+    def _number_command(self, key: int | None, value: float) -> None:
+        if not self.enabled or key is None:
             return
         api = self._client._api
         if api:
-            api.number_command(self._key, float(phase))
+            api.number_command(key, value)
 
-    def single(self, idx: int, r: int, g: int, b: int) -> None:
-        self._set_phase(self._PHASE.get(idx, 0))
+    def set_phase(self, phase: int) -> None:
+        self._number_command(self._client.led_phase_key, float(phase))
 
-    def clear(self) -> None:
-        self._set_phase(0)
+    def set_boot_step(self, step: int) -> None:
+        self._number_command(self._client.boot_step_key, float(step))
 
 
 class LedDirector:
-    """Verteilt Status-Kommandos auf alle aktiven LED-Senken."""
+    """Verteilt Kommandos auf alle aktiven LED-Senken."""
 
     def __init__(self, *sinks: object) -> None:
         self.sinks = sinks
 
-    def single(self, idx: int, r: int, g: int, b: int) -> None:
+    def set_phase(self, phase: int) -> None:
         for sink in self.sinks:
-            sink.single(idx, r, g, b)  # type: ignore[attr-defined]
+            sink.set_phase(phase)  # type: ignore[attr-defined]
 
-    def clear(self) -> None:
+    def set_boot_step(self, step: int) -> None:
         for sink in self.sinks:
-            sink.clear()  # type: ignore[attr-defined]
+            if hasattr(sink, "set_boot_step"):
+                sink.set_boot_step(step)

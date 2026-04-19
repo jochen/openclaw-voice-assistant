@@ -166,13 +166,16 @@ class ReplySpeaker:
                 os.unlink(tmp_wav)
 
     def speak(self, text: str, restore_leds: bool = True) -> None:
+        from voice_assistant.services.leds import (
+            LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION, LED_OPENCLAW,
+        )
         with tts_lock:
             clean = self.tts_prefix + clean_for_tts(text)
             if not clean.strip():
                 return
             print(f"🔊 Lese vor: '{clean}'")
-            self.leds.clear()
-            self.leds.single(5, 0, 255, 255)
+            # Confirmation-TTS: rotierender Punkt; Antwort-TTS: statisches Grün
+            self.leds.set_phase(LED_CONFIRMATION if not restore_leds else LED_ANSWER_GLOW)
 
             sentences = split_into_sentences(clean)
             print(f"🔊 {len(sentences)} Satz/Sätze")
@@ -182,6 +185,8 @@ class ReplySpeaker:
                 print("🔄 TTS: Speaches (satzweise)...")
                 for i, sentence in enumerate(sentences):
                     print(f"🔊 Satz {i + 1}/{len(sentences)}: '{sentence}'")
+                    if restore_leds:
+                        self.leds.set_phase(LED_AUDIO_OUT)  # pulsierend grün
                     ok = self._play_speaches_sentence(sentence)
                     if not ok:
                         print(
@@ -197,6 +202,8 @@ class ReplySpeaker:
 
             if not played:
                 print("🔄 TTS: Piper (lokal)...")
+                if restore_leds:
+                    self.leds.set_phase(LED_AUDIO_OUT)
                 tmp_wav = piper_synth(clean)
                 if tmp_wav:
                     self.play_wav(tmp_wav)
@@ -204,12 +211,9 @@ class ReplySpeaker:
                 else:
                     print("❌ TTS vollständig fehlgeschlagen")
 
-            self.leds.clear()
-            if restore_leds:
-                self.leds.single(0, 0, 0, 255)
-            else:
-                self.leds.single(3, 255, 0, 0)
-                self.leds.single(4, 128, 0, 255)
+            # Confirmation fertig → OpenClaw wartet noch; Antwort fertig → assistant.py übernimmt
+            if not restore_leds:
+                self.leds.set_phase(LED_OPENCLAW)
 
 
 # ---------------------------------------------------------------------------

@@ -228,6 +228,55 @@ samples = np.clip(resample_poly(samples, up, down), -32768, 32767).astype(np.int
 
 ---
 
+## LED-Konzept (Phase 2 — Animationen + Zustände)
+
+### Zustandstabelle
+
+| Phase | Zustand | Visualisierung |
+|---|---|---|
+| 0 | BOOT | LEDs 1–12 sequenziell weiß aufleuchten je Init-Schritt |
+| 1 | IDLE | Alle LEDs sehr gedimmt blau, ein Punkt 1 Stufe heller wandert extrem langsam (~36s/Umdrehung) |
+| 2 | WAKEWORD | Alle 12 LEDs, hell rot, sofort |
+| 3 | RECORDING | Wie WAKEWORD + Beam-Direction-Overlay (ESP-intern) |
+| 4 | STT | Rotating-dot, blau, langsam |
+| 5 | CONFIRMATION | Rotating-dot, blau, etwas schneller |
+| 6 | OPENCLAW_WAIT | Rotating-dot, schnell + lila |
+| 7 | ANSWER_GLOW | Alle LEDs, grün, statisch |
+| 8 | AUDIO_OUT | Alle LEDs, grün, pulsierend |
+| 9 | END | Alle aus, kurze Pause, dann → IDLE |
+| 10 | ERROR | 6 LEDs (halber Ring), rot, statisch |
+| 11 | FOLLOWUP | Warm-weiß/gelb, sanftes Pulsieren (für zukünftige Rückfrage-Funktion) |
+
+### Boot-Sequenz (Phase 0)
+
+Jede Gruppe von LEDs repräsentiert einen Init-Schritt — wenn der Prozess hängt,
+sieht man wo:
+
+| LEDs | Schritt |
+|---|---|
+| 1–3 | WiFi verbunden |
+| 4–6 | ESPHome API-Connect |
+| 7–9 | Speaches-Check (STT/TTS erreichbar) |
+| 10–12 | Wakeword-Modell geladen |
+
+Nach allen 4 Schritten → Phase 1 (IDLE).
+
+### Architektur-Entscheidungen
+
+- **ESP-interne `voice_assistant`-Event-Handler entfernen** (`on_listening`,
+  `on_stt_vad_end`, `on_end`, `on_error`) — der Pi steuert alle Phasen via
+  Number-Entity, ESP-interne Handler würden konkurrieren.
+- **Beam-Direction** läuft ESP-intern während Phase 3 (RECORDING): `led_beam_sensor`
+  liefert Winkel 0–360°, wird auf LED-Index (÷30°) gemappt und als Overlay
+  über die rote Grundfarbe gelegt.
+- **WLED und RespeakerRing sind exklusiv** (entweder lokales Audio + WLED,
+  oder ReSpeaker-Modus + Ring) — `LedDirector` wird vereinfacht.
+- **Number-Entity Range** von 0–5 auf 0–11 erweitern.
+- **ERROR (Phase 10)** nutzt nur 6 LEDs (halber Ring) um von WAKEWORD
+  (alle 12, rot) und BOOT (sequenziell) unterscheidbar zu sein.
+
+---
+
 ## Volumen-Konfiguration (ohne OTA)
 
 ```yaml

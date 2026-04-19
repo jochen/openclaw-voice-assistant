@@ -21,7 +21,7 @@ esphome:
   on_boot:
     - priority: -100
       then:
-        - script.execute: control_leds
+        - script.execute: animation_loop
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -51,9 +51,13 @@ wifi:
   power_save_mode: none
   reboot_timeout: 10min
   on_connect:
-    - script.execute: control_leds
+    - lambda: id(boot_step) = 3;  # WiFi verbunden — erste 3 LEDs an
+    - script.execute: animation_loop
   on_disconnect:
-    - script.execute: control_leds
+    - lambda: |-
+        id(va_phase) = 0;
+        id(boot_step) = 0;
+    - script.execute: animation_loop
 
 logger:
   level: INFO
@@ -168,6 +172,10 @@ respeaker_xvf3800:
     name: "Voice Direction"
     id: beam_direction
     internal: true
+    on_value:
+      - lambda: |-
+          // XVF3800 liefert 0–360°, 12 LEDs à 30° → LED-Index
+          id(beam_led_pos) = ((int)(x / 30.0f)) % 12;
   firmware:
     url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration/raw/refs/heads/main/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
     version: "1.0.7"
@@ -183,19 +191,34 @@ button:
       - voice_assistant.start:
 
 number:
+  # Hauptzustand — Pi schickt Phase 0–11, ESP spielt passende Animation
   - platform: template
     name: "LED Phase"
     id: led_phase_input
     min_value: 0
-    max_value: 5
+    max_value: 11
     step: 1
     optimistic: true
     on_value:
-      - lambda: id(va_phase) = (int)x;
-      - script.execute: control_leds
+      - lambda: |-
+          id(va_phase) = (int)x;
+          id(dot_pos) = 0;
+          id(tick_count) = 0;
+      - script.execute: animation_loop
 
-# voice_assistant — Audio-Streaming-Protokoll für aioesphomeapi.
-# Kein micro_wakeword: Pi triggert via button, streamt Audio, macht Wakeword selbst.
+  # Boot-Fortschritt — Pi setzt 0/3/6/9/12 je abgeschlossenem Init-Schritt
+  # 0=Start, 3=WiFi, 6=API-Connect, 9=Speaches, 12=Wakeword-Modell geladen
+  - platform: template
+    name: "Boot Step"
+    id: boot_step_input
+    min_value: 0
+    max_value: 12
+    step: 1
+    optimistic: true
+    on_value:
+      - lambda: id(boot_step) = (int)x;
+
+# voice_assistant — Pi steuert alle LED-Phasen, keine internen Handler
 voice_assistant:
   id: va
   microphone:
@@ -205,14 +228,6 @@ voice_assistant:
   noise_suppression_level: 1
   auto_gain: 31dBFS
   volume_multiplier: 4.0
-  on_listening:
-    - script.execute: led_listening
-  on_stt_vad_end:
-    - script.execute: led_thinking
-  on_end:
-    - script.execute: led_idle
-  on_error:
-    - script.execute: led_idle
 
 # --- LED-Steuerung ---
 globals:
@@ -220,38 +235,104 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
+  - id: boot_step
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: dot_pos
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: tick_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: beam_led_pos
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 script:
-  - id: control_leds
+  # Haupt-Animations-Loop — läuft permanent, wertet va_phase alle 50ms aus
+  - id: animation_loop
     mode: restart
     then:
-      - lambda: |-
-          std::array<uint32_t, 12> colors;
-          int phase = id(va_phase);
-          uint32_t col = 0x000000;
-          if (phase == 0) col = 0x000050;        // Blau — idle
-          else if (phase == 1) col = 0x005000;   // Grün — listening
-          else if (phase == 2) col = 0x503C00;   // Gelb — thinking
-          else if (phase == 3) col = 0x003C3C;   // Cyan — replying
-          for (auto& c : colors) c = col;
-          id(respeaker).set_led_ring(colors.data());
+      - while:
+          condition:
+            lambda: return true;
+          then:
+            - lambda: |-
+                int phase = id(va_phase);
+                std::array<uint32_t, 12> c = {};
+                uint32_t t_ms = millis();
 
-  - id: led_idle
-    then:
-      - lambda: id(va_phase) = 0;
-      - script.execute: control_leds
+                if (phase == 0) {
+                  // BOOT: boot_step LEDs weiß (0=0 LEDs, 3=WiFi, 6=API, 9=Speaches, 12=Wakeword)
+                  int steps = id(boot_step);
+                  for (int i = 0; i < steps && i < 12; i++)
+                    c[i] = 0x303030;
 
-  - id: led_listening
-    then:
-      - lambda: id(va_phase) = 1;
-      - script.execute: control_leds
+                } else if (phase == 1) {
+                  // IDLE: alle LEDs sehr gedimmt blau, ein Punkt 1 Stufe heller
+                  // wandert extrem langsam: 60 Ticks × 50ms = 3s/Schritt → 36s/Umdrehung
+                  id(tick_count)++;
+                  int pos = (id(tick_count) / 60) % 12;
+                  for (auto& x : c) x = 0x000040;  // Basis: sehr gedimmt
+                  c[pos] = 0x000060;                // Punkt: leicht heller
 
-  - id: led_thinking
-    then:
-      - lambda: id(va_phase) = 2;
-      - script.execute: control_leds
+                } else if (phase == 2) {
+                  // WAKEWORD: alle 12 LEDs hell rot
+                  for (auto& x : c) x = 0x7F0000;
 
-  - id: led_replying
-    then:
-      - lambda: id(va_phase) = 3;
-      - script.execute: control_leds
+                } else if (phase == 3) {
+                  // RECORDING: rote Basis + Beam-Direction-Highlight
+                  for (auto& x : c) x = 0x280000;
+                  int b = id(beam_led_pos);
+                  c[b] = 0xFF0000;
+                  c[(b + 1) % 12] = 0x600000;
+                  c[(b + 11) % 12] = 0x600000;
+
+                } else if (phase >= 4 && phase <= 6) {
+                  // STT(4)/CONFIRMATION(5)/OPENCLAW_WAIT(6): rotierender Punkt
+                  // Geschwindigkeit: 4=150ms/Schritt, 5=100ms, 6=50ms
+                  id(tick_count)++;
+                  int tc = id(tick_count);
+                  bool advance = (phase == 4) ? (tc % 3 == 0)
+                               : (phase == 5) ? (tc % 2 == 0)
+                               : true;
+                  if (advance) id(dot_pos) = (id(dot_pos) + 1) % 12;
+                  int pos = id(dot_pos);
+                  uint32_t bright = (phase == 6) ? 0x800080 : 0x0000FF;  // 6=rot-lila
+                  uint32_t dim    = (phase == 6) ? 0x200020 : 0x000040;
+                  c[pos] = bright;
+                  c[(pos + 1) % 12] = dim;
+                  c[(pos + 11) % 12] = dim;
+
+                } else if (phase == 7) {
+                  // ANSWER_GLOW: alle LEDs grün, statisch
+                  for (auto& x : c) x = 0x007F00;
+
+                } else if (phase == 8) {
+                  // AUDIO_OUT: alle LEDs grün, pulsierend (~1.2s)
+                  float t = (t_ms % 1200) / 1200.0f;
+                  uint8_t g = (uint8_t)((0.35f + 0.65f * (0.5f + 0.5f * sinf(t * 6.283f))) * 0x7F);
+                  for (auto& x : c) x = ((uint32_t)g << 8);
+
+                } else if (phase == 9) {
+                  // END: alle aus (Pi wechselt nach Pause auf Phase 1)
+
+                } else if (phase == 10) {
+                  // ERROR: 6 LEDs (halber Ring), rot, statisch
+                  for (int i = 0; i < 6; i++) c[i] = 0x3F0000;
+
+                } else if (phase == 11) {
+                  // FOLLOWUP: warm-gelb, sanft pulsierend (~2.5s) — für Rückfrage
+                  float t = (t_ms % 2500) / 2500.0f;
+                  float br = 0.25f + 0.25f * (0.5f + 0.5f * sinf(t * 6.283f));
+                  uint8_t r = (uint8_t)(br * 0xFF);
+                  uint8_t g = (uint8_t)(br * 0xB0);
+                  for (auto& x : c) x = ((uint32_t)r << 16) | ((uint32_t)g << 8);
+                }
+
+                id(respeaker).set_led_ring(c.data());
+            - delay: 50ms
