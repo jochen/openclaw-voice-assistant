@@ -121,16 +121,18 @@ class SttPipeline:
         self.local = local_stt
 
     def run(self, audio_chunks: list[np.ndarray], out: queue.Queue) -> None:
-        text: str | None = None
         if self.speaches.state.stt_ok():
             print("🔄 STT: Versuche Speaches...")
             wav_bytes = chunks_to_wav_bytes(audio_chunks)
             text = self.speaches.transcribe(wav_bytes)
             if text is not None:
                 print(f"🗣  [Speaches STT] Erkannt: '{text}'")
-            else:
-                print("⚠️  Speaches STT fehlgeschlagen → Fallback auf faster-whisper")
-        if text is None:
-            print("🔄 STT: Verwende faster-whisper (lokal)...")
-            text = self.local.transcribe(audio_chunks)
-        out.put(text)
+                out.put(text)
+                return
+            if self.speaches.state.stt_ok():
+                # stt_ok() noch True → Halluzination verworfen, kein Fallback nötig
+                out.put(None)
+                return
+            print("⚠️  Speaches STT fehlgeschlagen → Fallback auf faster-whisper")
+        print("🔄 STT: Verwende faster-whisper (lokal)...")
+        out.put(self.local.transcribe(audio_chunks))
