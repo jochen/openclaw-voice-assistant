@@ -277,8 +277,20 @@ class RespeakerSink:
         if rate != 48000:
             from math import gcd
             g = gcd(rate, 48000)
-            samples = resample_poly(samples, 48000 // g, rate // g).astype(np.int16)
-        samples = samples
+            samples = np.clip(resample_poly(samples, 48000 // g, rate // g), -32768, 32767).astype(np.int16)
+
+        # Fade-in/out (10ms) gegen Knacken bei DAC-Transient
+        fade = int(48000 * 0.010)
+        if len(samples) > fade * 2:
+            samples = samples.astype(np.float32)
+            samples[:fade] *= np.linspace(0, 1, fade)
+            samples[-fade:] *= np.linspace(1, 0, fade)
+            samples = samples.astype(np.int16)
+
+        # 30ms Stille davor/danach — DAC-Settle-Zeit
+        silence = np.zeros(int(48000 * 0.030), dtype=np.int16)
+        samples = np.concatenate([silence, samples, silence])
+
         stereo = np.column_stack([samples, samples])
         with wave.open(dst, "wb") as wf:
             wf.setnchannels(2)
