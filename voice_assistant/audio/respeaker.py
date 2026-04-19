@@ -19,6 +19,7 @@ import shutil
 import socket
 import tempfile
 import threading
+import time
 import wave
 
 import numpy as np
@@ -85,13 +86,35 @@ class RespeakerClient:
     # Internal asyncio main loop
     # ------------------------------------------------------------------
 
+    _RECONNECT_DELAY = 15  # Sekunden bis zum nächsten Verbindungsversuch
+
+    def _reset_state(self) -> None:
+        self._api = None
+        self._button_key = None
+        self._player_key = None
+        self.led_phase_key = None
+        self.boot_step_key = None
+        self._in_session = False
+        self._buf = b""
+        while not self._audio_q.empty():
+            try:
+                self._audio_q.get_nowait()
+            except queue.Empty:
+                break
+
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._main())
-        except Exception as exc:
-            log.error("RespeakerClient loop crashed: %s", exc)
+        while True:
+            try:
+                self._loop.run_until_complete(self._main())
+            except Exception as exc:
+                log.error(
+                    "RespeakerClient Verbindungsfehler: %s — Retry in %ds",
+                    exc, self._RECONNECT_DELAY,
+                )
+            self._reset_state()
+            time.sleep(self._RECONNECT_DELAY)
 
     async def _main(self) -> None:
         self._api = aioesphomeapi.APIClient(
