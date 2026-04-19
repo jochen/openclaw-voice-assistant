@@ -31,7 +31,7 @@ def to_48k_stereo(src: str) -> str:
         samples = samples.reshape(-1, n_ch)[:, 0]
     if rate != 48000:
         g = gcd(rate, 48000)
-        samples = resample_poly(samples, 48000 // g, rate // g).astype(np.int16)
+        samples = np.clip(resample_poly(samples, 48000 // g, rate // g), -32768, 32767).astype(np.int16)
     samples = (samples.astype(np.float32) * 1).astype(np.int16)
     stereo = np.column_stack([samples, samples])
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir="/tmp")
