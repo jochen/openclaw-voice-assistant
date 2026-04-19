@@ -165,18 +165,37 @@ def run() -> None:
                 score = wakeword.feed(audio_16)
                 if score > 0.65:
                     wake_hits += 1
+                    if wake_hits == 2:
+                        # Trigger erkannt: sofort loggen + LED, aber Aktion
+                        # erst wenn Streak endet (score fällt unter Schwelle)
+                        beam = getattr(audio_source, "beam_angle", None)
+                        beam_str = f"  Beam: {beam:.0f}°" if beam is not None else ""
+                        print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}{beam_str}")
+                        leds.set_phase(LED_WAKEWORD)
                 else:
+                    if wake_hits >= 2:
+                        # Streak abgeschlossen — jetzt erst Aktion ausführen
+                        print(f"[{now:.1f}s] 📊 Wakeword-Streak: {wake_hits} Frames ({wake_hits * 40}ms)")
+                        if os.path.exists(PIPER_OUT):
+                            print("🔊 Spiele Ja? ...")
+                            audio_sink.play_wav(PIPER_OUT)
+                        leds.set_phase(LED_RECORDING)
+                        wakeword.reset()
+                        audio_source.flush()
+                        state = STATE_RECORDING
+                        state_start = time.time()
+                        recorded_chunks = []
+                        silence_counter = 0
+                        speech_detected = False
                     wake_hits = 0
-                if wake_hits >= 2:
-                    beam = getattr(audio_source, "beam_angle", None)
-                    beam_str = f"  Beam: {beam:.0f}°" if beam is not None else ""
-                    print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}{beam_str}")
-                    leds.set_phase(LED_WAKEWORD)
+
+                # Sicherheits-Timeout: nicht länger als 1s auf Streak-Ende warten
+                if wake_hits >= 25:
+                    print(f"[{now:.1f}s] 📊 Wakeword-Streak: {wake_hits}+ Frames (Timeout)")
                     if os.path.exists(PIPER_OUT):
                         print("🔊 Spiele Ja? ...")
                         audio_sink.play_wav(PIPER_OUT)
                     leds.set_phase(LED_RECORDING)
-                    wake_hits = 0
                     wakeword.reset()
                     audio_source.flush()
                     state = STATE_RECORDING
@@ -184,6 +203,7 @@ def run() -> None:
                     recorded_chunks = []
                     silence_counter = 0
                     speech_detected = False
+                    wake_hits = 0
 
             # --- RECORDING ---
             elif state == STATE_RECORDING:
