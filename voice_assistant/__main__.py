@@ -15,6 +15,11 @@ if sys.executable != _VENV_PY and os.path.exists(_VENV_PY):
 
 
 def main() -> None:
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
     from voice_assistant.assistant import run
 
     run()

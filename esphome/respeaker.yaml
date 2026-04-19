@@ -5,11 +5,10 @@
 # Flashen:
 #   cd /home/pi/openclaw_voice_assist
 #   esphome-venv/bin/esphome run esphome/respeaker.yaml --device /dev/ttyACM0
+#   OTA: esphome-venv/bin/esphome run esphome/respeaker.yaml --device respeaker-openclaw.local
 #
-# Nach dem ersten Flash: WLAN automatisch via secrets.yaml, kein Captive Portal nötig.
-#
-# Wakeword-Modell: "okay_nabu" (Standard).
-# Eigene Wakewords: https://github.com/kahrendt/microWakeWord/releases
+# Wakeword läuft auf dem Pi (openwakeword "hey jarvis").
+# Der ESP streamt Audio kontinuierlich via voice_assistant + button trigger.
 
 substitutions:
   device_name: respeaker-openclaw
@@ -61,13 +60,15 @@ logger:
   logs:
     i2s_audio: WARN
     respeaker_xvf3800: INFO
-    micro_wake_word: INFO
     voice_assistant: INFO
+
+http_request:
+  timeout: 10s
 
 # ESPHome Native API — darüber spricht der Python-Client (aioesphomeapi, Port 6053)
 api:
   # encryption:
-  #   key: !secret api_encryption_key  # aktivieren wenn aioesphomeapi encryption_key gesetzt
+  #   key: !secret api_encryption_key
 
 ota:
   - platform: esphome
@@ -80,7 +81,7 @@ i2c:
     scan: true
     frequency: 100kHz
 
-# I2S-Audio — LRCLK/BCLK werden von XIOS XVF3800 als Master getrieben
+# I2S-Audio — LRCLK/BCLK werden vom XVF3800 als Master getrieben
 i2s_audio:
   - id: i2s_output
     i2s_lrclk_pin:
@@ -112,24 +113,23 @@ microphone:
 
 speaker:
   - platform: i2s_audio
-    id: i2s_speaker
-    sample_rate: 48000
-    i2s_mode: secondary
-    i2s_dout_pin: GPIO44
-    bits_per_sample: 32bit
-    i2s_audio_id: i2s_output
+    id: i2s_out_speaker
     dac_type: external
+    i2s_dout_pin: GPIO44
+    i2s_audio_id: i2s_output
+    i2s_mode: secondary
     channel: stereo
-    timeout: never
-    buffer_duration: 100ms
-    audio_dac: aic3104_dac
-
-  # Resampler damit voice_assistant TTS (16 kHz) zum 48-kHz-Speaker passt
-  - platform: resampler
-    id: tts_resampling_speaker
-    output_speaker: i2s_speaker
+    bits_per_sample: 32bit
     sample_rate: 48000
-    bits_per_sample: 16
+    timeout: never
+
+media_player:
+  - platform: speaker
+    id: respeaker_player
+    name: "ReSpeaker Player"
+    announcement_pipeline:
+      speaker: i2s_out_speaker
+      format: WAV
 
 audio_dac:
   - platform: aic3104
@@ -137,7 +137,6 @@ audio_dac:
     i2c_id: internal_i2c
 
 external_components:
-  # Gepatchtés i2s_audio mit Respeaker-Mic-Unterstützung
   - source:
       type: git
       url: https://github.com/formatBCE/esphome
@@ -145,7 +144,6 @@ external_components:
     components:
       - i2s_audio
     refresh: 0s
-  # ReSpeaker XVF3800 Komponente (I2C-Steuerung: Mute, LED, Firmware-Update)
   - source:
       type: git
       url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
@@ -155,7 +153,7 @@ external_components:
       - aic3104
     refresh: 0s
 
-# XVF3800-DSP über I2C — steuert Mute, LED-Ring und hält Firmware aktuell
+# XVF3800-DSP über I2C
 respeaker_xvf3800:
   id: respeaker
   address: 0x2C
@@ -170,45 +168,47 @@ respeaker_xvf3800:
     name: "Voice Direction"
     id: beam_direction
     internal: true
-  # XVF3800-Firmware automatisch aktuell halten
   firmware:
     url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration/raw/refs/heads/main/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
     version: "1.0.7"
     md5: 043a848f544ff2c7265ac19685daf5de
 
-micro_wake_word:
-  id: mww
-  microphone:
-    microphone: i2s_mics
-    channels: 1
-  stop_after_detection: false
-  models:
-    # "okay nabu" — Standard-Wakeword, läuft vollständig auf dem ESP
-    # Eigene Modelle: https://github.com/kahrendt/microWakeWord/releases
-    - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
-      id: okay_nabu
+# Button damit der Pi eine Hör-Session starten kann (kein micro_wakeword mehr —
+# Wakeword läuft als openwakeword auf dem Pi gegen den Audio-Stream).
+button:
+  - platform: template
+    name: "Start Listening"
+    id: start_listening_btn
+    on_press:
+      - voice_assistant.start:
 
-# voice_assistant — stellt das Audio-Streaming-Protokoll bereit, das
-# aioesphomeapi auf dem Pi via subscribe_voice_assistant() nutzt.
-# Kein Home Assistant nötig — der Python-Client übernimmt STT/TTS/OpenClaw.
+number:
+  - platform: template
+    name: "LED Phase"
+    id: led_phase_input
+    min_value: 0
+    max_value: 5
+    step: 1
+    optimistic: true
+    on_value:
+      - lambda: id(va_phase) = (int)x;
+      - script.execute: control_leds
+
+# voice_assistant — Audio-Streaming-Protokoll für aioesphomeapi.
+# Kein micro_wakeword: Pi triggert via button, streamt Audio, macht Wakeword selbst.
 voice_assistant:
   id: va
   microphone:
     microphone: i2s_mics
     channels: 1
-  speaker: tts_resampling_speaker
-  micro_wake_word: mww
-  noise_suppression_level: 2
+  media_player: respeaker_player
+  noise_suppression_level: 1
   auto_gain: 31dBFS
-  volume_multiplier: 2.0
-  on_wake_word_detected:
-    - script.execute: led_listening
+  volume_multiplier: 4.0
   on_listening:
     - script.execute: led_listening
   on_stt_vad_end:
     - script.execute: led_thinking
-  on_tts_start:
-    - script.execute: led_replying
   on_end:
     - script.execute: led_idle
   on_error:
@@ -220,7 +220,6 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
-    # 0=idle, 1=listening, 2=thinking, 3=replying
 
 script:
   - id: control_leds

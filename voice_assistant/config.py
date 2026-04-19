@@ -36,6 +36,7 @@ class RespeakerAudio:
     port: int = 6053
     encryption_key: str = ""
     use_speaker: bool = True  # False → TTS geht auf ALSA (Fallback)
+    volume: float = 0.8  # 0.0–1.0, wird beim Connect via API gesetzt
 
 
 @dataclass
@@ -139,6 +140,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         port=int(resp_raw.get("port", 6053)),
         encryption_key=str(resp_raw.get("encryption_key", "")),
         use_speaker=bool(resp_raw.get("use_speaker", True)),
+        volume=float(resp_raw.get("volume", 0.8)),
     )
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---
