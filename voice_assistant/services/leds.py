@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _CONTROLLER = os.path.join(_PROJECT_DIR, "wled_controller.py")
@@ -26,7 +25,7 @@ class WledLeds:
     def _run(self, args: list[str]) -> None:
         if not self.enabled:
             return
-        subprocess.run(
+        subprocess.Popen(
             self._cmd + args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -37,7 +36,6 @@ class WledLeds:
 
     def clear(self) -> None:
         self._run(["clear"])
-        time.sleep(0.05)
 
 
 class RespeakerRing:
@@ -50,30 +48,17 @@ class RespeakerRing:
     _PHASE: dict[int, int] = {0: 0, 1: 1, 2: 2, 3: 0, 4: 2, 5: 3}
 
     def __init__(self, cfg: object, enabled: bool = True) -> None:
-        import asyncio
         from voice_assistant.audio.respeaker import get_client
         self._client = get_client(cfg)  # type: ignore[arg-type]
         self.enabled = enabled
         self._key: int | None = None
-        self._asyncio = asyncio
 
     def _find_key(self) -> bool:
         if self._key is not None:
             return True
-        if self._client._api is None or self._client._loop is None:
-            return False
-        fut = self._asyncio.run_coroutine_threadsafe(
-            self._client._api.list_entities_services(),
-            self._client._loop,
-        )
-        try:
-            entities, _ = fut.result(timeout=5.0)
-            for e in entities:
-                if hasattr(e, "name") and "LED Phase" in e.name:
-                    self._key = e.key
-                    return True
-        except Exception:
-            pass
+        if self._client.led_phase_key is not None:
+            self._key = self._client.led_phase_key
+            return True
         return False
 
     def _set_phase(self, phase: int) -> None:

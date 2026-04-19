@@ -70,6 +70,7 @@ class RespeakerClient:
         self._api: aioesphomeapi.APIClient | None = None
         self._button_key: int | None = None
         self._player_key: int | None = None
+        self.led_phase_key: int | None = None  # von RespeakerRing gelesen
         self._buf = b""
         self._in_session = False
         self._thread = threading.Thread(
@@ -110,6 +111,9 @@ class RespeakerClient:
             if hasattr(e, "name") and "Player" in e.name:
                 self._player_key = e.key
                 log.info("Media-Player key=%d", e.key)
+            if hasattr(e, "name") and "LED Phase" in e.name:
+                self.led_phase_key = e.key
+                log.info("LED-Phase-Number key=%d", e.key)
 
         if self._player_key is not None:
             self._api.media_player_command(self._player_key, volume=self._cfg.volume)
