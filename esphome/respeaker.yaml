@@ -180,7 +180,8 @@ respeaker_xvf3800:
     on_value:
       - lambda: |-
           // XVF3800 liefert direkt LED-Index 0–11 (nicht Grad)
-          id(beam_led_pos) = ((int)(x + 0.5f)) % 12;
+          // +6 = 180° Korrektur (Gerät mit LEDs oben montiert)
+          id(beam_led_pos) = ((int)(x + 0.5f) + 6) % 12;
   firmware:
     url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration/raw/refs/heads/main/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
     version: "1.0.7"
