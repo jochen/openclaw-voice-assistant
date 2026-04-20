@@ -60,8 +60,8 @@ Das Repo enthält eine `.python-version`-Datei — pyenv aktiviert 3.11.9 automa
 ### 3. Venv anlegen und Dependencies installieren
 
 ```bash
-python -m venv ~/ow-venv
-source ~/ow-venv/bin/activate
+python -m venv /home/pi/openclaw_voice_assist/ow-venv
+source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -111,7 +111,7 @@ cp config.example.yaml config.yaml
 ## Starten
 
 ```bash
-source ~/ow-venv/bin/activate
+source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
 python -m voice_assistant
 ```
 

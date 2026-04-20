@@ -60,8 +60,8 @@ The repo includes a `.python-version` file — pyenv activates 3.11.9 automatica
 ### 3. Create venv and install dependencies
 
 ```bash
-python -m venv ~/ow-venv
-source ~/ow-venv/bin/activate
+python -m venv /home/pi/openclaw_voice_assist/ow-venv
+source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -111,7 +111,7 @@ Edit `config.yaml`. Common fields:
 ## Running
 
 ```bash
-source ~/ow-venv/bin/activate
+source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
 python -m voice_assistant
 ```
 
