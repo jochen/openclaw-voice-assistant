@@ -278,12 +278,10 @@ script:
                     c[i] = 0x303030;
 
                 } else if (phase == 1) {
-                  // IDLE: alle LEDs sehr gedimmt blau, ein Punkt 1 Stufe heller
-                  // wandert extrem langsam: 60 Ticks × 50ms = 3s/Schritt → 36s/Umdrehung
-                  id(tick_count)++;
-                  int pos = (id(tick_count) / 60) % 12;
+                  // IDLE: alle LEDs sehr gedimmt blau, Beam-LED etwas heller
+                  int pos = id(beam_led_pos);
                   for (auto& x : c) x = 0x000040;  // Basis: sehr gedimmt
-                  c[pos] = 0x000060;                // Punkt: leicht heller
+                  c[pos] = 0x000060;                // Beam-Richtung: leicht heller
 
                 } else if (phase == 2) {
                   // WAKEWORD: alle 12 LEDs hell rot
