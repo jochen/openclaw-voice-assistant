@@ -171,7 +171,7 @@ def run() -> None:
                         # Trigger erkannt: sofort loggen + LED, aber Aktion
                         # erst wenn Streak endet (score fällt unter Schwelle)
                         beam = getattr(audio_source, "beam_angle", None)
-                        beam_str = f"  Beam: {beam:.0f}°" if beam is not None else ""
+                        beam_str = f"  Beam: LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                         print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}{beam_str}")
                         leds.set_phase(LED_WAKEWORD)
                 else:
@@ -179,7 +179,7 @@ def run() -> None:
                         # Streak abgeschlossen — jetzt erst Aktion ausführen
                         scores_str = " ".join(f"{s:.2f}" for s in wake_scores)
                         beam = getattr(audio_source, "beam_angle", None)
-                        beam_str = f"  Beam: {beam:.0f}°" if beam is not None else ""
+                        beam_str = f"  Beam: LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                         print(f"[{now:.1f}s] 📊 Scores: [{scores_str}]{beam_str}")
                         if os.path.exists(PIPER_OUT):
                             print("🔊 Spiele Ja? ...")
@@ -199,7 +199,7 @@ def run() -> None:
                 if wake_hits >= 25:
                     scores_str = " ".join(f"{s:.2f}" for s in wake_scores)
                     beam = getattr(audio_source, "beam_angle", None)
-                    beam_str = f"  Beam: {beam:.0f}°" if beam is not None else ""
+                    beam_str = f"  Beam: LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                     print(f"[{now:.1f}s] 📊 Scores: [{scores_str}] (Timeout){beam_str}")
                     if os.path.exists(PIPER_OUT):
                         print("🔊 Spiele Ja? ...")
