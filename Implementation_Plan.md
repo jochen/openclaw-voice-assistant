@@ -312,7 +312,7 @@ ESPHome-Venv ist getrennt vom `ow-venv` (verschiedene Abhängigkeiten).
 ## Profil starten
 
 ```bash
-source ~/ow-venv/bin/activate
+source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
 GASTON_PROFILE=clawdpi_rs python -m voice_assistant
 ```
 
