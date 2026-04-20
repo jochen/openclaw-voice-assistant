@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import queue
 import time
+from collections import deque
 
 import webrtcvad
 
@@ -86,6 +87,33 @@ def _is_speech_chunk(vad: webrtcvad.Vad, audio_16) -> bool:
     return result
 
 
+def _format_wake_scores(scores: deque) -> str:
+    """Formatiert den Score-Verlauf eines Wakeword-Events als Einzeiler.
+
+    Sucht rückwärts die letzte Lücke (< 0.05) und zeigt alles danach.
+    | markiert die 0.65-Threshold-Kreuzungen (Anstieg und Abfall).
+    """
+    seq = list(scores)
+    start = len(seq)
+    for i in range(len(seq) - 1, -1, -1):
+        if seq[i] < 0.05:
+            start = i + 1
+            break
+        start = i
+    event = seq[start:]
+    if not event:
+        return "(leer)"
+    parts: list[str] = []
+    prev_above = event[0] >= 0.65
+    for s in event:
+        above = s >= 0.65
+        if above != prev_above:
+            parts.append("|")
+            prev_above = above
+        parts.append(f"{s:.2f}")
+    return " ".join(parts)
+
+
 def run() -> None:
     profile = load_profile()
 
@@ -150,8 +178,8 @@ def run() -> None:
     recorded_chunks: list = []
     silence_counter = 0
     speech_detected = False
-    wake_hits = 0   # Debounce: aufeinanderfolgende Frames über Threshold
-    wake_scores: list[float] = []  # alle Scores über Threshold bis Trigger
+    wake_hits = 0                           # aufeinanderfolgende Frames über Threshold
+    recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
 
     leds.set_phase(LED_IDLE)
     print("\n🎤 Bereit – warte auf 'hey jarvis'...\n")
@@ -164,23 +192,17 @@ def run() -> None:
             # --- LISTENING ---
             if state == STATE_LISTENING:
                 score = wakeword.feed(audio_16)
+                recent_scores.append(score)
                 if score > 0.65:
                     wake_hits += 1
-                    wake_scores.append(score)
                     if wake_hits == 2:
-                        # Trigger erkannt: sofort loggen + LED, aber Aktion
-                        # erst wenn Streak endet (score fällt unter Schwelle)
-                        beam = getattr(audio_source, "beam_angle", None)
-                        beam_str = f"  Beam: LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                        print(f"[{now:.1f}s] 🟢 WAKE WORD! Score: {score:.3f}{beam_str}")
                         leds.set_phase(LED_WAKEWORD)
+                        print(f"[{now:.1f}s] 🟢 Wakeword erkannt")
                 else:
                     if wake_hits >= 2:
-                        # Streak abgeschlossen — jetzt erst Aktion ausführen
-                        scores_str = " ".join(f"{s:.2f}" for s in wake_scores)
                         beam = getattr(audio_source, "beam_angle", None)
-                        beam_str = f"  Beam: LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                        print(f"[{now:.1f}s] 📊 Scores: [{scores_str}]{beam_str}")
+                        beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
+                        print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)}{beam_str}")
                         if os.path.exists(PIPER_OUT):
                             print("🔊 Spiele Ja? ...")
                             audio_sink.play_wav(PIPER_OUT)
@@ -193,14 +215,12 @@ def run() -> None:
                         silence_counter = 0
                         speech_detected = False
                     wake_hits = 0
-                    wake_scores = []
 
                 # Sicherheits-Timeout: nicht länger als 1s auf Streak-Ende warten
                 if wake_hits >= 25:
-                    scores_str = " ".join(f"{s:.2f}" for s in wake_scores)
                     beam = getattr(audio_source, "beam_angle", None)
-                    beam_str = f"  Beam: LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    print(f"[{now:.1f}s] 📊 Scores: [{scores_str}] (Timeout){beam_str}")
+                    beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
+                    print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)} (Timeout){beam_str}")
                     if os.path.exists(PIPER_OUT):
                         print("🔊 Spiele Ja? ...")
                         audio_sink.play_wav(PIPER_OUT)
@@ -213,7 +233,6 @@ def run() -> None:
                     silence_counter = 0
                     speech_detected = False
                     wake_hits = 0
-                    wake_scores = []
 
             # --- RECORDING ---
             elif state == STATE_RECORDING:
