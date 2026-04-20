@@ -187,7 +187,10 @@ class RespeakerClient:
 
         def on_state(state: object) -> None:
             if self._beam_key is not None and getattr(state, "key", None) == self._beam_key:
-                self.beam_angle = float(getattr(state, "state", 0.0))
+                new_angle = float(getattr(state, "state", 0.0))
+                if new_angle != self.beam_angle:
+                    log.info("Beam-Winkel: %.0f° → %.0f°", self.beam_angle, new_angle)
+                self.beam_angle = new_angle
 
         self._api.subscribe_states(on_state)
 
