@@ -198,8 +198,11 @@ def run() -> None:
             # --- LISTENING ---
             if state == STATE_LISTENING:
                 score = wakeword.feed(audio_16)
-                recent_scores.append(score)
-                if score > 0.65:
+                if score is not None:
+                    recent_scores.append(score)
+                if score is None:
+                    pass  # noch 640 Samples sammeln bevor neue Prediction
+                elif score > 0.65:
                     wake_hits += 1
                     if wake_hits == 2:
                         leds.set_phase(LED_WAKEWORD)
