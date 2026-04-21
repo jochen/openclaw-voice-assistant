@@ -90,18 +90,24 @@ def _is_speech_chunk(vad: webrtcvad.Vad, audio_16) -> bool:
 def _format_wake_scores(scores: deque) -> str:
     """Formatiert den Score-Verlauf eines Wakeword-Events als Einzeiler.
 
-    Sucht rückwärts die letzte Lücke (< 0.05) und zeigt alles danach.
+    Das letzte Element ist der Trigger-Frame (erster Score unter Threshold)
+    und wird vom Rückwärts-Search ausgenommen — sonst liefert ein abrupter
+    Abfall auf 0.00 fälschlich '(leer)'.
     | markiert die 0.65-Threshold-Kreuzungen (Anstieg und Abfall).
     """
     seq = list(scores)
-    start = len(seq)
-    for i in range(len(seq) - 1, -1, -1):
-        if seq[i] < 0.05:
+    if len(seq) < 2:
+        return "(leer)"
+    trigger = seq[-1]   # letzter Frame: erster below-threshold Score
+    search = seq[:-1]   # alles davor für die Rückwärts-Suche
+    start = len(search)
+    for i in range(len(search) - 1, -1, -1):
+        if search[i] < 0.05:
             start = i + 1
             break
         start = i
-    event = seq[start:]
-    if not event:
+    event = seq[start:]  # schließt trigger-Frame ein
+    if not event or all(s < 0.65 for s in event):
         return "(leer)"
     parts: list[str] = []
     prev_above = event[0] >= 0.65
