@@ -65,15 +65,20 @@ class SpeachesStt:
 
             # Halluzinations-Filter: no_speech_prob über alle Segmente mitteln
             segments = result.get("segments", [])
-            if segments:
-                avg_no_speech = sum(s.get("no_speech_prob", 0.0) for s in segments) / len(segments)
-                if avg_no_speech > 0.6:
-                    print(f"⚠️  STT verworfen (no_speech_prob={avg_no_speech:.2f}) — wahrscheinlich Halluzination")
-                    self.state.mark_stt_ok()
-                    return None
+            avg_no_speech = (
+                sum(s.get("no_speech_prob", 0.0) for s in segments) / len(segments)
+                if segments else 0.0
+            )
+            if avg_no_speech > 0.6:
+                print(f"⚠️  STT verworfen (no_speech_prob={avg_no_speech:.2f}) — wahrscheinlich Halluzination")
+                self.state.mark_stt_ok()
+                return None
 
             text = result.get("text", "").strip()
             self.state.mark_stt_ok()
+            if text:
+                nsp_str = f" (no_speech_prob={avg_no_speech:.2f})" if avg_no_speech > 0.0 else ""
+                print(f"🗣  [Speaches STT] Erkannt: '{text}'{nsp_str}")
             return text if text else None
         except urllib.error.HTTPError as e:
             body_err = e.read().decode(errors="replace")
@@ -126,7 +131,6 @@ class SttPipeline:
             wav_bytes = chunks_to_wav_bytes(audio_chunks)
             text = self.speaches.transcribe(wav_bytes)
             if text is not None:
-                print(f"🗣  [Speaches STT] Erkannt: '{text}'")
                 out.put(text)
                 return
             if self.speaches.state.stt_ok():
