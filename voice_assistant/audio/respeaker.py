@@ -75,6 +75,7 @@ class RespeakerClient:
         self.led_phase_key: int | None = None   # von RespeakerRing gelesen
         self.boot_step_key: int | None = None   # von RespeakerRing.set_boot_step gelesen
         self.beam_angle: float = 0.0            # aktueller Beam-Winkel in Grad (0–360)
+        self._last_led_phase: int = 1           # 1 = LED_IDLE — nach Reconnect wiederherstellen
         self._buf = b""
         self._in_session = False
         self._thread = threading.Thread(
@@ -195,6 +196,9 @@ class RespeakerClient:
         self._api.subscribe_states(on_state)
 
         await asyncio.sleep(2)
+        if self.led_phase_key is not None:
+            self._api.number_command(self.led_phase_key, float(self._last_led_phase))
+            log.info("LED-Phase %d nach Reconnect wiederhergestellt", self._last_led_phase)
         await self._press_start_button()
 
         await done  # bricht aus wenn _on_stop feuert (Verbindungsabbruch)

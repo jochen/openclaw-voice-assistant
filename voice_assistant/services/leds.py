@@ -91,6 +91,7 @@ class RespeakerRing:
             api.number_command(key, value)
 
     def set_phase(self, phase: int) -> None:
+        self._client._last_led_phase = phase
         self._number_command(self._client.led_phase_key, float(phase))
 
     def set_boot_step(self, step: int) -> None:
