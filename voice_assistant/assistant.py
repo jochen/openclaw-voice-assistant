@@ -24,7 +24,7 @@ from voice_assistant.config import (
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.leds import (
     LED_BOOT, LED_IDLE, LED_WAKEWORD, LED_RECORDING,
-    LED_STT, LED_CONFIRMATION, LED_ERROR,
+    LED_STT, LED_CONFIRMATION, LED_ERROR, LED_NEAR_MISS,
     LedDirector, RespeakerRing, WledLeds,
 )
 from voice_assistant.services.speaches import SpeachesState
@@ -185,6 +185,7 @@ def run() -> None:
     silence_counter = 0
     speech_detected = False
     wake_hits = 0                           # aufeinanderfolgende Frames über Threshold
+    near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
 
     leds.set_phase(LED_IDLE)
@@ -197,25 +198,30 @@ def run() -> None:
 
             # --- LISTENING ---
             if state == STATE_LISTENING:
+                if near_miss_until > 0.0 and now >= near_miss_until:
+                    leds.set_phase(LED_IDLE)
+                    near_miss_until = 0.0
+
                 score = wakeword.feed(audio_16)
                 if score is not None:
                     recent_scores.append(score)
                 if score is None:
-                    pass  # noch 640 Samples sammeln bevor neue Prediction
+                    pass  # noch 1280 Samples sammeln bevor neue Prediction
                 elif score > 0.65:
                     wake_hits += 1
-                    if wake_hits == 2:
+                    if wake_hits == 3:
                         leds.set_phase(LED_WAKEWORD)
                         print(f"[{now:.1f}s] 🟢 Wakeword erkannt")
                 else:
-                    if wake_hits >= 2:
-                        beam = getattr(audio_source, "beam_angle", None)
-                        beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
+                    beam = getattr(audio_source, "beam_angle", None)
+                    beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
+                    if wake_hits >= 3:
                         print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)}{beam_str}")
                         if os.path.exists(PIPER_OUT):
                             print("🔊 Spiele Ja? ...")
                             audio_sink.play_wav(PIPER_OUT)
                         leds.set_phase(LED_RECORDING)
+                        near_miss_until = 0.0
                         wakeword.reset()
                         audio_source.flush()
                         state = STATE_RECORDING
@@ -223,6 +229,10 @@ def run() -> None:
                         recorded_chunks = []
                         silence_counter = 0
                         speech_detected = False
+                    elif wake_hits >= 1:
+                        print(f"[{now:.1f}s] ⚡ Near-Miss ({wake_hits} Frame{'s' if wake_hits > 1 else ''}){beam_str}")
+                        leds.set_phase(LED_NEAR_MISS)
+                        near_miss_until = now + 0.6
                     wake_hits = 0
 
                 # Sicherheits-Timeout: nicht länger als 1s auf Streak-Ende warten
@@ -234,6 +244,7 @@ def run() -> None:
                         print("🔊 Spiele Ja? ...")
                         audio_sink.play_wav(PIPER_OUT)
                     leds.set_phase(LED_RECORDING)
+                    near_miss_until = 0.0
                     wakeword.reset()
                     audio_source.flush()
                     state = STATE_RECORDING

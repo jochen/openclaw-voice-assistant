@@ -233,6 +233,7 @@ WLED (mode: local) und ReSpeaker LED-Ring (mode: respeaker) sind exklusiv.
 | 9 | END | Alle aus — Pi wechselt nach 1s Pause auf IDLE |
 | 10 | ERROR | 6 LEDs (halber Ring), rot, statisch |
 | 11 | FOLLOWUP | Warm-gelb, sanft pulsierend — reserviert für zukünftige Rückfrage-Funktion |
+| 12 | NEAR_MISS | Beam-LED orange hell, Rest sehr dunkel — Wakeword fast erkannt (600ms) |
 
 ### WLED-Streifen (mode: local)
 

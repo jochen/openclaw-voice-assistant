@@ -27,6 +27,7 @@ LED_AUDIO_OUT    = 8
 LED_END          = 9
 LED_ERROR        = 10
 LED_FOLLOWUP     = 11
+LED_NEAR_MISS    = 12
 
 # WLED: Phase → (LED-Index, R, G, B) oder None = alles aus
 _WLED_PHASE: dict[int, tuple[int, int, int, int] | None] = {
@@ -42,6 +43,7 @@ _WLED_PHASE: dict[int, tuple[int, int, int, int] | None] = {
     LED_END:          None,
     LED_ERROR:        (0, 128, 0, 0),
     LED_FOLLOWUP:     (0, 200, 150, 0),
+    LED_NEAR_MISS:    (1, 255, 96, 0),
 }
 
 
