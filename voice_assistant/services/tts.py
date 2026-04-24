@@ -16,6 +16,7 @@ import urllib.request
 from typing import Callable
 
 from voice_assistant.config import (
+    FOLLOWUP_BEEP_PATH,
     PIPER_MODEL,
     PIPER_MODEL_EMO,
     PIPER_OUT,
@@ -107,6 +108,28 @@ def piper_synth(text: str, model: str = PIPER_MODEL) -> str | None:
     except Exception as e:
         print(f"⚠️  Piper TTS fehlgeschlagen: {e}")
         return None
+
+
+def prerender_followup_beep() -> None:
+    """Erzeugt einen kurzen 880-Hz-Piep als Follow-up-Einstiegsignal."""
+    import wave as _wave
+    import numpy as np
+
+    rate = 16000
+    t = np.linspace(0, 0.25, int(rate * 0.25), endpoint=False)
+    samples = (np.sin(2 * np.pi * 880 * t) * 16384).astype(np.int16)
+    fade = int(rate * 0.010)
+    samples[:fade] = (samples[:fade] * np.linspace(0, 1, fade)).astype(np.int16)
+    samples[-fade:] = (samples[-fade:] * np.linspace(1, 0, fade)).astype(np.int16)
+    try:
+        with _wave.open(FOLLOWUP_BEEP_PATH, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes(samples.tobytes())
+        print(f"✅ Follow-up-Beep erstellt: {FOLLOWUP_BEEP_PATH}")
+    except Exception as e:
+        print(f"⚠️  Follow-up-Beep fehlgeschlagen: {e}")
 
 
 def prerender_ja() -> None:

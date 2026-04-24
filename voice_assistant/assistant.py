@@ -12,6 +12,8 @@ import webrtcvad
 from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
 from voice_assistant.config import (
+    FOLLOWUP_BEEP_PATH,
+    MAX_FOLLOWUP_ROUNDS,
     MIN_SPEECH_CHUNKS,
     OPENCLAW_TIMEOUT,
     PIPER_OUT,
@@ -24,7 +26,7 @@ from voice_assistant.config import (
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.leds import (
     LED_BOOT, LED_IDLE, LED_WAKEWORD, LED_RECORDING,
-    LED_STT, LED_CONFIRMATION, LED_ERROR, LED_NEAR_MISS,
+    LED_STT, LED_CONFIRMATION, LED_ERROR, LED_NEAR_MISS, LED_FOLLOWUP, LED_END,
     LedDirector, RespeakerRing, WledLeds,
 )
 from voice_assistant.services.speaches import SpeachesState
@@ -33,9 +35,11 @@ from voice_assistant.services.tts import (
     ReplySpeaker,
     SpeachesTts,
     ThinkingWorker,
+    prerender_followup_beep,
     prerender_ja,
 )
 from voice_assistant.state import (
+    STATE_FOLLOWUP,
     STATE_LISTENING,
     STATE_PAUSE,
     STATE_PROCESSING,
@@ -156,6 +160,7 @@ def run() -> None:
     leds.set_boot_step(8)   # Speaches-Check abgeschlossen
 
     prerender_ja()
+    prerender_followup_beep()
 
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)
@@ -187,6 +192,10 @@ def run() -> None:
     wake_hits = 0                           # aufeinanderfolgende Frames über Threshold
     near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
+    followup_round = 0                     # aktuelle Follow-up-Runde (0 = kein Follow-up aktiv)
+    followup_rms_sum = 0.0
+    followup_rms_count = 0
+    followup_vad_speech = 0
 
     leds.set_phase(LED_IDLE)
     print("\n🎤 Bereit – warte auf 'hey jarvis'...\n")
@@ -279,6 +288,7 @@ def run() -> None:
                     else:
                         print(f"[{now:.1f}s] ⚠️  Keine Sprache erkannt")
                         leds.set_phase(LED_IDLE)
+                        followup_round = 0
                         state = STATE_LISTENING
 
             # --- PROCESSING (STT läuft) ---
@@ -325,9 +335,61 @@ def run() -> None:
                 if now - state_start > 1.0:
                     audio_source.flush()
                     wakeword.reset()
-                    leds.set_phase(LED_IDLE)
-                    state = STATE_LISTENING
-                    print(f"[{now:.1f}s] 🎤 Bereit – warte auf 'hey jarvis'...")
+                    if followup_round < MAX_FOLLOWUP_ROUNDS:
+                        followup_round += 1
+                        print(f"[{now:.1f}s] 🔄 Follow-up Runde {followup_round}/{MAX_FOLLOWUP_ROUNDS}")
+                        if os.path.exists(FOLLOWUP_BEEP_PATH):
+                            audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
+                        audio_source.flush()
+                        leds.set_phase(LED_FOLLOWUP)
+                        state = STATE_FOLLOWUP
+                        state_start = time.time()
+                        recorded_chunks = []
+                        silence_counter = 0
+                        speech_detected = False
+                        followup_rms_sum = 0.0
+                        followup_rms_count = 0
+                        followup_vad_speech = 0
+                    else:
+                        followup_round = 0
+                        leds.set_phase(LED_IDLE)
+                        state = STATE_LISTENING
+                        print(f"[{now:.1f}s] 🎤 Bereit – warte auf 'hey jarvis'...")
+
+            # --- FOLLOWUP (nach Antwort automatisch zuhören) ---
+            elif state == STATE_FOLLOWUP:
+                recorded_chunks.append(audio_16.copy())
+                rms = float(np.sqrt(np.mean((audio_16.astype(np.float32) / 32768.0) ** 2)))
+                followup_rms_sum += rms
+                followup_rms_count += 1
+                if _is_speech_chunk(vad, audio_16):
+                    speech_detected = True
+                    silence_counter = 0
+                    followup_vad_speech += 1
+                elif speech_detected:
+                    silence_counter += 1
+
+                timeout = (now - state_start) > 15.0
+                stop = speech_detected and silence_counter >= SILENCE_CHUNKS_LIMIT
+
+                if stop or timeout:
+                    avg_rms = followup_rms_sum / followup_rms_count if followup_rms_count else 0.0
+                    vad_str = f"{followup_vad_speech}/{followup_rms_count}"
+                    reason = "Stille" if stop else "Timeout"
+                    dur = len(recorded_chunks) * 1280 / RATE_OW
+                    print(
+                        f"[{now:.1f}s] ⏹  Follow-up beendet ({reason}), "
+                        f"{dur:.1f}s, RMS={avg_rms:.4f}, VAD={vad_str}"
+                    )
+                    if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
+                        leds.set_phase(LED_STT)
+                        state = STATE_PROCESSING
+                        workers.start_stt(recorded_chunks.copy())
+                    else:
+                        print(f"[{now:.1f}s] 🔇 Follow-up: keine ausreichende Sprache")
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        state = STATE_LISTENING
 
             time.sleep(0.001)
 
