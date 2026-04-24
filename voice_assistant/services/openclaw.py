@@ -18,7 +18,7 @@ def query(text: str, token: str, session: str, on_done=None) -> str | None:
     voice_input = (
         f"🎤 {text}\n\n"
         f"[VOICE: Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
-        f"gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen. "
+        f"gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen, keine Abkürzungen. "
         f"Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
     )
     payload = json.dumps(
