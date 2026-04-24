@@ -341,9 +341,9 @@ script:
                   // NEAR_MISS: Beam-LED orange, Rest sehr dunkel — kurzer Hinweis "fast"
                   int pos = id(beam_led_pos);
                   for (auto& x : c) x = 0x100500;
-                  c[pos] = 0xFF6000;
-                  c[(pos + 1) % 12] = 0x401500;
-                  c[(pos + 11) % 12] = 0x401500;
+                  c[pos] = 0xF08000;
+                  c[(pos + 1) % 12] = 0x392500;
+                  c[(pos + 11) % 12] = 0x392500;
                 }
 
                 id(respeaker).set_led_ring(c.data());
