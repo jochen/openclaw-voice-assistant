@@ -7,6 +7,7 @@ import queue
 import time
 from collections import deque
 
+import numpy as np
 import webrtcvad
 
 from voice_assistant.audio.alsa import AlsaSink, AlsaSource
