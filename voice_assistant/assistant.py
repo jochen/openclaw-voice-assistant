@@ -160,20 +160,20 @@ def run() -> None:
     )
     leds.set_boot_step(8)   # Speaches-Check abgeschlossen
 
-    prerender_ja()
+    prerender_ja(profile.locale.wakeword_ack)
     prerender_followup_beep()
 
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)
-    print("🔧 Initialisiere WebRTC VAD...")
+    print("🔧 Initialising WebRTC VAD...")
     vad = webrtcvad.Vad(3)
-    print("✅ WebRTC VAD bereit")
+    print("✅ WebRTC VAD ready")
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
     # --- Services zusammenstecken ---
     stt_pipeline = SttPipeline(speaches_stt, local_stt)
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
-    thinking = ThinkingWorker(audio_sink.play_wav)
+    thinking = ThinkingWorker(audio_sink.play_wav, profile.locale.thinking_phrases)
     workers = Workers(
         stt=stt_pipeline,
         speaker=speaker,
@@ -182,6 +182,9 @@ def run() -> None:
         openclaw_session=profile.openclaw_session,
         telegram_bot_token=profile.telegram_bot_token,
         telegram_chat_id=profile.telegram_chat_id,
+        confirmation_prefix=profile.locale.confirmation_prefix,
+        no_reply_fallback=profile.locale.no_reply_fallback,
+        voice_instruction=profile.locale.openclaw_voice_instruction,
     )
 
     # --- State-Machine ---
@@ -199,7 +202,7 @@ def run() -> None:
     followup_vad_speech = 0
 
     leds.set_phase(LED_IDLE)
-    print("\n🎤 Bereit – warte auf 'hey jarvis'...\n")
+    print("\n🎤 Ready – waiting for wakeword...\n")
 
     try:
         while True:
@@ -221,14 +224,14 @@ def run() -> None:
                     wake_hits += 1
                     if wake_hits == 3:
                         leds.set_phase(LED_WAKEWORD)
-                        print(f"[{now:.1f}s] 🟢 Wakeword erkannt")
+                        print(f"[{now:.1f}s] 🟢 Wakeword detected")
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                     if wake_hits >= 3:
                         print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)}{beam_str}")
                         if os.path.exists(PIPER_OUT):
-                            print("🔊 Spiele Ja? ...")
+                            print("🔊 Playing acknowledgement...")
                             audio_sink.play_wav(PIPER_OUT)
                         leds.set_phase(LED_RECORDING)
                         near_miss_until = 0.0
@@ -277,27 +280,27 @@ def run() -> None:
                 stop = speech_detected and silence_counter >= SILENCE_CHUNKS_LIMIT
 
                 if stop or timeout:
-                    reason = "Stille erkannt" if stop else "Timeout"
+                    reason = "silence" if stop else "timeout"
                     print(
-                        f"[{now:.1f}s] ⏹  Aufnahme beendet ({reason}), "
-                        f"{len(recorded_chunks) * 1280 / RATE_OW:.1f}s Audio"
+                        f"[{now:.1f}s] ⏹  Recording stopped ({reason}), "
+                        f"{len(recorded_chunks) * 1280 / RATE_OW:.1f}s audio"
                     )
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
                     else:
-                        print(f"[{now:.1f}s] ⚠️  Keine Sprache erkannt")
+                        print(f"[{now:.1f}s] ⚠️  No speech detected")
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
 
-            # --- PROCESSING (STT läuft) ---
+            # --- PROCESSING (STT running) ---
             elif state == STATE_PROCESSING:
                 try:
                     text = stt_queue.get_nowait()
                     if text:
-                        print(f"[{now:.1f}s] 📤 Sende an OpenClaw: '{text}'")
+                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw: '{text}'")
                         leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
                         reply_done_event.clear()
@@ -307,22 +310,22 @@ def run() -> None:
                         state = STATE_WAITING
                         state_start = now
                         print(
-                            f"[{now:.1f}s] ⏳ Warte auf Antwort (max {OPENCLAW_TIMEOUT}s)..."
+                            f"[{now:.1f}s] ⏳ Waiting for reply (max {OPENCLAW_TIMEOUT}s)..."
                         )
                     else:
-                        print(f"[{now:.1f}s] ⚠️  Leere Transkription")
+                        print(f"[{now:.1f}s] ⚠️  Empty transcription")
                         leds.set_phase(LED_IDLE)
                         state = STATE_LISTENING
                 except queue.Empty:
                     if now - state_start > 60.0:
-                        print("⚠️  STT Timeout!")
+                        print("⚠️  STT timeout!")
                         leds.set_phase(LED_ERROR)
                         state = STATE_LISTENING
 
-            # --- WAITING (auf OpenClaw-Antwort + TTS) ---
+            # --- WAITING (for OpenClaw reply + TTS) ---
             elif state == STATE_WAITING:
                 if now - state_start > OPENCLAW_TIMEOUT + 30:
-                    print(f"[{now:.1f}s] ⚠️  Gesamt-Timeout überschritten")
+                    print(f"[{now:.1f}s] ⚠️  Overall timeout exceeded")
                     thinking.stop()
                     leds.set_phase(LED_ERROR)
                     state = STATE_LISTENING
@@ -338,7 +341,7 @@ def run() -> None:
                     wakeword.reset()
                     if followup_round < MAX_FOLLOWUP_ROUNDS:
                         followup_round += 1
-                        print(f"[{now:.1f}s] 🔄 Follow-up Runde {followup_round}/{MAX_FOLLOWUP_ROUNDS}")
+                        print(f"[{now:.1f}s] 🔄 Follow-up round {followup_round}/{MAX_FOLLOWUP_ROUNDS}")
                         if os.path.exists(FOLLOWUP_BEEP_PATH):
                             audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
                         audio_source.flush()
@@ -355,7 +358,7 @@ def run() -> None:
                         followup_round = 0
                         leds.set_phase(LED_IDLE)
                         state = STATE_LISTENING
-                        print(f"[{now:.1f}s] 🎤 Bereit – warte auf 'hey jarvis'...")
+                        print(f"[{now:.1f}s] 🎤 Ready – waiting for wakeword...")
 
             # --- FOLLOWUP (nach Antwort automatisch zuhören) ---
             elif state == STATE_FOLLOWUP:
@@ -387,7 +390,7 @@ def run() -> None:
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
                     else:
-                        print(f"[{now:.1f}s] 🔇 Follow-up: keine ausreichende Sprache")
+                        print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech")
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
@@ -395,6 +398,6 @@ def run() -> None:
             time.sleep(0.001)
 
     except KeyboardInterrupt:
-        print("\n🛑 Beende...")
+        print("\n🛑 Shutting down...")
         leds.set_phase(LED_END)
         audio_source.close()

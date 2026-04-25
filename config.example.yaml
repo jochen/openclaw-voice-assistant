@@ -45,6 +45,22 @@ profiles:
 
     tts_prefix: ""
 
+    # Locale — all fields optional, defaults shown here (German)
+    # locale:
+    #   wakeword_ack: "Ja?"
+    #   confirmation_prefix: "Ich habe verstanden: "
+    #   no_reply_fallback: "Entschuldigung, ich konnte keine Antwort erhalten."
+    #   openclaw_voice_instruction: >
+    #     [VOICE: Call all necessary tools first, then reply in max 2-3 spoken
+    #     sentences. No markdown, no lists, no abbreviations.
+    #     Never invent anything — either call a tool or say what you don't know.]
+    #   thinking_phrases:
+    #     - "Einen Moment bitte."
+    #     - "Ich schaue kurz nach."
+    #     - "Ich bin noch dabei."
+    #     - "Fast fertig."
+    #     - "Noch einen Augenblick."
+
   # ---------------------------------------------------------------------
   # Beispiel "respeaker" - Mic + LED-Ring + Speaker am ReSpeaker
   # ---------------------------------------------------------------------
@@ -81,6 +97,8 @@ profiles:
     telegram_chat_id: "-DEINE_CHAT_ID"
 
     tts_prefix: "hm "
+
+    # locale: (see clawdpi profile above for available fields and defaults)
 
 # Hostname-Zuordnung: Welcher Hostname-Substring → welches Profil
 hostname_map:

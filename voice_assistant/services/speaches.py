@@ -53,7 +53,7 @@ class SpeachesState:
 
 def check_at_startup(state: SpeachesState, base: str, stt_model: str, tts_model: str) -> None:
     """Prüft ob Speaches erreichbar ist und die konfigurierten Modelle geladen sind."""
-    print(f"🔍 Prüfe Speaches ({base})...")
+    print(f"🔍 Checking Speaches ({base})...")
     try:
         req = urllib.request.Request(
             f"{base}/v1/models",
@@ -63,22 +63,22 @@ def check_at_startup(state: SpeachesState, base: str, stt_model: str, tts_model:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
             model_ids = [m["id"] for m in data.get("data", [])]
-        print(f"✅ Speaches erreichbar. Modelle: {model_ids}")
+        print(f"✅ Speaches reachable. Models: {model_ids}")
 
         if any(stt_model.lower() in m.lower() for m in model_ids):
-            print(f"✅ STT-Modell '{stt_model}' gefunden → Speaches STT aktiv")
+            print(f"✅ STT model '{stt_model}' found → Speaches STT active")
             state.mark_stt_ok()
         else:
-            print(f"⚠️  STT-Modell '{stt_model}' nicht gefunden → Fallback faster-whisper")
+            print(f"⚠️  STT model '{stt_model}' not found → faster-whisper fallback")
             state.mark_stt_failed()
 
         if any(tts_model.lower() in m.lower() for m in model_ids):
-            print(f"✅ TTS-Modell '{tts_model}' gefunden → Speaches TTS aktiv")
+            print(f"✅ TTS model '{tts_model}' found → Speaches TTS active")
             state.mark_tts_ok()
         else:
-            print(f"⚠️  TTS-Modell '{tts_model}' nicht gefunden → Fallback Piper")
+            print(f"⚠️  TTS model '{tts_model}' not found → Piper fallback")
             state.mark_tts_failed()
     except Exception as e:
-        print(f"⚠️  Speaches nicht erreichbar: {e} → Fallback aktiv")
+        print(f"⚠️  Speaches not reachable: {e} → fallback active")
         state.mark_stt_failed()
         state.mark_tts_failed()

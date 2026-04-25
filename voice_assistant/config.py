@@ -39,6 +39,28 @@ class RespeakerAudio:
     volume: float = 0.8  # 0.0–1.0, wird beim Connect via API gesetzt
 
 
+_DEFAULT_VOICE_INSTRUCTION = (
+    "[VOICE: Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
+    "gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen, keine Abkürzungen. "
+    "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
+)
+
+
+@dataclass
+class LocaleConfig:
+    wakeword_ack: str = "Ja?"
+    confirmation_prefix: str = "Ich habe verstanden: "
+    no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten."
+    openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
+    thinking_phrases: list = field(default_factory=lambda: [
+        "Einen Moment bitte.",
+        "Ich schaue kurz nach.",
+        "Ich bin noch dabei.",
+        "Fast fertig.",
+        "Noch einen Augenblick.",
+    ])
+
+
 @dataclass
 class LedsConfig:
     wled_enabled: bool = True
@@ -75,16 +97,19 @@ class Profile:
     # TTS
     tts_prefix: str = ""
 
+    # Locale
+    locale: LocaleConfig = field(default_factory=LocaleConfig)
+
 
 def _load_yaml() -> dict[str, Any]:
     try:
         import yaml  # type: ignore[import-not-found]
     except ImportError:
-        print("❌  PyYAML nicht installiert: pip install pyyaml")
+        print("❌  PyYAML not installed: pip install pyyaml")
         sys.exit(1)
     if not os.path.exists(CONFIG_PATH):
-        print(f"❌  config.yaml nicht gefunden: {CONFIG_PATH}")
-        print("    Kopiere config.example.yaml nach config.yaml und trage deine Werte ein.")
+        print(f"❌  config.yaml not found: {CONFIG_PATH}")
+        print("    Copy config.example.yaml to config.yaml and fill in your values.")
         sys.exit(1)
     with open(CONFIG_PATH, "r") as f:
         return yaml.safe_load(f) or {}
@@ -105,10 +130,10 @@ def _detect_profile_name(cfg: dict[str, Any]) -> str:
 
     fallback = next(iter(profiles), None)
     if fallback:
-        print(f"⚠️  Kein Profil für Hostname '{hostname}' → verwende '{fallback}'")
+        print(f"⚠️  No profile for hostname '{hostname}' → using '{fallback}'")
         return fallback
 
-    print("❌  Keine Profile in config.yaml definiert.")
+    print("❌  No profiles defined in config.yaml.")
     sys.exit(1)
 
 
@@ -121,7 +146,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
     """
     mode = str(raw.get("mode", "local")).lower()
     if mode not in ("local", "respeaker"):
-        print(f"⚠️  Unbekannter mode '{mode}' in Profil '{name}' → verwende 'local'")
+        print(f"⚠️  Unknown mode '{mode}' in profile '{name}' → using 'local'")
         mode = "local"
 
     # --- Local-Audio: neues Schema hat Vorrang, altes ist Fallback ---
@@ -154,6 +179,16 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         respeaker_ring_enabled=bool(ring_raw.get("enabled", False)),
     )
 
+    locale_raw = raw.get("locale") or {}
+    _dloc = LocaleConfig()
+    locale = LocaleConfig(
+        wakeword_ack=str(locale_raw.get("wakeword_ack", _dloc.wakeword_ack)),
+        confirmation_prefix=str(locale_raw.get("confirmation_prefix", _dloc.confirmation_prefix)),
+        no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
+        openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
+        thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
+    )
+
     return Profile(
         name=name,
         mode=mode,
@@ -169,6 +204,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),
+        locale=locale,
     )
 
 
@@ -177,7 +213,7 @@ def load_profile() -> Profile:
     name = _detect_profile_name(cfg)
     raw = cfg["profiles"][name]
     profile = _parse_profile(name, raw)
-    print(f"🖥️  Profil: {name} (Hostname: {socket.gethostname()}, Mode: {profile.mode})")
+    print(f"🖥️  Profile: {name} (hostname: {socket.gethostname()}, mode: {profile.mode})")
     return profile
 
 
