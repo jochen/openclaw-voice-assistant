@@ -70,7 +70,7 @@ class SpeachesStt:
                 if segments else 0.0
             )
             if avg_no_speech > 0.6:
-                print(f"⚠️  STT verworfen (no_speech_prob={avg_no_speech:.2f}) — wahrscheinlich Halluzination")
+                print(f"⚠️  STT discarded (no_speech_prob={avg_no_speech:.2f}) — likely hallucination")
                 self.state.mark_stt_ok()
                 return None
 
@@ -86,7 +86,7 @@ class SpeachesStt:
             self.state.mark_stt_failed()
             return None
         except Exception as e:
-            print(f"⚠️  Speaches STT Fehler: {e}")
+            print(f"⚠️  Speaches STT error: {e}")
             self.state.mark_stt_failed()
             return None
 
@@ -95,11 +95,11 @@ class LocalWhisperStt:
     """Fallback-STT mit faster-whisper (CPU)."""
 
     def __init__(self) -> None:
-        print("🔧 Lade faster-whisper (lokaler Fallback)...")
+        print("🔧 Loading faster-whisper (local fallback)...")
         from faster_whisper import WhisperModel  # type: ignore[import-not-found]
 
         self.model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-        print(f"✅ faster-whisper '{WHISPER_MODEL}' bereit")
+        print(f"✅ faster-whisper '{WHISPER_MODEL}' ready")
 
     def transcribe(self, audio_chunks: list[np.ndarray]) -> str:
         audio = np.concatenate(audio_chunks)
@@ -127,7 +127,7 @@ class SttPipeline:
 
     def run(self, audio_chunks: list[np.ndarray], out: queue.Queue) -> None:
         if self.speaches.state.stt_ok():
-            print("🔄 STT: Versuche Speaches...")
+            print("🔄 STT: trying Speaches...")
             wav_bytes = chunks_to_wav_bytes(audio_chunks)
             text = self.speaches.transcribe(wav_bytes)
             if text is not None:
@@ -137,6 +137,6 @@ class SttPipeline:
                 # stt_ok() noch True → Halluzination verworfen, kein Fallback nötig
                 out.put(None)
                 return
-            print("⚠️  Speaches STT fehlgeschlagen → Fallback auf faster-whisper")
-        print("🔄 STT: Verwende faster-whisper (lokal)...")
+            print("⚠️  Speaches STT failed → falling back to faster-whisper")
+        print("🔄 STT: using faster-whisper (local)...")
         out.put(self.local.transcribe(audio_chunks))

@@ -1,7 +1,4 @@
-"""Hintergrund-Threads: STT, OpenClaw-Turn.
-
-Die Worker bekommen ihre Abhängigkeiten via Konstruktor — kein Modul-State.
-"""
+"""Background threads: STT, OpenClaw turn."""
 
 from __future__ import annotations
 
@@ -27,6 +24,9 @@ class Workers:
         openclaw_session: str,
         telegram_bot_token: str,
         telegram_chat_id: str,
+        confirmation_prefix: str = "Ich habe verstanden: ",
+        no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten.",
+        voice_instruction: str = "",
     ) -> None:
         self.stt = stt
         self.speaker = speaker
@@ -35,6 +35,9 @@ class Workers:
         self.openclaw_session = openclaw_session
         self.telegram_bot_token = telegram_bot_token
         self.telegram_chat_id = telegram_chat_id
+        self.confirmation_prefix = confirmation_prefix
+        self.no_reply_fallback = no_reply_fallback
+        self.voice_instruction = voice_instruction
 
     def start_stt(self, audio_chunks: list) -> threading.Thread:
         t = threading.Thread(
@@ -48,7 +51,7 @@ class Workers:
     def start_confirmation(self, recognized_text: str) -> threading.Thread:
         t = threading.Thread(
             target=self.speaker.speak,
-            args=(f"Ich habe verstanden: {recognized_text}",),
+            args=(f"{self.confirmation_prefix}{recognized_text}",),
             kwargs={"restore_leds": False},
             daemon=True,
         )
@@ -64,7 +67,7 @@ class Workers:
         t.start()
         return t
 
-    # --- interne Worker ---
+    # --- internal workers ---
     def _openclaw_turn(self, user_text: str) -> None:
         telegram.send(
             self.telegram_bot_token,
@@ -77,11 +80,12 @@ class Workers:
             user_text,
             token=self.openclaw_token,
             session=self.openclaw_session,
+            voice_instruction=self.voice_instruction,
             on_done=self.thinking.stop,
         )
 
         if full_reply:
-            print(f"✅ OpenClaw komplett: '{full_reply[:80]}...'")
+            print(f"✅ OpenClaw complete: '{full_reply[:80]}...'")
             telegram.send(
                 self.telegram_bot_token,
                 self.telegram_chat_id,
@@ -92,6 +96,6 @@ class Workers:
             self.speaker.speak(full_reply)
         else:
             pending_reply_text[0] = None
-            self.speaker.speak("Entschuldigung, ich konnte keine Antwort erhalten.")
+            self.speaker.speak(self.no_reply_fallback)
 
         reply_done_event.set()

@@ -9,18 +9,12 @@ import urllib.request
 from voice_assistant.config import OPENCLAW_RESPONSES_URL, OPENCLAW_TIMEOUT
 
 
-def query(text: str, token: str, session: str, on_done=None) -> str | None:
-    """Sendet einen Voice-Turn an /v1/responses und gibt die finale Antwort zurück.
+def query(text: str, token: str, session: str, voice_instruction: str = "", on_done=None) -> str | None:
+    """Send a voice turn to /v1/responses and return the final reply.
 
-    on_done: optionaler Callback, der vor dem Rückgabezeitpunkt aufgerufen wird
-             (z.B. um den Thinking-Worker zu stoppen).
+    on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
     """
-    voice_input = (
-        f"🎤 {text}\n\n"
-        f"[VOICE: Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
-        f"gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen, keine Abkürzungen. "
-        f"Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
-    )
+    voice_input = f"🎤 {text}\n\n{voice_instruction}" if voice_instruction else f"🎤 {text}"
     payload = json.dumps(
         {
             "model": "openclaw/main",
@@ -49,15 +43,15 @@ def query(text: str, token: str, session: str, on_done=None) -> str | None:
                     text_out = part.get("text", "").strip()
                     if text_out:
                         return text_out
-        print("⚠️  Leere Antwort von /v1/responses")
+        print("⚠️  Empty response from /v1/responses")
         return None
     except urllib.error.HTTPError as e:
-        print(f"❌ OpenClaw HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+        print(f"❌ OpenClaw HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")  # noqa: E501
         if on_done:
             on_done()
         return None
     except Exception as e:
-        print(f"❌ OpenClaw Fehler: {e}")
+        print(f"❌ OpenClaw error: {e}")
         if on_done:
             on_done()
         return None

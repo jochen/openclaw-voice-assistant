@@ -113,7 +113,7 @@ class RespeakerClient:
                 self._loop.run_until_complete(self._main())
             except Exception as exc:
                 log.error(
-                    "RespeakerClient Verbindungsfehler: %s — Retry in %ds",
+                    "RespeakerClient connection error: %s — retry in %ds",
                     exc, self._RECONNECT_DELAY,
                 )
             self._reset_state()
@@ -126,7 +126,7 @@ class RespeakerClient:
             password=None,
             noise_psk=self._cfg.encryption_key or None,
         )
-        log.info("Verbinde mit ReSpeaker %s:%d …", self._cfg.host, self._cfg.port)
+        log.info("Connecting to ReSpeaker %s:%d …", self._cfg.host, self._cfg.port)
 
         done: asyncio.Future = asyncio.get_event_loop().create_future()
 
@@ -137,29 +137,29 @@ class RespeakerClient:
                 )
 
         await self._api.connect(login=True, on_stop=_on_stop)
-        log.info("ReSpeaker verbunden")
+        log.info("ReSpeaker connected")
 
         entities, _ = await self._api.list_entities_services()
         for e in entities:
             if hasattr(e, "name") and "Listening" in e.name:
                 self._button_key = e.key
-                log.info("Start-Listening-Button key=%d", e.key)
+                log.info("Start-Listening button key=%d", e.key)
             if hasattr(e, "name") and "Player" in e.name:
                 self._player_key = e.key
                 log.info("Media-Player key=%d", e.key)
             if hasattr(e, "name") and "LED Phase" in e.name:
                 self.led_phase_key = e.key
-                log.info("LED-Phase-Number key=%d", e.key)
+                log.info("LED phase number key=%d", e.key)
             if hasattr(e, "name") and "Boot Step" in e.name:
                 self.boot_step_key = e.key
-                log.info("Boot-Step-Number key=%d", e.key)
+                log.info("Boot step number key=%d", e.key)
             if hasattr(e, "name") and "Voice Direction" in e.name:
                 self._beam_key = e.key
-                log.info("Beam-Sensor key=%d", e.key)
+                log.info("Beam sensor key=%d", e.key)
 
         if self._player_key is not None:
             self._api.media_player_command(self._player_key, volume=self._cfg.volume)
-            log.info("Lautstärke auf %.0f%% gesetzt", self._cfg.volume * 100)
+            log.info("Volume set to %.0f%%", self._cfg.volume * 100)
 
         async def handle_start(
             conversation_id: str,
@@ -198,7 +198,7 @@ class RespeakerClient:
         await asyncio.sleep(2)
         if self.led_phase_key is not None:
             self._api.number_command(self.led_phase_key, float(self._last_led_phase))
-            log.info("LED-Phase %d nach Reconnect wiederhergestellt", self._last_led_phase)
+            log.info("LED phase %d restored after reconnect", self._last_led_phase)
         await self._press_start_button()
 
         await done  # bricht aus wenn _on_stop feuert (Verbindungsabbruch)
@@ -207,9 +207,9 @@ class RespeakerClient:
         if self._api and self._button_key is not None:
             try:
                 self._api.button_command(self._button_key)
-                log.info("Start-Listening-Button gedrückt")
+                log.info("Start-Listening button pressed")
             except Exception as exc:
-                log.warning("button_command fehlgeschlagen: %s", exc)
+                log.warning("button_command failed: %s", exc)
 
     def press_start_button(self) -> None:
         """Aus Sync-Kontext: neue Session starten."""
@@ -325,7 +325,7 @@ class RespeakerSink:
         handler = _make_http_handler(self._serve_dir)
         srv = http.server.HTTPServer(("", self._HTTP_PORT), handler)
         threading.Thread(target=srv.serve_forever, daemon=True, name="respeaker-http").start()
-        log.info("TTS-HTTP-Server auf :%d (%s)", self._HTTP_PORT, self._serve_dir)
+        log.info("TTS HTTP server on :%d (%s)", self._HTTP_PORT, self._serve_dir)
 
     @staticmethod
     def _to_48k_stereo(src: str, dst: str) -> None:
@@ -364,7 +364,7 @@ class RespeakerSink:
     def play_wav(self, path: str) -> None:
         client = self._client
         if client._loop is None or client._api is None:
-            log.warning("RespeakerSink: kein API-Client verfügbar")
+            log.warning("RespeakerSink: no API client available")
             return
 
         filename = f"{os.getpid()}_{threading.get_ident()}.wav"
@@ -381,9 +381,9 @@ class RespeakerSink:
         )
         try:
             result = fut.result(timeout=65.0)
-            log.info("Announce abgeschlossen: success=%s", result.success)
+            log.info("Announce completed: success=%s", result.success)
         except Exception as exc:
-            log.error("Announce fehlgeschlagen: %s", exc)
+            log.error("Announce failed: %s", exc)
         finally:
             try:
                 os.unlink(dest)

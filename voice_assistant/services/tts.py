@@ -106,12 +106,12 @@ def piper_synth(text: str, model: str = PIPER_MODEL) -> str | None:
         )
         return tmp_wav
     except Exception as e:
-        print(f"⚠️  Piper TTS fehlgeschlagen: {e}")
+        print(f"⚠️  Piper TTS failed: {e}")
         return None
 
 
 def prerender_followup_beep() -> None:
-    """Erzeugt einen kurzen 880-Hz-Piep als Follow-up-Einstiegsignal."""
+    """Pre-renders a short 880 Hz beep as the follow-up entry signal."""
     import wave as _wave
     import numpy as np
 
@@ -127,31 +127,23 @@ def prerender_followup_beep() -> None:
             wf.setsampwidth(2)
             wf.setframerate(rate)
             wf.writeframes(samples.tobytes())
-        print(f"✅ Follow-up-Beep erstellt: {FOLLOWUP_BEEP_PATH}")
+        print(f"✅ Follow-up beep created: {FOLLOWUP_BEEP_PATH}")
     except Exception as e:
-        print(f"⚠️  Follow-up-Beep fehlgeschlagen: {e}")
+        print(f"⚠️  Follow-up beep failed: {e}")
 
 
-def prerender_ja() -> None:
-    """Erzeugt die vorkonfektionierte 'Ja?'-Antwort."""
-    print("🎤 Erstelle 'Ja?' Antwort mit Piper...")
+def prerender_ja(text: str = "Ja?") -> None:
+    """Pre-renders the wakeword acknowledgement with Piper."""
+    print(f"🎤 Pre-rendering wakeword acknowledgement ('{text}') with Piper...")
     try:
         subprocess.run(
-            [
-                "piper",
-                "--model",
-                PIPER_MODEL_EMO,
-                "--output_file",
-                PIPER_OUT,
-                "--speaker=1",
-                "Ja?",
-            ],
+            ["piper", "--model", PIPER_MODEL_EMO, "--output_file", PIPER_OUT, "--speaker=1", text],
             check=True,
             capture_output=True,
         )
-        print(f"✅ Audiodatei erstellt: {PIPER_OUT}")
+        print(f"✅ Audio file created: {PIPER_OUT}")
     except Exception as e:
-        print(f"⚠️ TTS-Setup fehlgeschlagen: {e}")
+        print(f"⚠️  TTS setup failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -196,25 +188,22 @@ class ReplySpeaker:
             clean = self.tts_prefix + clean_for_tts(text)
             if not clean.strip():
                 return
-            print(f"🔊 Lese vor: '{clean}'")
-            # Confirmation-TTS: rotierender Punkt; Antwort-TTS: statisches Grün
+            print(f"🔊 Speaking: '{clean}'")
             self.leds.set_phase(LED_CONFIRMATION if not restore_leds else LED_ANSWER_GLOW)
 
             sentences = split_into_sentences(clean)
-            print(f"🔊 {len(sentences)} Satz/Sätze")
+            print(f"🔊 {len(sentences)} sentence(s)")
 
             played = False
             if self.speaches.state.tts_ok():
-                print("🔄 TTS: Speaches (satzweise)...")
+                print("🔄 TTS: Speaches (sentence by sentence)...")
                 for i, sentence in enumerate(sentences):
-                    print(f"🔊 Satz {i + 1}/{len(sentences)}: '{sentence}'")
+                    print(f"🔊 Sentence {i + 1}/{len(sentences)}: '{sentence}'")
                     if restore_leds:
-                        self.leds.set_phase(LED_AUDIO_OUT)  # pulsierend grün
+                        self.leds.set_phase(LED_AUDIO_OUT)
                     ok = self._play_speaches_sentence(sentence)
                     if not ok:
-                        print(
-                            f"⚠️  Speaches fehlgeschlagen bei Satz {i + 1} → Fallback Piper"
-                        )
+                        print(f"⚠️  Speaches failed at sentence {i + 1} → Piper fallback")
                         remaining = " ".join(sentences[i:])
                         tmp_wav = piper_synth(remaining)
                         if tmp_wav:
@@ -224,7 +213,7 @@ class ReplySpeaker:
                 played = True
 
             if not played:
-                print("🔄 TTS: Piper (lokal)...")
+                print("🔄 TTS: Piper (local)...")
                 if restore_leds:
                     self.leds.set_phase(LED_AUDIO_OUT)
                 tmp_wav = piper_synth(clean)
@@ -232,7 +221,7 @@ class ReplySpeaker:
                     self.play_wav(tmp_wav)
                     os.unlink(tmp_wav)
                 else:
-                    print("❌ TTS vollständig fehlgeschlagen")
+                    print("❌ TTS completely failed")
 
             # Confirmation fertig → OpenClaw wartet noch; Antwort fertig → assistant.py übernimmt
             if not restore_leds:
@@ -240,30 +229,24 @@ class ReplySpeaker:
 
 
 # ---------------------------------------------------------------------------
-# Lebenszeichen während OpenClaw denkt
+# Heartbeat phrases while OpenClaw is thinking
 # ---------------------------------------------------------------------------
-THINKING_PHRASES = [
-    "Einen Moment bitte.",
-    "Ich schaue kurz nach.",
-    "Ich bin noch dabei.",
-    "Fast fertig.",
-    "Noch einen Augenblick.",
-]
-
 
 class ThinkingWorker:
-    def __init__(self, play_wav: PlayWav) -> None:
+    def __init__(self, play_wav: PlayWav, phrases: list) -> None:
         self.play_wav = play_wav
+        self._phrases = phrases
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def _loop(self) -> None:
-        phrases = iter(THINKING_PHRASES)
+        phrases = iter(self._phrases)
+        fallback = self._phrases[-1] if self._phrases else "..."
         if self._stop.wait(timeout=15):
             return
         while not self._stop.is_set():
-            phrase = next(phrases, "Ich bin noch dabei.")
-            print(f"💭 Lebenszeichen: '{phrase}'")
+            phrase = next(phrases, fallback)
+            print(f"💭 Heartbeat: '{phrase}'")
             tmp_wav = piper_synth(phrase)
             if tmp_wav:
                 with tts_lock:
