@@ -318,3 +318,70 @@ GASTON_PROFILE=clawdpi_rs python -m voice_assistant
 
 Oder Hostname-Map in `config.yaml` → `hostname_map:` pflegen für automatische
 Profil-Auswahl.
+
+---
+
+## Follow-up Modus (State-Machine-Erweiterung)
+
+**Ziel:** Nach einer Antwort des Assistenten automatisch auf eine Folgeäußerung
+warten — ohne erneutes Wakeword. Max. 3 Runden pro Gesprächseinstieg.
+
+### Implementierung
+
+Neuer State `STATE_FOLLOWUP` (Wert 5) in `state.py` + `assistant.py`:
+
+```
+PAUSE → (followup_round < MAX_FOLLOWUP_ROUNDS) → STATE_FOLLOWUP
+  → RMS+VAD pro Chunk messen
+  → bei Stille/Timeout ohne Sprache → IDLE, followup_round=0
+  → bei erkannter Sprache → STATE_PROCESSING → … → STATE_PAUSE
+      (followup_round bereits inkrementiert, nächste Runde beginnt)
+```
+
+| Konstante | Wert | Bedeutung |
+|---|---|---|
+| `MAX_FOLLOWUP_ROUNDS` | 3 | Max. aufeinanderfolgende Follow-up-Runden |
+| `FOLLOWUP_BEEP_PATH` | `workspace/followup_beep.wav` | 880-Hz-Beep als Einstiegs-Signal |
+| `LED_FOLLOWUP` | warm-gelb / sanftes Pulsieren | Signalisiert Zuhörmodus |
+
+`followup_round` wird in `assistant.py` als lokale Variable geführt (kein
+global state). Reset auf 0 bei: leerer Aufnahme (RECORDING), unzureichender
+Sprache (FOLLOWUP), leerem STT-Ergebnis.
+
+**Hinweis (offener Punkt):** Bei leerem STT-Ergebnis (`STATE_PROCESSING → STATE_LISTENING`)
+wird `followup_round` **nicht** zurückgesetzt. Beim nächsten Wakeword-Trigger
+startet die Zählung dann fälschlicherweise bei > 0. Bisher kein beobachtbares
+Problem, aber theoretisch inkonsistent.
+
+### Bugs während Implementierung
+
+**numpy nicht importiert** (`61d4da4`): `np.sqrt` / `np.mean` in
+`STATE_FOLLOWUP` schlug fehl weil `import numpy as np` in `assistant.py`
+fehlte. Fix: Import ergänzt.
+
+### i18n: LocaleConfig (`12b29cf`)
+
+Parallel eingeführt: Locale-Texte aus dem Code in `config.yaml` ausgelagert.
+
+```yaml
+locale:
+  wakeword_ack: "Ja?"
+  confirmation_prefix: "Ich habe verstanden: "
+  no_reply_fallback: "Entschuldigung, ich konnte keine Antwort erhalten."
+  openclaw_voice_instruction: "[VOICE: …]"
+  thinking_phrases:
+    - "Einen Moment bitte."
+    - …
+```
+
+`prerender_ja()` nimmt jetzt `wakeword_ack`-Text als Parameter.
+`openclaw.query()` bekommt `voice_instruction` als Parameter (nicht mehr
+hardcoded). `ThinkingWorker` und `Workers` nehmen Locale-Werte im Konstruktor.
+
+### Aktueller Stand (Stand: 2026-04-25)
+
+Alle Commits gemergt und auf `main` gepusht:
+- `de7297c` Feature: Follow-up Modus
+- `61d4da4` Fix: numpy import
+- `12b29cf` i18n: LocaleConfig
+- `f7d7408` Debug: followup_round im PAUSE-Log
