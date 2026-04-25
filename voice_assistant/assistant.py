@@ -339,6 +339,7 @@ def run() -> None:
                 if now - state_start > 1.0:
                     audio_source.flush()
                     wakeword.reset()
+                    print(f"[{now:.1f}s] ⏸  PAUSE done, followup_round={followup_round}/{MAX_FOLLOWUP_ROUNDS}")
                     if followup_round < MAX_FOLLOWUP_ROUNDS:
                         followup_round += 1
                         print(f"[{now:.1f}s] 🔄 Follow-up round {followup_round}/{MAX_FOLLOWUP_ROUNDS}")
