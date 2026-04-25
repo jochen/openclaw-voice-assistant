@@ -1,0 +1,351 @@
+# ESPHome-Firmware für ReSpeaker XVF3800 + XIAO ESP32-S3 — Fablab
+# Wird vom OpenClaw Voice Assistant über ESPHome Native API (Port 6053) gesteuert.
+# Kein Home Assistant erforderlich — Python-Client nutzt aioesphomeapi direkt.
+#
+# Flashen (USB, erstes Mal):
+#   cd /home/pi/openclaw_voice_assist
+#   esphome-venv/bin/esphome run esphome/respeaker-fablab.yaml --device /dev/ttyACM0
+# OTA (danach):
+#   esphome-venv/bin/esphome run esphome/respeaker-fablab.yaml --device respeaker-fablab.local
+#
+# WiFi: secrets.yaml — fablab_wifi_ssid / fablab_wifi_password
+# Wakeword läuft auf dem Pi (openwakeword "hey jarvis").
+
+substitutions:
+  device_name: respeaker-fablab
+  friendly_name: "ReSpeaker Fablab"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.4.0
+  on_boot:
+    - priority: -100
+      then:
+        - script.execute: animation_loop
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: "y"
+      CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY: "y"
+      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+wifi:
+  ssid: !secret fablab_wifi_ssid
+  password: !secret fablab_wifi_password
+  power_save_mode: none
+  reboot_timeout: 10min
+  on_connect:
+    - lambda: id(boot_step) = 3;  # WiFi verbunden — erste 3 LEDs an
+    - script.execute: animation_loop
+  on_disconnect:
+    - lambda: |-
+        id(va_phase) = 0;
+        id(boot_step) = 0;
+    - script.execute: animation_loop
+
+logger:
+  level: INFO
+  logs:
+    i2s_audio: WARN
+    respeaker_xvf3800: INFO
+    voice_assistant: INFO
+
+http_request:
+  timeout: 10s
+
+# ESPHome Native API — darüber spricht der Python-Client (aioesphomeapi, Port 6053)
+api:
+  # encryption:
+  #   key: !secret api_encryption_key
+  on_client_disconnected:
+    - lambda: |-
+        id(va_phase) = 0;
+        id(boot_step) = 3;  // WiFi läuft noch, Pi-Script nicht
+    - script.execute: animation_loop
+
+ota:
+  - platform: esphome
+    password: !secret fablab_ota_password
+
+i2c:
+  - id: internal_i2c
+    sda: GPIO5
+    scl: GPIO6
+    scan: true
+    frequency: 100kHz
+
+# I2S-Audio — LRCLK/BCLK werden vom XVF3800 als Master getrieben
+i2s_audio:
+  - id: i2s_output
+    i2s_lrclk_pin:
+      number: GPIO7
+      allow_other_uses: true
+    i2s_bclk_pin:
+      number: GPIO8
+      allow_other_uses: true
+
+  - id: i2s_input
+    i2s_lrclk_pin:
+      number: GPIO7
+      allow_other_uses: true
+    i2s_bclk_pin:
+      number: GPIO8
+      allow_other_uses: true
+
+microphone:
+  - platform: i2s_audio
+    id: i2s_mics
+    i2s_din_pin: GPIO43
+    adc_type: external
+    pdm: false
+    sample_rate: 48000
+    bits_per_sample: 32bit
+    i2s_mode: secondary
+    i2s_audio_id: i2s_input
+    channel: stereo
+
+speaker:
+  - platform: i2s_audio
+    id: i2s_out_speaker
+    dac_type: external
+    i2s_dout_pin: GPIO44
+    i2s_audio_id: i2s_output
+    i2s_mode: secondary
+    channel: stereo
+    bits_per_sample: 32bit
+    sample_rate: 48000
+    timeout: never
+
+media_player:
+  - platform: speaker
+    id: respeaker_player
+    name: "ReSpeaker Player"
+    announcement_pipeline:
+      speaker: i2s_out_speaker
+      format: WAV
+
+audio_dac:
+  - platform: aic3104
+    id: aic3104_dac
+    i2c_id: internal_i2c
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/formatBCE/esphome
+      ref: respeaker_microphone
+    components:
+      - i2s_audio
+    refresh: 0s
+  - source:
+      type: git
+      url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
+      ref: main
+    components:
+      - respeaker_xvf3800
+      - aic3104
+    refresh: 0s
+
+# XVF3800-DSP über I2C
+respeaker_xvf3800:
+  id: respeaker
+  address: 0x2C
+  mute_switch:
+    id: mic_mute_switch
+    name: "Microphone Mute"
+    update_interval: 1s
+  dfu_version:
+    name: "DSP Firmware Version"
+    update_interval: 120s
+  led_beam_sensor:
+    name: "Voice Direction"
+    id: beam_direction
+    internal: false
+    on_value:
+      - lambda: |-
+          // XVF3800 liefert direkt LED-Index 0–11 (nicht Grad)
+          // +6 = 180° Korrektur (Gerät mit LEDs oben montiert)
+          id(beam_led_pos) = ((int)(x + 0.5f) + 6) % 12;
+  firmware:
+    url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration/raw/refs/heads/main/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
+    version: "1.0.7"
+    md5: 043a848f544ff2c7265ac19685daf5de
+
+# Button damit der Pi eine Hör-Session starten kann (kein micro_wakeword mehr —
+# Wakeword läuft als openwakeword auf dem Pi gegen den Audio-Stream).
+button:
+  - platform: template
+    name: "Start Listening"
+    id: start_listening_btn
+    on_press:
+      - voice_assistant.start:
+
+number:
+  # Hauptzustand — Pi schickt Phase 0–11, ESP spielt passende Animation
+  - platform: template
+    name: "LED Phase"
+    id: led_phase_input
+    min_value: 0
+    max_value: 12
+    step: 1
+    optimistic: true
+    on_value:
+      - lambda: |-
+          id(va_phase) = (int)x;
+          id(dot_pos) = 0;
+          id(tick_count) = 0;
+      - script.execute: animation_loop
+
+  # Boot-Fortschritt — Pi setzt 0/3/6/9/12 je abgeschlossenem Init-Schritt
+  # 0=Start, 3=WiFi, 6=API-Connect, 9=Speaches, 12=Wakeword-Modell geladen
+  - platform: template
+    name: "Boot Step"
+    id: boot_step_input
+    min_value: 0
+    max_value: 12
+    step: 1
+    optimistic: true
+    on_value:
+      - lambda: id(boot_step) = (int)x;
+
+# voice_assistant — Pi steuert alle LED-Phasen, keine internen Handler
+voice_assistant:
+  id: va
+  microphone:
+    microphone: i2s_mics
+    channels: 1
+  media_player: respeaker_player
+  noise_suppression_level: 1
+  auto_gain: 31dBFS
+  volume_multiplier: 4.0
+
+# --- LED-Steuerung ---
+globals:
+  - id: va_phase
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: boot_step
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: dot_pos
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: tick_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: beam_led_pos
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+script:
+  # Haupt-Animations-Loop — läuft permanent, wertet va_phase alle 50ms aus
+  - id: animation_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: return true;
+          then:
+            - lambda: |-
+                int phase = id(va_phase);
+                std::array<uint32_t, 12> c = {};
+                uint32_t t_ms = millis();
+
+                if (phase == 0) {
+                  // BOOT: boot_step LEDs weiß (0=0 LEDs, 3=WiFi, 6=API, 9=Speaches, 12=Wakeword)
+                  int steps = id(boot_step);
+                  for (int i = 0; i < steps && i < 12; i++)
+                    c[i] = 0x303030;
+
+                } else if (phase == 1) {
+                  // IDLE: alle LEDs sehr gedimmt blau, Beam-LED etwas heller
+                  int pos = id(beam_led_pos);
+                  for (auto& x : c) x = 0x000040;  // Basis: sehr gedimmt
+                  c[pos] = 0x000060;                // Beam-Richtung: leicht heller
+
+                } else if (phase == 2) {
+                  // WAKEWORD: alle 12 LEDs hell rot
+                  for (auto& x : c) x = 0x7F0000;
+
+                } else if (phase == 3) {
+                  // RECORDING: rote Basis + Beam-Direction-Highlight
+                  for (auto& x : c) x = 0x280000;
+                  int b = id(beam_led_pos);
+                  c[b] = 0xFF0000;
+                  c[(b + 1) % 12] = 0x600000;
+                  c[(b + 11) % 12] = 0x600000;
+
+                } else if (phase >= 4 && phase <= 6) {
+                  // STT(4)/CONFIRMATION(5)/OPENCLAW_WAIT(6): rotierender Punkt
+                  // Geschwindigkeit: 4=150ms/Schritt, 5=100ms, 6=50ms
+                  id(tick_count)++;
+                  int tc = id(tick_count);
+                  bool advance = (phase == 4) ? (tc % 3 == 0)
+                               : (phase == 5) ? (tc % 2 == 0)
+                               : true;
+                  if (advance) id(dot_pos) = (id(dot_pos) + 1) % 12;
+                  int pos = id(dot_pos);
+                  uint32_t bright = (phase == 6) ? 0x800080 : 0x0000FF;  // 6=rot-lila
+                  uint32_t dim    = (phase == 6) ? 0x200020 : 0x000040;
+                  c[pos] = bright;
+                  c[(pos + 1) % 12] = dim;
+                  c[(pos + 11) % 12] = dim;
+
+                } else if (phase == 7) {
+                  // ANSWER_GLOW: alle LEDs grün, statisch
+                  for (auto& x : c) x = 0x007F00;
+
+                } else if (phase == 8) {
+                  // AUDIO_OUT: alle LEDs grün, pulsierend (~1.2s)
+                  float t = (t_ms % 1200) / 1200.0f;
+                  uint8_t g = (uint8_t)((0.35f + 0.65f * (0.5f + 0.5f * sinf(t * 6.283f))) * 0x7F);
+                  for (auto& x : c) x = ((uint32_t)g << 8);
+
+                } else if (phase == 9) {
+                  // END: alle aus (Pi wechselt nach Pause auf Phase 1)
+
+                } else if (phase == 10) {
+                  // ERROR: 6 LEDs (halber Ring), rot, statisch
+                  for (int i = 0; i < 6; i++) c[i] = 0x3F0000;
+
+                } else if (phase == 11) {
+                  // FOLLOWUP: warm-gelb, sanft pulsierend (~2.5s) — für Rückfrage
+                  float t = (t_ms % 2500) / 2500.0f;
+                  float br = 0.25f + 0.25f * (0.5f + 0.5f * sinf(t * 6.283f));
+                  uint8_t r = (uint8_t)(br * 0xFF);
+                  uint8_t g = (uint8_t)(br * 0xB0);
+                  for (auto& x : c) x = ((uint32_t)r << 16) | ((uint32_t)g << 8);
+
+                } else if (phase == 12) {
+                  // NEAR_MISS: Beam-LED orange, Rest sehr dunkel — kurzer Hinweis "fast"
+                  int pos = id(beam_led_pos);
+                  for (auto& x : c) x = 0x100500;
+                  c[pos] = 0xF08000;
+                  c[(pos + 1) % 12] = 0x392500;
+                  c[(pos + 11) % 12] = 0x392500;
+                }
+
+                id(respeaker).set_led_ring(c.data());
+            - delay: 50ms
