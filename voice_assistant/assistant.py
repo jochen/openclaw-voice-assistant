@@ -315,6 +315,7 @@ def run() -> None:
                     else:
                         print(f"[{now:.1f}s] ⚠️  Empty transcription")
                         leds.set_phase(LED_IDLE)
+                        followup_round = 0
                         state = STATE_LISTENING
                 except queue.Empty:
                     if now - state_start > 60.0:
