@@ -83,6 +83,8 @@ async def main():
             samples -= samples.mean()
             samples = np.clip(samples * 8, -32768, 32767).astype(np.int16)
             score = engine.feed(samples)
+            if score is None:
+                continue
             if score > max_score:
                 max_score = score
             if score > 0.05:
