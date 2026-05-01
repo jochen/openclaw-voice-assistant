@@ -341,7 +341,7 @@ def run() -> None:
                     audio_source.flush()
                     wakeword.reset()
                     print(f"[{now:.1f}s] ⏸  PAUSE done, followup_round={followup_round}/{MAX_FOLLOWUP_ROUNDS}")
-                    if followup_round < MAX_FOLLOWUP_ROUNDS:
+                    if followup_round < MAX_FOLLOWUP_ROUNDS and pending_reply_text[0] is not None:
                         followup_round += 1
                         print(f"[{now:.1f}s] 🔄 Follow-up round {followup_round}/{MAX_FOLLOWUP_ROUNDS}")
                         if os.path.exists(FOLLOWUP_BEEP_PATH):
