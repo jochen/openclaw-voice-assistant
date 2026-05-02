@@ -7,7 +7,7 @@ aufsetzen und mit einem ReSpeaker XVF3800 + XIAO ESP32-S3 ausstatten.
 
 ---
 
-## Erledigter Stand (2026-04-25)
+## Erledigter Stand (2026-04-25 bis 2026-05-01)
 
 | Was | Ergebnis |
 |---|---|
@@ -19,6 +19,54 @@ aufsetzen und mit einem ReSpeaker XVF3800 + XIAO ESP32-S3 ausstatten.
 | `esphome/respeaker-fablab.yaml` | Im Repo (gepusht), device_name: `respeaker-fablab`, WiFi-Keys `fablab_*` |
 | `esphome-venv` | Auf Fablab-Pi angelegt, ESPHome 2026.4 installiert |
 | Altes `voice_assistant.py` im Homedir | Umbenannt zu `voice_assistant_legacy_homedir.py` |
+| ReSpeaker geflasht + verbunden | `fablab_rs`-Profil läuft, ESP erreichbar unter `respeaker-fablab.local` |
+| Wakeword-Sensitivität angepasst | Threshold 0.65 → 0.35, Frames 3 → 2, Amplifikation 4× → 8× (siehe unten) |
+
+---
+
+## Besonderheiten Fablab-Pi vs. lokalem Pi
+
+### Wakeword-Sensitivität (respeaker mode, Fablab-Umgebung)
+
+Im Fablab läuft oft ein Lasercutter mit deutlichem Hintergrundrauschen.
+Messung mit `test_wakeword.py` (2026-05-01):
+- RMS (roh, nach ESPHome noise_suppression): ~724 — Signal kommt an
+- Max-Score "hey jarvis" mit 8× Gain: **0.331**
+- Mit Standard-Gain (4×): ca. 0.15 — zu niedrig für Threshold 0.65
+
+Direkt auf dem Fablab-Pi angepasst (nicht im Git):
+
+| Parameter | Standard | Fablab |
+|---|---|---|
+| `RespeakerSource.read_chunk()` Gain | `* 4` | `* 8` |
+| Wakeword-Threshold | `0.65` | `0.35` |
+| Konsekutive Frames | `3` | `2` |
+
+**Dateien auf dem Fablab-Pi:**
+- `voice_assistant/audio/respeaker.py` Zeile ~240: `samples * 8`
+- `voice_assistant/assistant.py` Zeile ~223: `score > 0.35`, `wake_hits == 2`, `wake_hits >= 2`
+
+Diese Werte sind bewusst nicht ins Git gepusht — sie sind für die Lärmsituation
+im Fablab optimiert und würden am lokalen Pi (leise Umgebung) zu Fehlauslösungen
+führen. Bei `git pull` auf dem Fablab-Pi müssen sie neu gesetzt werden.
+
+### pip-Problem im ow-venv
+
+Das ow-venv auf dem Fablab-Pi wurde ursprünglich als `/home/pi/ow-venv` angelegt
+und dann in den Projektordner verschoben. `bin/pip` hat den alten Pfad hardcoded
+und installiert Pakete ins alte venv statt ins neue.
+
+**Immer `python -m pip` verwenden, nie `pip` direkt:**
+```bash
+/home/pi/openclaw_voice_assist/ow-venv/bin/python -m pip install <paket>
+```
+
+### aioesphomeapi muss in Projekt-venv sein
+
+```bash
+cd /home/pi/openclaw_voice_assist
+ow-venv/bin/python -m pip install aioesphomeapi
+```
 
 ---
 
