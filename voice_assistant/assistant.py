@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import time
 from collections import deque
 
@@ -299,7 +300,12 @@ def run() -> None:
             elif state == STATE_PROCESSING:
                 try:
                     text = stt_queue.get_nowait()
-                    if text:
+                    if text and followup_round > 0 and re.search(r'\bstopp?\b', text, re.IGNORECASE):
+                        print(f"[{now:.1f}s] 🛑 Follow-up stop word detected: '{text}'")
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        state = STATE_LISTENING
+                    elif text:
                         print(f"[{now:.1f}s] 📤 Sending to OpenClaw: '{text}'")
                         leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
