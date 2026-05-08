@@ -14,25 +14,31 @@ import webrtcvad
 from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
 from voice_assistant.config import (
+    DIARIZATION_JOIN_TIMEOUT,
     FOLLOWUP_BEEP_PATH,
+    LAST_RECORDING_PATH,
     MAX_FOLLOWUP_ROUNDS,
     MIN_SPEECH_CHUNKS,
     OPENCLAW_TIMEOUT,
     PIPER_OUT,
     RATE_OW,
+    RECORDING_MAX_SEC,
     SILENCE_CHUNKS_LIMIT,
     VAD_FRAME_SIZE,
+    VOICE_DIR,
     Profile,
     load_profile,
 )
 from voice_assistant.services import speaches as speaches_mod
+from voice_assistant.services.diarization import SpeachesDiarizer
+from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.leds import (
     LED_BOOT, LED_IDLE, LED_WAKEWORD, LED_RECORDING,
     LED_STT, LED_CONFIRMATION, LED_ERROR, LED_NEAR_MISS, LED_FOLLOWUP, LED_END,
     LedDirector, RespeakerRing, WledLeds,
 )
 from voice_assistant.services.speaches import SpeachesState
-from voice_assistant.services.stt import LocalWhisperStt, SpeachesStt, SttPipeline
+from voice_assistant.services.stt import LocalWhisperStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes
 from voice_assistant.services.tts import (
     ReplySpeaker,
     SpeachesTts,
@@ -49,6 +55,7 @@ from voice_assistant.state import (
     STATE_WAITING,
     pending_reply_text,
     reply_done_event,
+    speaker_queue,
     stt_queue,
 )
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
@@ -73,6 +80,20 @@ def _is_stop_command(text: str, followup_round: int) -> bool:
     if followup_round > 0:
         return bool(_STOP_PATTERN_FOLLOWUP.search(text))
     return bool(_STOP_PATTERN_FIRST.search(text))
+
+
+def _save_last_recording(audio_chunks: list) -> None:
+    """Speichert die aktuelle Aufnahme als WAV unter LAST_RECORDING_PATH.
+
+    Wird nach jeder Sprach-Aufnahme gerufen — der OpenClaw-Enrolment-Tool
+    kopiert dieselbe Datei dann nach speakers/<name>.wav.
+    """
+    try:
+        os.makedirs(VOICE_DIR, exist_ok=True)
+        with open(LAST_RECORDING_PATH, "wb") as f:
+            f.write(chunks_to_wav_bytes(audio_chunks))
+    except Exception as e:
+        print(f"⚠️  Failed to save last_recording.wav: {e}")
 
 
 def _make_audio(profile: Profile):
@@ -194,6 +215,7 @@ def run() -> None:
     stt_pipeline = SttPipeline(speaches_stt, local_stt)
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
     thinking = ThinkingWorker(audio_sink.play_wav, profile.locale.thinking_phrases)
+    diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
     workers = Workers(
         stt=stt_pipeline,
         speaker=speaker,
@@ -205,7 +227,11 @@ def run() -> None:
         confirmation_prefix=profile.locale.confirmation_prefix,
         no_reply_fallback=profile.locale.no_reply_fallback,
         voice_instruction=profile.locale.openclaw_voice_instruction,
+        diarizer=diarizer,
     )
+
+    # Lokaler Enrolment-Server (von OpenClaw-Tool angesprochen)
+    start_enroll_server()
 
     # --- State-Machine ---
     state = STATE_LISTENING
@@ -296,7 +322,7 @@ def run() -> None:
                 elif speech_detected:
                     silence_counter += 1
 
-                timeout = (now - state_start) > 15.0
+                timeout = (now - state_start) > RECORDING_MAX_SEC
                 stop = speech_detected and silence_counter >= SILENCE_CHUNKS_LIMIT
 
                 if stop or timeout:
@@ -306,9 +332,11 @@ def run() -> None:
                         f"{len(recorded_chunks) * 1280 / RATE_OW:.1f}s audio"
                     )
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
+                        _save_last_recording(recorded_chunks)
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
+                        workers.start_diarization(recorded_chunks.copy())
                     else:
                         print(f"[{now:.1f}s] ⚠️  No speech detected")
                         leds.set_phase(LED_IDLE)
@@ -321,17 +349,28 @@ def run() -> None:
                     text = stt_queue.get_nowait()
                     if _is_stop_command(text, followup_round):
                         print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
+                        # Diarization-Resultat verwerfen damit Queue nicht überläuft
+                        try:
+                            speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
                     elif text:
-                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw: '{text}'")
+                        try:
+                            spk = speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            print(f"[{now:.1f}s] ⚠️  Diarization timeout — Sprecher unbekannt")
+                            spk = None
+                        spk_label = spk if spk else "unbekannt"
+                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}]: '{text}'")
                         leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
                         reply_done_event.clear()
                         pending_reply_text[0] = None
                         thinking.start()
-                        workers.start_openclaw_turn(text)
+                        workers.start_openclaw_turn(text, speaker=spk)
                         state = STATE_WAITING
                         state_start = now
                         print(
@@ -339,6 +378,10 @@ def run() -> None:
                         )
                     else:
                         print(f"[{now:.1f}s] ⚠️  Empty transcription")
+                        try:
+                            speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
@@ -400,7 +443,7 @@ def run() -> None:
                 elif speech_detected:
                     silence_counter += 1
 
-                timeout = (now - state_start) > 15.0
+                timeout = (now - state_start) > RECORDING_MAX_SEC
                 stop = speech_detected and silence_counter >= SILENCE_CHUNKS_LIMIT
 
                 if stop or timeout:
@@ -413,9 +456,11 @@ def run() -> None:
                         f"{dur:.1f}s, RMS={avg_rms:.4f}, VAD={vad_str}"
                     )
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
+                        _save_last_recording(recorded_chunks)
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
+                        workers.start_diarization(recorded_chunks.copy())
                     else:
                         print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech")
                         leds.set_phase(LED_IDLE)

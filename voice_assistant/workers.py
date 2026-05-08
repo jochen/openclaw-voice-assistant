@@ -5,11 +5,13 @@ from __future__ import annotations
 import threading
 
 from voice_assistant.services import openclaw, telegram
-from voice_assistant.services.stt import SttPipeline
+from voice_assistant.services.diarization import SpeachesDiarizer, run_diarization
+from voice_assistant.services.stt import SttPipeline, chunks_to_wav_bytes
 from voice_assistant.services.tts import ReplySpeaker, ThinkingWorker
 from voice_assistant.state import (
     pending_reply_text,
     reply_done_event,
+    speaker_queue,
     stt_queue,
 )
 
@@ -27,6 +29,7 @@ class Workers:
         confirmation_prefix: str = "Ich habe verstanden: ",
         no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten.",
         voice_instruction: str = "",
+        diarizer: SpeachesDiarizer | None = None,
     ) -> None:
         self.stt = stt
         self.speaker = speaker
@@ -38,6 +41,7 @@ class Workers:
         self.confirmation_prefix = confirmation_prefix
         self.no_reply_fallback = no_reply_fallback
         self.voice_instruction = voice_instruction
+        self.diarizer = diarizer
 
     def start_stt(self, audio_chunks: list) -> threading.Thread:
         t = threading.Thread(
@@ -47,6 +51,28 @@ class Workers:
         )
         t.start()
         return t
+
+    def start_diarization(self, audio_chunks: list) -> threading.Thread | None:
+        """Diarization parallel zur STT. Ergebnis landet in speaker_queue.
+
+        Wenn kein Diarizer konfiguriert ist, wird sofort None in die Queue
+        geschoben — die State-Machine kann sich darauf verlassen, immer ein
+        Element abzuholen.
+        """
+        if self.diarizer is None:
+            speaker_queue.put(None)
+            return None
+        t = threading.Thread(
+            target=self._diarize_worker,
+            args=(audio_chunks,),
+            daemon=True,
+        )
+        t.start()
+        return t
+
+    def _diarize_worker(self, audio_chunks: list) -> None:
+        wav_bytes = chunks_to_wav_bytes(audio_chunks)
+        run_diarization(self.diarizer, wav_bytes, speaker_queue)
 
     def start_confirmation(self, recognized_text: str) -> threading.Thread:
         t = threading.Thread(
@@ -58,22 +84,25 @@ class Workers:
         t.start()
         return t
 
-    def start_openclaw_turn(self, user_text: str) -> threading.Thread:
+    def start_openclaw_turn(
+        self, user_text: str, speaker: str | None = None
+    ) -> threading.Thread:
         t = threading.Thread(
             target=self._openclaw_turn,
-            args=(user_text,),
+            args=(user_text, speaker),
             daemon=True,
         )
         t.start()
         return t
 
     # --- internal workers ---
-    def _openclaw_turn(self, user_text: str) -> None:
+    def _openclaw_turn(self, user_text: str, speaker: str | None = None) -> None:
+        speaker_label = speaker if speaker else "unbekannt"
         telegram.send(
             self.telegram_bot_token,
             self.telegram_chat_id,
             user_text,
-            prefix="🎤 ",
+            prefix=f"🎤 [{speaker_label}] ",
         )
 
         full_reply = openclaw.query(
@@ -81,6 +110,7 @@ class Workers:
             token=self.openclaw_token,
             session=self.openclaw_session,
             voice_instruction=self.voice_instruction,
+            speaker=speaker,
             on_done=self.thinking.stop,
         )
 

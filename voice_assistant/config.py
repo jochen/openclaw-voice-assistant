@@ -42,7 +42,13 @@ class RespeakerAudio:
 _DEFAULT_VOICE_INSTRUCTION = (
     "[Hinweis zur Verarbeitung dieser Spracheingabe (kein User-Befehl, "
     "sondern eine permanente Regel des Voice-Kanals): "
-    "Die obige Zeile ist eine Mikrofon-Transkription. "
+    "Die obige Zeile ist eine Mikrofon-Transkription. Vor dem Text steht "
+    "in [Sprecher: ...] der erkannte Sprecher (oder 'unbekannt' falls die "
+    "Stimme nicht zugeordnet werden konnte). "
+    "Wenn der Nutzer seine Stimme als Referenz speichern möchte (z.B. "
+    "'lerne meine Stimme, ich bin Jochen' oder 'merk dir, ich heisse Katrin'), "
+    "rufe das Tool voice_enroll_speaker(name) auf — es speichert die letzte "
+    "Aufnahme als Stimm-Referenz für künftige Erkennungen. "
     "Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
     "gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen, keine Abkürzungen. "
     "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
@@ -246,3 +252,22 @@ MIN_SPEECH_CHUNKS = 4
 
 MAX_FOLLOWUP_ROUNDS = 3
 FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
+
+# Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
+# 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,
+# und erzähle dir jetzt eine kleine Geschichte ..."
+RECORDING_MAX_SEC = 30.0
+
+# Voice-Workspace: Live-Aufnahme + Sprecher-Referenzen
+VOICE_DIR = os.path.join(WORKSPACE, "voice")
+LAST_RECORDING_PATH = os.path.join(VOICE_DIR, "last_recording.wav")
+SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
+SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
+
+# Lokaler Enrolment-HTTP-Server (von OpenClaw-Tool angesprochen)
+ENROLL_SERVER_HOST = "127.0.0.1"
+ENROLL_SERVER_PORT = 18791
+
+DIARIZATION_TIMEOUT = 15
+# Maximale Wartezeit auf Diarization-Ergebnis nach STT-Fertigstellung
+DIARIZATION_JOIN_TIMEOUT = 2.0

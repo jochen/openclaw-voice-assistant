@@ -9,12 +9,25 @@ import urllib.request
 from voice_assistant.config import OPENCLAW_RESPONSES_URL, OPENCLAW_TIMEOUT
 
 
-def query(text: str, token: str, session: str, voice_instruction: str = "", on_done=None) -> str | None:
+def query(
+    text: str,
+    token: str,
+    session: str,
+    voice_instruction: str = "",
+    speaker: str | None = None,
+    on_done=None,
+) -> str | None:
     """Send a voice turn to /v1/responses and return the final reply.
 
+    speaker: erkannter Sprecher-Name (oder None für unbekannt). Wird im
+        Wrapper-Prefix mitgegeben, damit das LLM weiß, wer spricht und
+        ggf. ein Enrolment-Tool aufrufen kann.
     on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
     """
-    voice_input = f"🎤 {text}\n\n{voice_instruction}" if voice_instruction else f"🎤 {text}"
+    speaker_label = speaker if speaker else "unbekannt"
+    voice_input = f"🎤 [Sprecher: {speaker_label}] {text}"
+    if voice_instruction:
+        voice_input = f"{voice_input}\n\n{voice_instruction}"
     payload = json.dumps(
         {
             "model": "openclaw/main",

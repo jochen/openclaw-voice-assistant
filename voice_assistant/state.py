@@ -17,3 +17,4 @@ pending_reply = threading.Event()
 pending_reply_text: list[str | None] = [None]
 
 stt_queue: "queue.Queue[str | None]" = queue.Queue()
+speaker_queue: "queue.Queue[str | None]" = queue.Queue()
