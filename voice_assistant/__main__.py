@@ -11,7 +11,9 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _VENV_PY = os.path.join(_PROJECT_DIR, "ow-venv", "bin", "python")
 
 if sys.executable != _VENV_PY and os.path.exists(_VENV_PY):
-    os.execv(_VENV_PY, [_VENV_PY, "-m", "voice_assistant"] + sys.argv[1:])
+    # -u: stdout/stderr unbuffered — sonst gehen print()-Diagnoseausgaben
+    # beim tee/journalctl verloren bzw. erscheinen erst nach Prozess-Ende.
+    os.execv(_VENV_PY, [_VENV_PY, "-u", "-m", "voice_assistant"] + sys.argv[1:])
 
 
 def main() -> None:
