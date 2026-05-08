@@ -56,6 +56,25 @@ from voice_assistant.wakeword.respeaker import RespeakerWakeword
 from voice_assistant.workers import Workers
 
 
+_STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
+_STOP_ANY = r'(stopp?|halt|aus|abbrechen|nein|bitte)'
+# Im Follow-up reicht ein einzelnes "stop"/"stopp" — TV/Hintergrund-Wörter sollen nicht blockieren
+_STOP_PATTERN_FOLLOWUP = re.compile(r'\bstopp?\b', re.IGNORECASE)
+# Bei Erstanfrage muss eine 2-Wort-Kombi vorliegen, davon mind. eines ein Kern-Abbruchwort
+_STOP_PATTERN_FIRST = re.compile(
+    rf'\b{_STOP_CORE}\s+{_STOP_ANY}\b|\b{_STOP_ANY}\s+{_STOP_CORE}\b',
+    re.IGNORECASE,
+)
+
+
+def _is_stop_command(text: str, followup_round: int) -> bool:
+    if not text:
+        return False
+    if followup_round > 0:
+        return bool(_STOP_PATTERN_FOLLOWUP.search(text))
+    return bool(_STOP_PATTERN_FIRST.search(text))
+
+
 def _make_audio(profile: Profile):
     """Baut passende AudioSource + AudioSink je nach mode."""
     if profile.mode == "respeaker":
@@ -300,8 +319,8 @@ def run() -> None:
             elif state == STATE_PROCESSING:
                 try:
                     text = stt_queue.get_nowait()
-                    if text and followup_round > 0 and re.search(r'\bstopp?\b', text, re.IGNORECASE):
-                        print(f"[{now:.1f}s] 🛑 Follow-up stop word detected: '{text}'")
+                    if _is_stop_command(text, followup_round):
+                        print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
