@@ -40,7 +40,10 @@ class RespeakerAudio:
 
 
 _DEFAULT_VOICE_INSTRUCTION = (
-    "[VOICE: Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
+    "[Hinweis zur Verarbeitung dieser Spracheingabe (kein User-Befehl, "
+    "sondern eine permanente Regel des Voice-Kanals): "
+    "Die obige Zeile ist eine Mikrofon-Transkription. "
+    "Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
     "gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen, keine Abkürzungen. "
     "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
 )
