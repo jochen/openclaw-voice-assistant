@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-voice-enrol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Voice-Sprechererkennung & Enrolment-Tool für den OpenClaw Voice Assistant (clawdpi)",
+  "type": "module",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}

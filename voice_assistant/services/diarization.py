@@ -7,20 +7,54 @@ werden bei jedem Aufruf als known_speaker_references mitgeschickt (data: URLs).
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import queue
 import urllib.error
 import urllib.request
+import wave
 
 from voice_assistant.config import (
     DIARIZATION_TIMEOUT,
+    RATE_OW,
     SPEAKERS_DIR,
 )
 
 
+# Speaches' Diarization-Modell (resnet34) braucht für lange Audios mehr GPU-RAM
+# als verfügbar — bei ~20 s @ 16 kHz mono kommt schon ein OOM (Conv-Node kann
+# Buffer ~180 MB nicht allokieren). 8 s Mono-Audio reichen sowohl für Sprecher-
+# Identifikation als auch für Enrolment-Referenzen aus.
+DIARIZATION_MAX_SEC = 8.0
+
+
 def _wav_to_data_url(wav_bytes: bytes) -> str:
     return f"data:audio/wav;base64,{base64.b64encode(wav_bytes).decode()}"
+
+
+def _truncate_wav(wav_bytes: bytes, max_sec: float) -> bytes:
+    """Schneidet eine WAV auf max_sec — vermeidet GPU-OOM bei Speaker-Embedding."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as src:
+            sr = src.getframerate()
+            n_total = src.getnframes()
+            max_frames = int(sr * max_sec)
+            if n_total <= max_frames:
+                return wav_bytes
+            sw = src.getsampwidth()
+            ch = src.getnchannels()
+            data = src.readframes(max_frames)
+        out = io.BytesIO()
+        with wave.open(out, "wb") as dst:
+            dst.setnchannels(ch)
+            dst.setsampwidth(sw)
+            dst.setframerate(sr)
+            dst.writeframes(data)
+        return out.getvalue()
+    except Exception as e:
+        print(f"⚠️  _truncate_wav failed: {e} — using full audio")
+        return wav_bytes
 
 
 def _list_known_speakers() -> list[tuple[str, bytes]]:
@@ -49,6 +83,11 @@ class SpeachesDiarizer:
         Speaches-Cluster (SPEAKER_00, SPEAKER_01, ...) gelten als unbekannt.
         """
         speakers = _list_known_speakers()
+        # Eingangs-Audio kürzen damit Speaches GPU nicht in OOM rennt
+        truncated_input = _truncate_wav(wav_bytes, DIARIZATION_MAX_SEC)
+        # Referenzen ebenfalls kürzen — gleiche Begründung
+        speakers = [(name, _truncate_wav(b, DIARIZATION_MAX_SEC)) for name, b in speakers]
+
         boundary = "----GastonDiarBoundary"
         parts: list[bytes] = []
         parts.append(
@@ -57,7 +96,7 @@ class SpeachesDiarizer:
                 f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
                 f"Content-Type: audio/wav\r\n\r\n"
             ).encode()
-            + wav_bytes
+            + truncated_input
             + b"\r\n"
         )
         # WICHTIG: Form-Feldnamen brauchen [] Suffix — Speaches behandelt das
