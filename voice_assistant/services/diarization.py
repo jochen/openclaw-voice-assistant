@@ -60,18 +60,21 @@ class SpeachesDiarizer:
             + wav_bytes
             + b"\r\n"
         )
+        # WICHTIG: Form-Feldnamen brauchen [] Suffix — Speaches behandelt das
+        # als Multi-Value-Liste. Ohne den Suffix werden die Referenzen still
+        # ignoriert und Speaches fällt auf anonymes Clustering (SPEAKER_NN) zurück.
         for name, ref_bytes in speakers:
             parts.append(
                 (
                     f"--{boundary}\r\n"
-                    f'Content-Disposition: form-data; name="known_speaker_names"\r\n\r\n'
+                    f'Content-Disposition: form-data; name="known_speaker_names[]"\r\n\r\n'
                     f"{name}\r\n"
                 ).encode()
             )
             parts.append(
                 (
                     f"--{boundary}\r\n"
-                    f'Content-Disposition: form-data; name="known_speaker_references"\r\n\r\n'
+                    f'Content-Disposition: form-data; name="known_speaker_references[]"\r\n\r\n'
                     f"{_wav_to_data_url(ref_bytes)}\r\n"
                 ).encode()
             )
