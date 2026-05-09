@@ -9,10 +9,11 @@ Wakeword-gesteuerter Sprachassistent für Raspberry Pi. Verbindet lokale Sprache
 ```
 Audio-Frontend (ALSA-Mikrofon  ODER  ReSpeaker XVF3800 via ESPHome)
   → openWakeWord ("hey jarvis")
-  → WebRTC VAD + Aufnahme
+  → WebRTC VAD + Aufnahme (max 30 s)
   → STT: Speaches /v1/audio/transcriptions  (Fallback: faster-whisper lokal)
+  → Diarization (parallel): Speaches /v1/audio/diarization mit bekannten Sprechern
   → Bestätigung vorlesen ("Ich habe verstanden…") — paralleler Thread
-  → POST /v1/responses → OpenClaw (vollständiger Agentic Loop inkl. Tool-Calls)
+  → POST /v1/responses → OpenClaw  (Wrapper: "🎤 [Sprecher: jochen|unbekannt] {text}")
   → Antwort Satz für Satz via TTS: Speaches /v1/audio/speech  (Fallback: Piper lokal)
   → Anfrage + Antwort per Telegram spiegeln
 ```
@@ -194,15 +195,66 @@ ist das eine Fortsetzung oder Korrektur des letzten Voice-Tasks:
 4. Für Chat-Antworten gilt die 2-3-Satz-Beschränkung nicht
 ```
 
+## Sprechererkennung & Enrolment
+
+Jede Aufnahme läuft parallel zur STT durch die Speaches-Diarization. Der dominante Sprecher wird im Wrapper-Prefix an OpenClaw mitgegeben:
+
+```
+🎤 [Sprecher: jochen] Wie wird das Wetter?
+🎤 [Sprecher: unbekannt] Wie wird das Wetter?
+```
+
+### Workspace-Layout
+
+```
+~/.openclaw/workspace/voice/
+  last_recording.wav             aktuelle Aufnahme (wird pro Trigger überschrieben)
+  speakers/
+    jochen.wav                   aktive Referenz (geht an Speaches)
+  originals/
+    jochen-2026-05-09T22-15.wav  Backup mit Zeitstempel, bleibt erhalten
+```
+
+### Enrolment-HTTP-Server
+
+Der voice_assistant öffnet einen kleinen Loopback-HTTP-Server auf `127.0.0.1:18791`, über den externe Tools die Sprecher-Referenzen verwalten:
+
+| Methode | Pfad                | Body / Effekt |
+|---|---|---|
+| `POST` | `/enroll`           | `{"name": "Jochen"}` — kopiert `last_recording.wav` nach `speakers/jochen.wav` + Backup |
+| `GET`  | `/speakers`         | `{"speakers": ["jochen", "katrin"]}` |
+| `DELETE` | `/speakers/<name>` | entfernt die Referenz |
+
+Namen werden normalisiert (lower-case, alphanumerisch + `-_`).
+
+### Sprachgesteuertes Enrolment via OpenClaw-Plugin
+
+Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert drei Tools, die das LLM auf Sprachbefehl aufrufen kann:
+
+- `voice_enroll_speaker(name)` — bei *"lerne meine Stimme, ich bin Jochen"*
+- `voice_list_speakers()` — *"welche Stimmen kennst du?"*
+- `voice_remove_speaker(name)` — *"vergiss die Stimme von Jochen"*
+
+Installations-Anleitung: [`openclaw-plugin/README.md`](openclaw-plugin/README.md). Sobald installiert, läuft das sprachgesteuerte Enrolment End-to-End: nach dem Trigger-Satz einfach weiterreden — das gesamte 30 s-Aufnahmefenster wird als Referenz verwendet.
+
+### Einschränkungen
+
+- Speaches-Diarization braucht **mindestens 16 kHz mono mit 2–10 s echter Sprache** (Stille zählt nicht). Sehr kurze Follow-up-Antworten (≤ 2 s) werden oft als "unbekannt" klassifiziert.
+- Aufnahmen länger als ~10 s würden den GPU-Speicher sprengen (Wespeaker resnet34 Buffer-Allokation), daher kürzt der Diarization-Client Eingabe + Referenzen vor dem Request auf 8 s. Die volle Originalaufnahme bleibt in `originals/` und `last_recording.wav` erhalten.
+- Erst-Enrolment nutzt dieselbe Aufnahme, mit der der Nutzer den Befehl gesprochen hat (Variante 1). Qualität skaliert mit Aufnahmelänge und Geräuschpegel.
+
 ## Speaches-Integration
 
 STT: `POST {speaches_base}/v1/audio/transcriptions` — Modell `guillaumekln/faster-whisper-medium`
 
 TTS: `POST {speaches_base}/v1/audio/speech` — Modell `speaches-ai/piper-de_DE-thorsten-medium`
 
+Diarization: `POST {speaches_base}/v1/audio/diarization` — Modelle `Wespeaker/wespeaker-voxceleb-resnet34-LM` + `fedirz/segmentation_community_1` (Speaches ≥ v0.9.0-rc.3)
+
 60-Sekunden-Cooldown nach Verbindungsfehlern. Bei Ausfall greift automatisch der lokale Fallback:
 - STT: `faster-whisper` (Modell `small`, läuft auf dem Pi)
 - TTS: Piper (`~/.local/share/piper/de_DE-thorsten-low.onnx`)
+- Diarization hat keinen lokalen Fallback — wird zu "Sprecher: unbekannt"
 
 ### Piper TTS installieren (lokaler Fallback)
 

@@ -9,10 +9,11 @@ Wakeword-driven voice assistant for Raspberry Pi. Connects local speech input to
 ```
 Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
   → openWakeWord ("hey jarvis")
-  → WebRTC VAD + recording
+  → WebRTC VAD + recording (max 30 s)
   → STT: Speaches /v1/audio/transcriptions  (fallback: faster-whisper local)
+  → Diarization (parallel): Speaches /v1/audio/diarization with known speakers
   → Confirmation TTS ("I understood…") — parallel thread
-  → POST /v1/responses → OpenClaw (full agentic loop incl. tool calls)
+  → POST /v1/responses → OpenClaw  (wrapper: "🎤 [Sprecher: jochen|unbekannt] {text}")
   → Reply TTS sentence by sentence: Speaches /v1/audio/speech  (fallback: Piper local)
   → Mirror query + reply to Telegram
 ```
@@ -194,15 +195,66 @@ treat it as a continuation or correction of the last voice task:
 4. The 2-3 sentence limit does not apply to chat replies
 ```
 
+## Speaker Recognition & Enrolment
+
+Each recording runs through Speaches diarization in parallel to STT. The dominant speaker is forwarded to OpenClaw in the wrapper prefix:
+
+```
+🎤 [Sprecher: jochen] How is the weather?
+🎤 [Sprecher: unbekannt] How is the weather?
+```
+
+### Workspace layout
+
+```
+~/.openclaw/workspace/voice/
+  last_recording.wav             current recording (overwritten per trigger)
+  speakers/
+    jochen.wav                   active reference (sent to Speaches)
+  originals/
+    jochen-2026-05-09T22-15.wav  timestamped backup, never overwritten
+```
+
+### Enrolment HTTP server
+
+The voice_assistant exposes a small loopback HTTP server on `127.0.0.1:18791` that lets external tools manage speaker references:
+
+| Method | Path                | Body / Effect |
+|---|---|---|
+| `POST` | `/enroll`           | `{"name": "Jochen"}` — copies `last_recording.wav` to `speakers/jochen.wav` + timestamped backup |
+| `GET`  | `/speakers`         | `{"speakers": ["jochen", "katrin"]}` |
+| `DELETE` | `/speakers/<name>` | removes the reference |
+
+Names are normalized (lowercase, alphanumeric + `-_`).
+
+### Voice-driven enrolment via OpenClaw plugin
+
+The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers three tools the LLM can call from voice:
+
+- `voice_enroll_speaker(name)` — triggered by *"learn my voice, I am Jochen"*
+- `voice_list_speakers()` — *"what voices do you know?"*
+- `voice_remove_speaker(name)` — *"forget the voice of Jochen"*
+
+See [`openclaw-plugin/README.md`](openclaw-plugin/README.md) for installation. Once installed, voice-driven enrolment works end-to-end: just keep talking after the trigger phrase — the entire 30 s recording window is used as the reference.
+
+### Limitations
+
+- Speaches diarization needs **at least 16 kHz mono audio with 2–10 s of real speech** (silence does not contribute). Very short follow-up answers (≤ 2 s) often classify as "unknown".
+- Recordings longer than ~10 s would OOM the GPU (Wespeaker resnet34 buffer allocation), so the diarization client truncates input + references to 8 s before the request. The original full recording is still preserved in `originals/` and `last_recording.wav`.
+- The first-time enrolment uses the same recording the user spoke their request in (Variant 1). Quality scales with recording length and noise level.
+
 ## Speaches Integration
 
 STT: `POST {speaches_base}/v1/audio/transcriptions` — model `guillaumekln/faster-whisper-medium`
 
 TTS: `POST {speaches_base}/v1/audio/speech` — model `speaches-ai/piper-de_DE-thorsten-medium`
 
+Diarization: `POST {speaches_base}/v1/audio/diarization` — models `Wespeaker/wespeaker-voxceleb-resnet34-LM` + `fedirz/segmentation_community_1` (Speaches ≥ v0.9.0-rc.3)
+
 60-second cooldown after connection failures. On failure the local fallback activates automatically:
 - STT fallback: `faster-whisper` (model `small`, runs on the Pi)
 - TTS fallback: Piper (`~/.local/share/piper/de_DE-thorsten-low.onnx`)
+- Diarization has no local fallback — falls through to "speaker: unknown"
 
 ### Piper TTS (local fallback)
 
