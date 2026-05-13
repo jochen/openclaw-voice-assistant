@@ -10,3 +10,4 @@ live_wakeword_and_wisphertts11.py
 test_responses_step*.py
 prompt*.txt
 verlauf_*.txt
+.claude
