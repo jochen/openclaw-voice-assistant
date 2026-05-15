@@ -124,7 +124,13 @@ def _make_leds(profile: Profile) -> LedDirector:
     return LedDirector(*sinks)
 
 
-def _is_speech_chunk(vad: webrtcvad.Vad, audio_16) -> bool:
+def _is_speech_chunk(
+    vad: webrtcvad.Vad, audio_16: np.ndarray, min_rms: float = 0.0
+) -> bool:
+    if min_rms > 0.0:
+        rms = float(np.sqrt(np.mean(audio_16.astype(np.float32) ** 2)))
+        if rms < min_rms:
+            return False
     result = False
     for i in range(0, len(audio_16), VAD_FRAME_SIZE):
         frame = audio_16[i : i + VAD_FRAME_SIZE]
@@ -207,8 +213,15 @@ def run() -> None:
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)
     print("🔧 Initialising WebRTC VAD...")
-    vad = webrtcvad.Vad(3)
-    print("✅ WebRTC VAD ready")
+    vad = webrtcvad.Vad(profile.vad_aggressiveness)
+    _vad_rms_min = profile.vad_voice_rms_min
+    _silence_limit = profile.silence_chunks_limit or SILENCE_CHUNKS_LIMIT
+    print(
+        f"✅ WebRTC VAD ready "
+        f"(aggressiveness={profile.vad_aggressiveness}, "
+        f"rms_min={_vad_rms_min:.0f}, "
+        f"silence_chunks={_silence_limit})"
+    )
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
     # --- Services zusammenstecken ---
@@ -316,14 +329,14 @@ def run() -> None:
             # --- RECORDING ---
             elif state == STATE_RECORDING:
                 recorded_chunks.append(audio_16.copy())
-                if _is_speech_chunk(vad, audio_16):
+                if _is_speech_chunk(vad, audio_16, _vad_rms_min):
                     speech_detected = True
                     silence_counter = 0
                 elif speech_detected:
                     silence_counter += 1
 
                 timeout = (now - state_start) > RECORDING_MAX_SEC
-                stop = speech_detected and silence_counter >= SILENCE_CHUNKS_LIMIT
+                stop = speech_detected and silence_counter >= _silence_limit
 
                 if stop or timeout:
                     reason = "silence" if stop else "timeout"
@@ -436,7 +449,7 @@ def run() -> None:
                 rms = float(np.sqrt(np.mean((audio_16.astype(np.float32) / 32768.0) ** 2)))
                 followup_rms_sum += rms
                 followup_rms_count += 1
-                if _is_speech_chunk(vad, audio_16):
+                if _is_speech_chunk(vad, audio_16, _vad_rms_min):
                     speech_detected = True
                     silence_counter = 0
                     followup_vad_speech += 1
@@ -444,7 +457,7 @@ def run() -> None:
                     silence_counter += 1
 
                 timeout = (now - state_start) > RECORDING_MAX_SEC
-                stop = speech_detected and silence_counter >= SILENCE_CHUNKS_LIMIT
+                stop = speech_detected and silence_counter >= _silence_limit
 
                 if stop or timeout:
                     avg_rms = followup_rms_sum / followup_rms_count if followup_rms_count else 0.0

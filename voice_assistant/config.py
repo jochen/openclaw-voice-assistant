@@ -106,6 +106,19 @@ class Profile:
     # TTS
     tts_prefix: str = ""
 
+    # VAD-Empfindlichkeit — per Profil überschreibbar
+    # vad_aggressiveness: 0 (least) … 3 (most aggressive noise rejection)
+    vad_aggressiveness: int = 3
+    # RMS-Mindestschwelle für Sprachdetektion; 0 = deaktiviert.
+    # Chunks unter diesem Pegel zählen nie als Sprache, auch wenn VAD True sagt.
+    # Nützlich in Lärm-Umgebungen (Fablab): Hintergrundrauschen-RMS messen,
+    # dann Schwelle knapp darüber setzen (z.B. 900 wenn Rauschen ca. 724 RMS).
+    vad_voice_rms_min: float = 0.0
+    # Anzahl aufeinanderfolgender stiller Chunks zum Beenden der Aufnahme.
+    # 0 = globaler Default (SILENCE_CHUNKS_LIMIT = 25 ≈ 2 s).
+    # In lauten Umgebungen kleinerer Wert (z.B. 10 ≈ 800 ms) sinnvoll.
+    silence_chunks_limit: int = 0
+
     # Locale
     locale: LocaleConfig = field(default_factory=LocaleConfig)
 
@@ -213,6 +226,9 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),
+        vad_aggressiveness=int(raw.get("vad_aggressiveness", 3)),
+        vad_voice_rms_min=float(raw.get("vad_voice_rms_min", 0.0)),
+        silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
         locale=locale,
     )
 

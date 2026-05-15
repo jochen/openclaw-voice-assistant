@@ -45,6 +45,15 @@ profiles:
 
     tts_prefix: ""
 
+    # VAD-Empfindlichkeit — alle Felder optional, Defaults sind für ruhige Umgebungen.
+    # In lauten Umgebungen (Fablab, Werkstatt) anpassen:
+    #   1. Hintergrund-RMS messen (test_wakeword.py oder aus voice_assistant-Logs)
+    #   2. vad_voice_rms_min knapp über dem Hintergrund-RMS setzen
+    #   3. silence_chunks_limit reduzieren damit Aufnahme schneller endet
+    # vad_aggressiveness: 3         # 0–3, Default 3 (aggressivste Geräuschunterdrückung)
+    # vad_voice_rms_min: 0          # 0 = deaktiviert; Fablab-Empfehlung: ~900
+    # silence_chunks_limit: 0       # 0 = Default (25 ≈ 2 s); Fablab-Empfehlung: 10
+
     # Locale — all fields optional, defaults shown here (German)
     # locale:
     #   wakeword_ack: "Ja?"

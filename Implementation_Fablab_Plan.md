@@ -50,6 +50,25 @@ Diese Werte sind bewusst nicht ins Git gepusht — sie sind für die Lärmsituat
 im Fablab optimiert und würden am lokalen Pi (leise Umgebung) zu Fehlauslösungen
 führen. Bei `git pull` auf dem Fablab-Pi müssen sie neu gesetzt werden.
 
+### Aufnahme-Empfindlichkeit (VAD, ab 2026-05-15 konfigurierbar)
+
+Im Fablab führt der Hintergrundlärm dazu, dass die VAD kaum "Stille" erkennt —
+Aufnahmen laufen oft bis zum 30 s-Hard-Cap. Mit den neuen per-Profil-Feldern
+in `config.yaml` kann das direkt behoben werden (kein Code-Eingriff mehr nötig):
+
+```yaml
+profiles:
+  fablab_rs:
+    # Hintergrund-RMS aus test_wakeword.py: ~724
+    # Menschliche Stimme aus 1 m: deutlich höher
+    vad_voice_rms_min: 900     # Chunks unter 900 RMS = Rauschen, kein Sprache
+    silence_chunks_limit: 10   # 10 × 80 ms = 800 ms Stille → Aufnahme endet
+```
+
+`vad_voice_rms_min` herleiten: Durchschnitts-RMS aus `test_wakeword.py` ablesen
+(z.B. `RMS: 724`), dann ca. 20–25 % Puffer draufrechnen → 900.
+Bei Änderung am Lärmpegel (anderer Raum, Lasercutter aus) Wert ggf. anpassen.
+
 ### pip-Problem im ow-venv
 
 Das ow-venv auf dem Fablab-Pi wurde ursprünglich als `/home/pi/ow-venv` angelegt
