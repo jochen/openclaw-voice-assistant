@@ -232,9 +232,9 @@ voice_assistant:
     microphone: i2s_mics
     channels: 1
   media_player: respeaker_player
-  noise_suppression_level: 1
-  auto_gain: 31dBFS
-  volume_multiplier: 4.0
+  noise_suppression_level: 3   # erhöht von 1 → Dauergeräusche (Lasercutter) besser filtern
+  auto_gain: 20dBFS            # reduziert von 31 → weniger aggressives Anheben inkl. Rauschen
+  volume_multiplier: 2.0       # reduziert von 4.0 → niedrigerer Eingangspegel
 
 # --- LED-Steuerung ---
 globals:
