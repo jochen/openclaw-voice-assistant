@@ -32,6 +32,7 @@ from voice_assistant.config import (
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.diarization import SpeachesDiarizer
 from voice_assistant.services.enroll_server import start_enroll_server
+from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
 from voice_assistant.services.leds import (
     LED_BOOT, LED_IDLE, LED_WAKEWORD, LED_RECORDING,
     LED_STT, LED_CONFIRMATION, LED_ERROR, LED_NEAR_MISS, LED_FOLLOWUP, LED_END,
@@ -53,6 +54,7 @@ from voice_assistant.state import (
     STATE_PROCESSING,
     STATE_RECORDING,
     STATE_WAITING,
+    current_state,
     pending_reply_text,
     reply_done_event,
     speaker_queue,
@@ -243,8 +245,10 @@ def run() -> None:
         diarizer=diarizer,
     )
 
-    # Lokaler Enrolment-Server (von OpenClaw-Tool angesprochen)
+    # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
+    start_speak_server()
+    start_announce_worker(speaker)
 
     # --- State-Machine ---
     state = STATE_LISTENING
@@ -267,6 +271,7 @@ def run() -> None:
         while True:
             audio_16 = audio_source.read_chunk()
             now = time.time()
+            current_state[0] = state
 
             # --- LISTENING ---
             if state == STATE_LISTENING:

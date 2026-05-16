@@ -284,6 +284,10 @@ SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 ENROLL_SERVER_HOST = "127.0.0.1"
 ENROLL_SERVER_PORT = 18791
 
+# Lokaler Speak-HTTP-Server (OpenClaw kann Text vorlesen lassen)
+SPEAK_SERVER_HOST = "127.0.0.1"
+SPEAK_SERVER_PORT = 18792
+
 DIARIZATION_TIMEOUT = 15
 # Maximale Wartezeit auf Diarization-Ergebnis nach STT-Fertigstellung
 DIARIZATION_JOIN_TIMEOUT = 2.0

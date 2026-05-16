@@ -15,6 +15,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 const ENROLL_BASE = "http://127.0.0.1:18791";
+const SPEAK_BASE = "http://127.0.0.1:18792";
 
 /** Wirft bei nicht-OK-Status mit Server-Body als Message. */
 async function callEnrollServer(method, path, body) {
@@ -44,10 +45,59 @@ function textResult(text, details = {}) {
 
 export default definePluginEntry({
   id: "voice-enrol",
-  name: "Voice Enrolment",
+  name: "Voice Enrolment & Speak",
   description:
-    "Tools zum Speichern, Auflisten und Löschen von Stimm-Referenzen für den Voice Assistant.",
+    "Tools zum Speichern, Auflisten und Löschen von Stimm-Referenzen sowie zum Vorlesen von Text über den lokalen Lautsprecher.",
   register(api) {
+    api.registerTool({
+      name: "voice_speak_text",
+      label: "Text vorlesen",
+      description:
+        "Spricht einen Text über den Lautsprecher des Voice Assistants aus. " +
+        "Der Text wird in eine Warteschlange eingereiht und sobald der Voice Assistant " +
+        "nicht gerade aufnimmt oder antwortet (d.h. im Bereit-Zustand ist) vorgelesen. " +
+        "Verwenden wenn OpenClaw aufgefordert wird, etwas anzusagen, eine Warnung auszusprechen " +
+        "oder eine Lautsprecherausgabe zu machen. " +
+        "Kein Markdown, keine Listen — reiner gesprochener Text.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["text"],
+        properties: {
+          text: {
+            type: "string",
+            description: "Der vorzulesende Text. Maximal 500 Zeichen, kein Markdown.",
+          },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const text = String(params?.text ?? "").trim();
+        if (!text) {
+          return textResult("Fehler: Kein Text angegeben.", { ok: false });
+        }
+        if (text.length > 500) {
+          return textResult("Fehler: Text zu lang (max. 500 Zeichen).", { ok: false });
+        }
+        try {
+          const res = await fetch(`${SPEAK_BASE}/speak`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data?.error ?? `HTTP ${res.status}`);
+          }
+          return textResult(
+            `Text wurde zur Sprachausgabe eingereiht (${text.length} Zeichen).`,
+            { ok: true, queued: true }
+          );
+        } catch (err) {
+          return textResult(`Lautsprecherausgabe fehlgeschlagen: ${err.message}`, { ok: false });
+        }
+      },
+    });
+
     api.registerTool({
       name: "voice_enroll_speaker",
       label: "Stimme anlernen",

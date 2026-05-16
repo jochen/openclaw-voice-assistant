@@ -18,3 +18,8 @@ pending_reply_text: list[str | None] = [None]
 
 stt_queue: "queue.Queue[str | None]" = queue.Queue()
 speaker_queue: "queue.Queue[str | None]" = queue.Queue()
+
+# Extern angefragte Ansagen (speak_server → announce_worker)
+announce_queue: "queue.Queue[str]" = queue.Queue()
+# Aktueller State der Hauptschleife — wird von assistant.py gesetzt
+current_state: list[int] = [STATE_LISTENING]

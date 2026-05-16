@@ -1,7 +1,7 @@
 {
   "id": "voice-enrol",
-  "name": "Voice Enrolment",
-  "description": "Stimm-Enrolment & -Verwaltung für den OpenClaw Voice Assistant. Stellt Tools bereit, mit denen das LLM auf Sprachanweisung Stimmproben speichert/listet/löscht.",
+  "name": "Voice Enrolment & Speak",
+  "description": "Stimm-Enrolment & -Verwaltung sowie Lautsprecherausgabe für den OpenClaw Voice Assistant.",
   "activation": {
     "onStartup": true
   },
@@ -9,7 +9,8 @@
     "tools": [
       "voice_enroll_speaker",
       "voice_list_speakers",
-      "voice_remove_speaker"
+      "voice_remove_speaker",
+      "voice_speak_text"
     ]
   },
   "configSchema": {
