@@ -53,9 +53,17 @@ export default definePluginEntry({
       label: "Stimme anlernen",
       description:
         "Speichert die zuletzt aufgenommene Stimme als Stimm-Referenz für die Person <name>. " +
-        "Aufrufen, wenn der Nutzer eine Stimm-Lernen-Anfrage stellt wie 'lerne meine Stimme, ich bin Jochen' " +
-        "oder 'merk dir, ich heisse Katrin'. Die letzte Aufnahme (= der Satz, mit dem der Nutzer das gerade " +
-        "verlangt hat) wird als Referenz benutzt.",
+        "WICHTIG: Rufe dieses Tool NICHT sofort auf wenn der Nutzer Stimm-Lernen anfragt. " +
+        "Bitte ihn stattdessen zuerst, folgenden Trainingssatz laut vorzulesen — " +
+        "erst im nächsten Follow-up-Turn (wenn er den Satz gesprochen hat) wird das Tool aufgerufen. " +
+        "So wird die Trainingssatz-Aufnahme enrolled, nicht der kurze Trigger-Satz. " +
+        "Trainingssatz (laut vorlesen lassen, dann Tool aufrufen): " +
+        "'Ich bin [Name] — bitte lerne jetzt meine Stimme. " +
+        "Über die grünen Felder und durch die tiefen Wälder reite ich gerne. " +
+        "Die süßen Äpfel und die reifen Birnen schmecken köstlich. " +
+        "Heute früh schien die Sonne, jetzt zieht Regen auf.' " +
+        "Dieser Satz deckt alle deutschen Vokale, Umlaute, Diphthonge und typische Konsonanten ab " +
+        "und liefert ein deutlich besseres Stimm-Embedding als kurze Alltagssätze.",
       parameters: {
         type: "object",
         additionalProperties: false,

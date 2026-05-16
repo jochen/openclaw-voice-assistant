@@ -107,12 +107,22 @@ Keine Runtime-Abhängigkeiten außer Node ≥ 18 (`fetch` ist eingebaut).
 
 ### Funktionsweise
 
-1. Nutzer sagt *"hey jarvis, lerne meine Stimme, ich bin Jochen, und ich erzähl dir kurz ..."* (≥ 5 s Sprache)
-2. `voice_assistant` nimmt auf, speichert nach `~/.openclaw/workspace/voice/last_recording.wav`, fährt STT + Diarization (Sprecher: unbekannt — es gibt noch keine Referenz), und reicht den Text an OpenClaw weiter
-3. Das LLM erkennt die Enrolment-Intent und ruft `voice_enroll_speaker(name="Jochen")` auf
-4. Das Plugin POSTet `{"name": "Jochen"}` an `http://127.0.0.1:18791/enroll`
-5. Der Enrolment-Server kopiert `last_recording.wav` nach `speakers/jochen.wav` und legt ein Zeitstempel-Backup in `originals/` an
-6. Folge-Aufnahmen werden gegen `speakers/jochen.wav` gematcht; der Wrapper schickt `[Sprecher: jochen]` ans LLM
+Das Enrolment läuft über zwei Voice-Turns (Follow-up-Mechanismus):
+
+**Turn 1 — Intent erkennen:**
+1. Nutzer sagt *"hey jarvis, lerne meine Stimme, ich bin Jochen"*
+2. LLM erkennt die Enrolment-Intent und antwortet mit dem Trainingssatz:
+   > *"Kein Problem! Lies bitte folgenden Satz laut vor: 'Ich bin Jochen — bitte lerne jetzt meine Stimme. Über die grünen Felder und durch die tiefen Wälder reite ich gerne. Die süßen Äpfel und die reifen Birnen schmecken köstlich. Heute früh schien die Sonne, jetzt zieht Regen auf.'"*
+3. LLM ruft `voice_enroll_speaker` noch **nicht** auf — es wartet auf den Follow-up
+
+**Turn 2 — Trainingssatz aufnehmen:**
+4. Nutzer liest den Trainingssatz laut vor (~10 s Sprache)
+5. `voice_assistant` speichert diese Aufnahme als `last_recording.wav`
+6. LLM ruft `voice_enroll_speaker(name="Jochen")` auf
+7. Plugin POSTet `{"name": "Jochen"}` → Enrolment-Server kopiert `last_recording.wav` nach `speakers/jochen.wav` + Backup in `originals/`
+8. Folge-Aufnahmen werden gegen `speakers/jochen.wav` gematcht
+
+**Warum dieser Trainingssatz?** Er deckt alle phonetisch wichtigen deutschen Laute ab: alle Vokale (a, e, i, o, u), Umlaute (ä, ö, ü), Diphthonge (ei, au), Ich-Laut, Nasale und das deutsche R — typisch diagnostisch für individuelle Stimmen bei Wespeaker resnet34.
 
 ### Update / Deinstallation
 
