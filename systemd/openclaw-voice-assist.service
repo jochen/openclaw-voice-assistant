@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenClaw Voice Assistant (Wakeword → STT → OpenClaw → TTS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/openclaw_voice_assist
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/pi/openclaw_voice_assist/ow-venv/bin/python -u -m voice_assistant
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target
