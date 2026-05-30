@@ -18,6 +18,7 @@ from voice_assistant.state import (
     announce_queue,
     current_state,
 )
+from voice_assistant.services import telegram
 from voice_assistant.services.tts import ReplySpeaker
 
 
@@ -66,8 +67,17 @@ def start_speak_server() -> threading.Thread:
     return t
 
 
-def start_announce_worker(reply_speaker: ReplySpeaker) -> threading.Thread:
-    """Drainiert announce_queue, aber nur wenn der Voice Assistant im LISTENING-State ist."""
+def start_announce_worker(
+    reply_speaker: ReplySpeaker,
+    telegram_bot_token: str = "",
+    telegram_chat_id: str = "",
+) -> threading.Thread:
+    """Drainiert announce_queue, aber nur wenn der Voice Assistant im LISTENING-State ist.
+
+    Ansagen (z.B. von voice_speak_text bei Hintergrund-Tasks) werden zusätzlich
+    in den Telegram-Chat gespiegelt, damit die geteilte Voice+Chat-Session
+    vollständig bleibt.
+    """
     from voice_assistant.services.leds import LED_IDLE
 
     def _run() -> None:
@@ -77,6 +87,8 @@ def start_announce_worker(reply_speaker: ReplySpeaker) -> threading.Thread:
             while current_state[0] != STATE_LISTENING:
                 time.sleep(0.25)
             print(f"📢  Announcing: '{text[:80]}{'...' if len(text) > 80 else ''}'")
+            if telegram_bot_token and telegram_chat_id:
+                telegram.send(telegram_bot_token, telegram_chat_id, text, prefix="🔊 ")
             reply_speaker.speak(text)
             reply_speaker.leds.set_phase(LED_IDLE)
 

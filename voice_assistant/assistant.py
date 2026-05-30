@@ -249,7 +249,11 @@ def run() -> None:
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
     start_speak_server()
-    start_announce_worker(speaker)
+    start_announce_worker(
+        speaker,
+        telegram_bot_token=profile.telegram_bot_token,
+        telegram_chat_id=profile.telegram_chat_id,
+    )
 
     # --- State-Machine ---
     state = STATE_LISTENING
