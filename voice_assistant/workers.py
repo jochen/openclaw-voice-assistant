@@ -30,6 +30,7 @@ class Workers:
         no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten.",
         voice_instruction: str = "",
         diarizer: SpeachesDiarizer | None = None,
+        use_stream: bool = True,
     ) -> None:
         self.stt = stt
         self.speaker = speaker
@@ -42,6 +43,7 @@ class Workers:
         self.no_reply_fallback = no_reply_fallback
         self.voice_instruction = voice_instruction
         self.diarizer = diarizer
+        self.use_stream = use_stream
 
     def start_stt(self, audio_chunks: list) -> threading.Thread:
         t = threading.Thread(
@@ -105,6 +107,50 @@ class Workers:
             prefix=f"🎤 [{speaker_label}] ",
         )
 
+        # --- Streaming-Pfad: Sätze werden gesprochen, sobald sie generiert sind ---
+        if self.use_stream:
+            session = self.speaker.stream_session(restore_leds=True)
+            full_reply = openclaw.query_stream(
+                user_text,
+                token=self.openclaw_token,
+                session=self.openclaw_session,
+                voice_instruction=self.voice_instruction,
+                speaker=speaker,
+                on_sentence=session.feed,
+                on_first_text=self.thinking.stop,
+            )
+            spoke = session.end()
+
+            if spoke:
+                # Antwort wurde (zumindest teilweise) live gesprochen
+                print(f"✅ OpenClaw stream complete: '{(full_reply or '')[:80]}...'")
+                if full_reply:
+                    telegram.send(
+                        self.telegram_bot_token,
+                        self.telegram_chat_id,
+                        full_reply,
+                        prefix="🔊 ",
+                    )
+                pending_reply_text[0] = full_reply
+                reply_done_event.set()
+                return
+
+            if full_reply:
+                # Text kam, wurde aber nicht gesprochen (z.B. leer nach clean) → normal
+                telegram.send(
+                    self.telegram_bot_token,
+                    self.telegram_chat_id,
+                    full_reply,
+                    prefix="🔊 ",
+                )
+                pending_reply_text[0] = full_reply
+                self.speaker.speak(full_reply)
+                reply_done_event.set()
+                return
+
+            print("⚠️  Streaming ohne Ausgabe → non-streaming Fallback")
+
+        # --- Non-streaming-Pfad (Flag aus ODER Streaming lieferte nichts) ---
         full_reply = openclaw.query(
             user_text,
             token=self.openclaw_token,

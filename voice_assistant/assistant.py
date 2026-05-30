@@ -243,6 +243,7 @@ def run() -> None:
         no_reply_fallback=profile.locale.no_reply_fallback,
         voice_instruction=profile.locale.openclaw_voice_instruction,
         diarizer=diarizer,
+        use_stream=profile.openclaw_stream,
     )
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)

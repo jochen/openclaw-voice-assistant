@@ -49,8 +49,11 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "'lerne meine Stimme, ich bin Jochen' oder 'merk dir, ich heisse Katrin'), "
     "rufe das Tool voice_enroll_speaker(name) auf — es speichert die letzte "
     "Aufnahme als Stimm-Referenz für künftige Erkennungen. "
-    "Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
-    "gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen, keine Abkürzungen. "
+    "Ruf zuerst alle nötigen Tools auf, dann antworte auf Deutsch in natürlicher "
+    "gesprochener Sprache, wie ein Mensch im Gespräch — meist ein bis vier Sätze, "
+    "bei komplexen Themen so ausführlich, wie der Inhalt es verlangt, jeder Satz "
+    "klar und vollständig. Sprich in reinem Fließtext ohne Markdown, Listen oder "
+    "Abkürzungen. "
     "Schreibe Zahlen, Uhrzeiten und Datumsangaben ausgeschrieben in gesprochener "
     "Form, niemals als Ziffern oder mit Abkürzungen — also 'dreißigsten Mai' statt "
     "'30. Mai', 'zwölf Uhr dreißig' statt '12.30 Uhr', 'zum Beispiel' statt 'z. B.', "
@@ -102,6 +105,9 @@ class Profile:
     # OpenClaw
     openclaw_token: str = ""
     openclaw_session: str = ""
+    # Streaming-Antwort (/v1/responses mit stream=true): Sätze werden gesprochen,
+    # sobald sie generiert sind. Bei Fehler automatischer Fallback auf non-streaming.
+    openclaw_stream: bool = True
 
     # Telegram
     telegram_bot_token: str = ""
@@ -227,6 +233,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
         openclaw_token=str(raw.get("openclaw_token", "")),
         openclaw_session=str(raw.get("openclaw_session", "")),
+        openclaw_stream=bool(raw.get("openclaw_stream", True)),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),

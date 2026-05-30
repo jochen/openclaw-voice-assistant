@@ -213,6 +213,39 @@ def split_into_sentences(text: str) -> list[str]:
     return [p.replace(_PLACEHOLDER, " ").strip() for p in parts if p.strip()]
 
 
+class StreamingSentenceBuffer:
+    """Akkumuliert Text-Deltas und gibt vollständige Sätze frei, sobald eine
+    Satzgrenze sicher erkannt ist. Nutzt split_into_sentences (das z.B. 'z. B.',
+    '30. Mai', 'Dr.' vor Fehlsplits schützt). Verbalisiert NICHT — das macht der
+    Speaker pro fertigem Satz."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._emitted = 0
+
+    def feed(self, chunk: str) -> list[str]:
+        """Fügt ein Delta an. Gibt die Liste der NEU vollständig gewordenen Sätze
+        zurück (kann leer sein). Der jeweils letzte Teil bleibt zurückgehalten,
+        weil er noch wachsen könnte."""
+        self._buffer += chunk
+        segs = split_into_sentences(self._buffer)
+        # Nur Segmente mit Index >= _emitted und < len(segs)-1 freigeben,
+        # weil das letzte Segment noch wachsen könnte.
+        if len(segs) <= self._emitted + 1:
+            # Kein neues abgeschlossenes Segment vorhanden
+            return []
+        new = segs[self._emitted : len(segs) - 1]
+        self._emitted += len(new)
+        return new
+
+    def flush(self) -> list[str]:
+        """Am Stream-Ende: gibt alle noch nicht emittierten Sätze zurück."""
+        segs = split_into_sentences(self._buffer)
+        remaining = segs[self._emitted :]
+        self._emitted = len(segs)
+        return remaining
+
+
 # ---------------------------------------------------------------------------
 # Speaches TTS
 # ---------------------------------------------------------------------------
@@ -391,6 +424,69 @@ class ReplySpeaker:
             # Confirmation fertig → OpenClaw wartet noch; Antwort fertig → assistant.py übernimmt
             if not restore_leds:
                 self.leds.set_phase(LED_OPENCLAW)
+
+    def stream_session(self, restore_leds: bool = True) -> "ReplyStreamSession":
+        """Liefert eine Sitzung, die Antwort-Sätze abspielt, sobald sie aus dem
+        OpenClaw-Stream eintreffen (statt erst nach Volltext wie speak())."""
+        return ReplyStreamSession(self, restore_leds)
+
+
+class ReplyStreamSession:
+    """Spielt Antwort-Sätze inkrementell ab. Spiegelt ReplySpeaker.speak(),
+    aber satzweise getrieben durch den OpenClaw-Stream. feed() pro fertigem Satz,
+    end() einmal am Schluss. Jeder Satz wird hier verbalisiert (clean_for_tts) —
+    der Stream-Buffer liefert Rohsätze."""
+
+    def __init__(self, sp: "ReplySpeaker", restore_leds: bool) -> None:
+        self.sp = sp
+        self.restore_leds = restore_leds
+        self.spoke = False
+        self._led_set = False
+        self._first = True
+
+    def feed(self, sentence: str) -> None:
+        from voice_assistant.services.leds import (
+            LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION,
+        )
+        # tts_prefix nur dem ersten Satz voranstellen (wie speak(): prefix ungecleant)
+        clean = (self.sp.tts_prefix if self._first else "") + clean_for_tts(sentence)
+        self._first = False
+        if not clean.strip():
+            return
+        with tts_lock:
+            if not self._led_set:
+                self.sp.leds.set_phase(
+                    LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW
+                )
+                self._led_set = True
+            print(f"🔊 Sentence (stream): '{clean}'")
+            played = False
+            if self.sp.speaches.state.tts_ok():
+                if self.restore_leds:
+                    self.sp.leds.set_phase(LED_AUDIO_OUT)
+                ok = self.sp._play_speaches_sentence(clean)
+                if not ok:
+                    print("⚠️  Speaches failed (stream) → Piper fallback")
+                    tmp_wav = piper_synth(clean)
+                    if tmp_wav:
+                        self.sp.play_wav(tmp_wav)
+                        os.unlink(tmp_wav)
+                played = True
+            if not played:
+                if self.restore_leds:
+                    self.sp.leds.set_phase(LED_AUDIO_OUT)
+                tmp_wav = piper_synth(clean)
+                if tmp_wav:
+                    self.sp.play_wav(tmp_wav)
+                    os.unlink(tmp_wav)
+            self.spoke = True
+
+    def end(self) -> bool:
+        """Gibt True zurück, wenn mindestens ein Satz gesprochen wurde."""
+        from voice_assistant.services.leds import LED_OPENCLAW
+        if not self.restore_leds:
+            self.sp.leds.set_phase(LED_OPENCLAW)
+        return self.spoke
 
 
 # ---------------------------------------------------------------------------
