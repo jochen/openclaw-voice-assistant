@@ -15,5 +15,10 @@ onnxruntime==1.24.3
 faster-whisper==1.2.1
 ctranslate2==4.7.1
 
+# TTS fallback (local) — piper-CLI im Projekt-venv; pathvalidate wird vom
+# piper-CLI importiert (ist sonst nur ein train-Extra von piper-tts)
+piper-tts==1.4.1
+pathvalidate==3.3.1
+
 # Verbalisierung (Zahlen, Ordinalia, Uhrzeiten in TTS-Text)
 num2words>=0.5.14
