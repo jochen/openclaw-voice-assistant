@@ -14,3 +14,6 @@ onnxruntime==1.24.3
 # STT fallback (local)
 faster-whisper==1.2.1
 ctranslate2==4.7.1
+
+# Verbalisierung (Zahlen, Ordinalia, Uhrzeiten in TTS-Text)
+num2words>=0.5.14

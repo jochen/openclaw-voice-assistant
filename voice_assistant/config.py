@@ -51,6 +51,10 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "Aufnahme als Stimm-Referenz für künftige Erkennungen. "
     "Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 "
     "gesprochenen Sätzen auf Deutsch. Kein Markdown, keine Listen, keine Abkürzungen. "
+    "Schreibe Zahlen, Uhrzeiten und Datumsangaben ausgeschrieben in gesprochener "
+    "Form, niemals als Ziffern oder mit Abkürzungen — also 'dreißigsten Mai' statt "
+    "'30. Mai', 'zwölf Uhr dreißig' statt '12.30 Uhr', 'zum Beispiel' statt 'z. B.', "
+    "'circa' statt 'ca.'. "
     "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
 )
 

@@ -27,11 +27,150 @@ from voice_assistant.state import tts_lock
 
 PlayWav = Callable[[str], None]
 
+# ---------------------------------------------------------------------------
+# num2words — optionale Abhängigkeit (defensiver Import)
+# ---------------------------------------------------------------------------
+try:
+    from num2words import num2words as _num2words
+    _HAS_NUM2WORDS = True
+except ImportError:
+    _HAS_NUM2WORDS = False
+
+
+# ---------------------------------------------------------------------------
+# Verbalisierungs-Hilfsfunktionen
+# ---------------------------------------------------------------------------
+
+# Abkürzungen: (Muster, Ersatz) — Reihenfolge wichtig (längste zuerst)
+_ABBREV_REPLACEMENTS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bz\.\s*B\."),        "zum Beispiel"),
+    (re.compile(r"\bd\.\s*h\."),        "das heißt"),
+    (re.compile(r"\bu\.\s*a\."),        "unter anderem"),
+    (re.compile(r"\bo\.\s*ä\."),        "oder ähnliches"),
+    (re.compile(r"\bDr\."),             "Doktor"),
+    (re.compile(r"\bProf\."),           "Professor"),
+    (re.compile(r"\bca\."),             "circa"),
+    (re.compile(r"\bggf\."),            "gegebenenfalls"),
+    (re.compile(r"\busw\."),            "und so weiter"),
+    (re.compile(r"\betc\."),            "et cetera"),
+    (re.compile(r"\bbzw\."),            "beziehungsweise"),
+    (re.compile(r"\bevtl\."),           "eventuell"),
+    (re.compile(r"\binkl\."),           "inklusive"),
+    (re.compile(r"\bmax\."),            "maximal"),
+    (re.compile(r"\bmin\."),            "minimal"),
+    (re.compile(r"\bvs\."),             "versus"),
+    (re.compile(r"\bNr\."),             "Nummer"),
+    (re.compile(r"\bTel\."),            "Telefon"),
+    (re.compile(r"\bStr\."),            "Straße"),
+    (re.compile(r"\bMio\."),            "Millionen"),
+    (re.compile(r"\bMrd\."),            "Milliarden"),
+]
+
+# Monatsnamen für Ordinal-Erkennung
+_MONTH_NAMES = (
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+    "Jan", "Feb", "Mär", "Apr", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
+)
+_MONTH_PATTERN = "|".join(_MONTH_NAMES)
+
+
+def _ordinal_de(n: int) -> str:
+    """Gibt die Ordinalzahl auf Deutsch zurück (Akkusativ/Genitiv '-sten' als Default)."""
+    if not _HAS_NUM2WORDS:
+        return str(n) + "."
+    base = _num2words(n, lang="de", to="ordinal")
+    # num2words liefert z.B. "dreißigste" — wir brauchen "dreißigsten"
+    if base.endswith("e"):
+        return base + "n"
+    return base
+
+
+def _number_de(n: int | float) -> str:
+    """Gibt eine Zahl als deutsches Zahlwort zurück."""
+    if not _HAS_NUM2WORDS:
+        return str(n)
+    if isinstance(n, float):
+        return _num2words(n, lang="de")
+    return _num2words(int(n), lang="de")
+
+
+def _verbalize_time(m: re.Match) -> str:
+    """Wandelt Uhrzeitmuster in gesprochenes Deutsch um."""
+    hour = int(m.group(1))
+    minute = int(m.group(2))
+    if not _HAS_NUM2WORDS:
+        return m.group(0)
+    hour_word = _num2words(hour, lang="de")
+    if minute == 0:
+        return f"{hour_word} Uhr"
+    minute_word = _num2words(minute, lang="de")
+    return f"{hour_word} Uhr {minute_word}"
+
+
+def _verbalize_ordinal_date(m: re.Match) -> str:
+    """Wandelt '30. Mai' in 'dreißigsten Mai' um."""
+    n = int(m.group(1))
+    month = m.group(2)
+    return f"{_ordinal_de(n)} {month}"
+
+
+def _verbalize_ordinal_generic(m: re.Match) -> str:
+    """Wandelt '1. Stock' o.ä. in 'ersten Stock' um."""
+    n = int(m.group(1))
+    rest = m.group(2)
+    return f"{_ordinal_de(n)} {rest}"
+
+
+def _verbalize_number(m: re.Match) -> str:
+    """Wandelt eine isolierte Zahl in das deutsche Zahlwort um."""
+    raw = m.group(0)
+    try:
+        # Dezimalzahl?
+        if "," in raw:
+            val = float(raw.replace(".", "").replace(",", "."))
+        else:
+            val = int(raw.replace(".", ""))
+        return _number_de(val)
+    except (ValueError, OverflowError):
+        return raw
+
+
+def _apply_verbalization(text: str) -> str:
+    """Verbalisiert Abkürzungen, Uhrzeiten, Ordinalzahlen und Zahlen."""
+    # a) Abkürzungen
+    for pattern, replacement in _ABBREV_REPLACEMENTS:
+        text = pattern.sub(replacement, text)
+
+    if _HAS_NUM2WORDS:
+        # b) Uhrzeiten: "12.30 Uhr" oder "14:30 Uhr" → Zahlwörter
+        #    Muss VOR der allgemeinen Zahlregel laufen!
+        time_pat = re.compile(r"\b(\d{1,2})[.:](\d{2})\s*Uhr\b")
+        text = time_pat.sub(_verbalize_time, text)
+
+        # c1) Ordinalzahlen vor Monatsnamen: "30. Mai"
+        ord_date_pat = re.compile(
+            r"\b(\d{1,2})\.\s+(" + _MONTH_PATTERN + r")\b"
+        )
+        text = ord_date_pat.sub(_verbalize_ordinal_date, text)
+
+        # c2) Sonstige Ordinalzahlen: "<Zahl>. <Wort>" — nur wenn danach ein
+        #     großgeschriebenes Wort folgt (typisch für "1. Stock", "3. Platz")
+        ord_generic_pat = re.compile(r"\b(\d{1,2})\.\s+([A-ZÄÖÜ][a-zäöüß]+)")
+        text = ord_generic_pat.sub(_verbalize_ordinal_generic, text)
+
+        # d) Übrige Zahlen (inkl. Tausenderpunkt, Komma-Dezimal)
+        num_pat = re.compile(r"\b\d{1,3}(?:\.\d{3})*(?:,\d+)?\b|\b\d+\b")
+        text = num_pat.sub(_verbalize_number, text)
+
+    return text
+
 
 # ---------------------------------------------------------------------------
 # Text-Aufbereitung
 # ---------------------------------------------------------------------------
 def clean_for_tts(text: str) -> str:
+    # 1. Markdown entfernen
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
     text = re.sub(r"`(.+?)`", r"\1", text)
@@ -40,12 +179,38 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
     text = re.sub(r"[^\w\s\.,!?;:\-äöüÄÖÜß]", "", text)
     text = re.sub(r"\n+", " ", text)
+    # 2. Verbalisierung (Abkürzungen, Zahlen, Zeiten, Ordinalia)
+    text = _apply_verbalization(text)
     return text.strip()
 
 
+# ---------------------------------------------------------------------------
+# Splitter-Hilfskonstanten
+# ---------------------------------------------------------------------------
+_ABBREVS_SPLIT = re.compile(
+    r"(?:"
+    r"z\.\s*B\.|d\.\s*h\.|u\.\s*a\.|o\.\s*ä\.|"
+    r"bzw\.|ca\.|usw\.|etc\.|ggf\.|evtl\.|inkl\.|"
+    r"max\.|min\.|Nr\.|Dr\.|Prof\.|Mio\.|Mrd\.|Tel\.|Str\.|vs\.|Abs\."
+    r")\s",
+    re.IGNORECASE,
+)
+_PLACEHOLDER = "\x00ABBR\x00"
+
+
 def split_into_sentences(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.!?])\s+", text)
-    return [p.strip() for p in parts if p.strip()]
+    # Abkürzungen schützen: ALLE Whitespaces im Match (inkl. innere bei "z. B.")
+    # durch den Platzhalter ersetzen — dann kann kein Satzende mitten in "z. B." entstehen
+    def _protect_abbrev(m: re.Match) -> str:
+        return re.sub(r"\s", _PLACEHOLDER, m.group(0))
+
+    protected = _ABBREVS_SPLIT.sub(_protect_abbrev, text)
+    # Ordinalzahlen/Datumsangaben schützen: Ziffer gefolgt von Punkt+Leerzeichen
+    protected = re.sub(r"(\d+)\.\s", lambda m: m.group(1) + "." + _PLACEHOLDER, protected)
+    # An echten Satzenden aufteilen
+    parts = re.split(r"(?<=[.!?])\s+", protected)
+    # Platzhalter wieder zu Leerzeichen zurückwandeln
+    return [p.replace(_PLACEHOLDER, " ").strip() for p in parts if p.strip()]
 
 
 # ---------------------------------------------------------------------------
