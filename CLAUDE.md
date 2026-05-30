@@ -5,11 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the Assistant
 
 ```bash
-source ~/ow-venv/bin/activate && python -m voice_assistant
+ow-venv/bin/python -m voice_assistant
 ```
 
-The entry point (`voice_assistant/__main__.py`) self-reinvokes with the venv Python
-(`/home/pi/ow-venv/bin/python`) on startup if not already running inside it.
+The entry point (`voice_assistant/__main__.py`) self-reinvokes with the project venv
+Python (`/home/pi/openclaw_voice_assist/ow-venv/bin/python`) on startup if not already
+running inside it. Der frühere separate venv `~/ow-venv` wurde aufgelöst — alle Pakete
+liegen jetzt im Projekt-venv (`pip install` immer via `ow-venv/bin/python -m pip`).
 
 Override the profile: `GASTON_PROFILE=openclaw python -m voice_assistant`
 
@@ -144,8 +146,8 @@ Der `LedDirector` verteilt die Kommandos auf **alle aktiven** LED-Senken
 
 - Workspace: `/home/pi/.openclaw/workspace`
 - Piper "Ja?" pre-rendered WAV: `/home/pi/.openclaw/workspace/ja.wav`
-- Piper models: `/home/pi/.local/share/piper/de_DE-thorsten_emotional-medium.onnx`,
-  `de_DE-thorsten-low.onnx`
+- Piper models: `/home/pi/openclaw_voice_assist/models/piper/de_DE-thorsten_emotional-medium.onnx`,
+  `de_DE-thorsten-low.onnx` (im Projekt, gitignored wegen Größe; je `.onnx` + Pflicht-Sidecar `.onnx.json`)
 - openwakeword models: `/tmp/ow_models_min`
-- Venv (Python 3.11 für openwakeword/tflite): `/home/pi/ow-venv`
+- Venv (Python 3.11, openwakeword/tflite/piper/num2words): `/home/pi/openclaw_voice_assist/ow-venv`
 - ESPHome venv (getrennt, nur fürs Flashen): `/home/pi/openclaw_voice_assist/esphome-venv`

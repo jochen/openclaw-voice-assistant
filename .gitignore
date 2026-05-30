@@ -11,3 +11,4 @@ test_responses_step*.py
 prompt*.txt
 verlauf_*.txt
 .claude
+models/

@@ -264,8 +264,8 @@ def load_profile() -> Profile:
 
 # --- Konstanten, die profil-unabhängig sind ---
 WORKSPACE = "/home/pi/.openclaw/workspace"
-PIPER_MODEL_EMO = "/home/pi/.local/share/piper/de_DE-thorsten_emotional-medium.onnx"
-PIPER_MODEL = "/home/pi/.local/share/piper/de_DE-thorsten-low.onnx"
+PIPER_MODEL_EMO = "/home/pi/openclaw_voice_assist/models/piper/de_DE-thorsten_emotional-medium.onnx"
+PIPER_MODEL = "/home/pi/openclaw_voice_assist/models/piper/de_DE-thorsten-low.onnx"
 PIPER_OUT = os.path.join(WORKSPACE, "ja.wav")
 WHISPER_MODEL = "small"
 WHISPER_LANGUAGE = "de"
