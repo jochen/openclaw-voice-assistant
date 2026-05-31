@@ -69,9 +69,11 @@ _STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
 _STOP_ANY = r'(stopp?|halt|aus|abbrechen|nein|bitte)'
 # Im Follow-up reicht ein einzelnes "stop"/"stopp" — TV/Hintergrund-Wörter sollen nicht blockieren
 _STOP_PATTERN_FOLLOWUP = re.compile(r'\bstopp?\b', re.IGNORECASE)
-# Bei Erstanfrage muss eine 2-Wort-Kombi vorliegen, davon mind. eines ein Kern-Abbruchwort
+# Bei Erstanfrage muss eine 2-Wort-Kombi vorliegen, davon mind. eines ein Kern-Abbruchwort.
+# Trenner ist \W+ (Whitespace ODER Satzzeichen), weil das STT die Wörter oft mit Kommas
+# liefert ("Stopp, stopp, halt") — reiner \s+ würde das verfehlen.
 _STOP_PATTERN_FIRST = re.compile(
-    rf'\b{_STOP_CORE}\s+{_STOP_ANY}\b|\b{_STOP_ANY}\s+{_STOP_CORE}\b',
+    rf'\b{_STOP_CORE}\W+{_STOP_ANY}\b|\b{_STOP_ANY}\W+{_STOP_CORE}\b',
     re.IGNORECASE,
 )
 
