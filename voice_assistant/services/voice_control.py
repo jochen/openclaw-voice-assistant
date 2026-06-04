@@ -65,8 +65,19 @@ class VoiceController:
     # Speaches REST-Aufrufe
     # ------------------------------------------------------------------
 
-    def list_available(self) -> list[dict]:
-        """Gibt kompakte Liste {model, voice, language} aller verfügbaren TTS-Stimmen."""
+    def list_available(self, lang: str = "de") -> list[dict]:
+        """Gibt kompakte Liste {model, voice, language} der verfügbaren TTS-Stimmen.
+
+        lang filtert auf dem language-Feld der Registry:
+          "de"  → nur deutsche Stimmen (language enthält 'de'/'de_DE') [Default]
+          "en"  → nur englische Stimmen (language enthält 'en')
+          "all" → kein Filter
+        Unbekannte Werte werden wie "de" behandelt.
+        """
+        lang = (lang or "de").lower()
+        if lang not in ("de", "en", "all"):
+            lang = "de"
+
         url = f"{self.base}/v1/registry?task=text-to-speech"
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
@@ -81,9 +92,20 @@ class VoiceController:
             # language kann eine Liste oder ein String sein
             lang_raw = entry.get("language", "")
             if isinstance(lang_raw, list):
-                language = ",".join(lang_raw)
+                lang_parts = [str(x) for x in lang_raw]
             else:
-                language = str(lang_raw)
+                lang_parts = [str(lang_raw)]
+            language = ",".join(lang_parts)
+
+            if lang != "all":
+                prefix = lang  # "de" oder "en"
+                matches = any(
+                    p.lower() == prefix or p.lower().startswith(prefix + "_")
+                    for p in lang_parts
+                )
+                if not matches:
+                    continue
+
             for voice in entry.get("voices", []):
                 voice_id = voice.get("id", "") if isinstance(voice, dict) else str(voice)
                 result.append({"model": model_id, "voice": voice_id, "language": language})

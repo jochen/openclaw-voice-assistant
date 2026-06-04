@@ -102,13 +102,27 @@ export default definePluginEntry({
       name: "voice_list_voices",
       label: "TTS-Stimmen auflisten",
       description:
-        "Listet alle verfügbaren TTS-Stimmen und die aktuell aktive. " +
+        "Listet verfügbare TTS-Stimmen und die aktuell aktive. Standardmäßig nur DEUTSCHE Stimmen. " +
+        "Mit language: 'englisch' englische bzw. language: 'alle' sämtliche Stimmen abrufen. " +
         "Vorher aufrufen, um zu wissen welche Stimmen es gibt, bevor du mit voice_set_voice wechselst.",
-      parameters: { type: "object", additionalProperties: false, properties: {} },
-      async execute() {
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          language: {
+            type: "string",
+            enum: ["deutsch", "englisch", "alle"],
+            description: "Sprachfilter (Default 'deutsch'). 'englisch' = englische, 'alle' = alle Sprachen.",
+          },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const langMap = { deutsch: "de", englisch: "en", alle: "all" };
+        const langChoice = params?.language ?? "deutsch";
+        const lang = langMap[langChoice] ?? "de";
         let data;
         try {
-          const res = await fetch(`${SPEAK_BASE}/voices`);
+          const res = await fetch(`${SPEAK_BASE}/voices?lang=${lang}`);
           const text = await res.text();
           try {
             data = text ? JSON.parse(text) : null;
@@ -128,7 +142,11 @@ export default definePluginEntry({
         const active = data?.active ?? {};
         const lastSpeaker = data?.last_speaker ?? null;
 
+        const appliedLang = data?.lang ?? lang;
+        const langLabel = { de: "deutsch", en: "englisch", all: "alle Sprachen" }[appliedLang] ?? appliedLang;
+
         const lines = [];
+        lines.push(`Sprachfilter: ${langLabel}.`);
         if (available.length) {
           lines.push("Verfügbare Stimmen:");
           for (const v of available) {

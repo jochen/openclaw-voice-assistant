@@ -17,6 +17,7 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -64,14 +65,18 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if self.path == "/status":
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path == "/status":
             self._send_json(200, {"status": "ok", "queue": announce_queue.qsize()})
             return
-        if self.path == "/analyze-last":
+        if path == "/analyze-last":
             self._handle_analyze_last()
             return
-        if self.path == "/voices":
-            self._handle_voices()
+        if path == "/voices":
+            query = urllib.parse.parse_qs(parsed.query)
+            lang = (query.get("lang", ["de"])[0] or "de").lower()
+            self._handle_voices(lang)
             return
         self._send_json(404, {"error": "not found"})
 
@@ -98,14 +103,17 @@ class _Handler(BaseHTTPRequestHandler):
             return {}
         return data if isinstance(data, dict) else {}
 
-    def _handle_voices(self) -> None:
+    def _handle_voices(self, lang: str = "de") -> None:
         from voice_assistant.state import voice_state
 
         if _voice_controller is None:
             self._send_json(503, {"error": "voice controller not available"})
             return
+        # Unbekannte Werte werden wie "de" behandelt (list_available normalisiert
+        # ebenfalls); hier den angewandten Filter für die Antwort bestimmen.
+        applied_lang = lang if lang in ("de", "en", "all") else "de"
         try:
-            available = _voice_controller.list_available()
+            available = _voice_controller.list_available(lang=applied_lang)
             loaded = sorted(_voice_controller.loaded_models())
         except Exception as e:
             self._send_json(502, {"error": f"voice controller error: {e}"})
@@ -115,6 +123,7 @@ class _Handler(BaseHTTPRequestHandler):
             "loaded": loaded,
             "active": self._active_state(),
             "last_speaker": voice_state.get_last_speaker(),
+            "lang": applied_lang,
         })
 
     def _handle_voice_set(self) -> None:
