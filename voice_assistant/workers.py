@@ -113,7 +113,7 @@ class Workers:
         return t
 
     def start_openclaw_turn(
-        self, user_text: str, speaker: str | None = None, mood: str | None = None
+        self, user_text: str, speaker: str | None = None, mood: dict | None = None
     ) -> threading.Thread:
         t = threading.Thread(
             target=self._openclaw_turn,
@@ -124,7 +124,7 @@ class Workers:
         return t
 
     # --- internal workers ---
-    def _openclaw_turn(self, user_text: str, speaker: str | None = None, mood: str | None = None) -> None:
+    def _openclaw_turn(self, user_text: str, speaker: str | None = None, mood: dict | None = None) -> None:
         speaker_label = speaker if speaker else "unbekannt"
         telegram.send(
             self.telegram_bot_token,

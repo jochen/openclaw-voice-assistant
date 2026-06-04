@@ -16,7 +16,7 @@ def query(
     session: str,
     voice_instruction: str = "",
     speaker: str | None = None,
-    mood: str | None = None,
+    mood: dict | None = None,
     on_done=None,
 ) -> str | None:
     """Send a voice turn to /v1/responses and return the final reply.
@@ -24,15 +24,22 @@ def query(
     speaker: erkannter Sprecher-Name (oder None für unbekannt). Wird im
         Wrapper-Prefix mitgegeben, damit das LLM weiß, wer spricht und
         ggf. ein Enrolment-Tool aufrufen kann.
-    mood: geschätzte Stimmung (oder None/neutral für kein Signal). Nur
-        deutliche Signale (nicht neutral/None) werden injiziert.
+    mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
+        (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
     """
     speaker_label = speaker if speaker else "unbekannt"
-    tags = f"Sprecher: {speaker_label}"
-    if mood and mood != "neutral":
-        tags += f" | Stimmung: {mood} (grob geschätzt, nur als weiches Signal nutzen)"
-    voice_input = f"🎤 [{tags}] {text}"
+    voice_input = f"🎤 [Sprecher: {speaker_label}] {text}"
+    if mood and all(isinstance(mood.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
+        a, v, d = mood["arousal"], mood["valence"], mood["dominance"]
+        voice_input += (
+            f"\n\n[Akustische Stimmungsmessung deiner Sprachaufnahme — weiches Signal, "
+            f"im Kontext deuten, nicht überinterpretieren: Erregung/arousal={a:.2f}, "
+            f"Wertung/valence={v:.2f}, Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. "
+            f"Höhere Erregung deutet auf aufgeregter/angespannter/ungeduldiger, niedrigere "
+            f"Wertung auf unzufriedener/negativer, höhere Dominanz auf bestimmter/selbstsicherer. "
+            f"Richte Ton, Wärme und Länge deiner Antwort sinnvoll danach aus.]"
+        )
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
     payload = json.dumps(
@@ -83,7 +90,7 @@ def query_stream(
     session: str,
     voice_instruction: str = "",
     speaker: str | None = None,
-    mood: str | None = None,
+    mood: dict | None = None,
     on_sentence: Callable[[str], None] | None = None,
     on_first_text: Callable[[], None] | None = None,
 ) -> str | None:
@@ -91,8 +98,8 @@ def query_stream(
     via on_sentence-Callback, sobald split_into_sentences eine Satzgrenze erkennt.
 
     speaker: erkannter Sprecher-Name (oder None für unbekannt).
-    mood: geschätzte Stimmung (oder None/neutral für kein Signal). Nur
-        deutliche Signale (nicht neutral/None) werden injiziert.
+    mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
+        (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     on_sentence: wird für jeden abgeschlossenen Satz aufgerufen (kann parallel sprechen).
     on_first_text: wird einmalig beim ersten Delta aufgerufen (z.B. ThinkingWorker stoppen).
     Gibt den vollständigen akkumulierten Text zurück (für Telegram-Spiegelung),
@@ -101,10 +108,17 @@ def query_stream(
     from voice_assistant.services.tts import StreamingSentenceBuffer
 
     speaker_label = speaker if speaker else "unbekannt"
-    tags = f"Sprecher: {speaker_label}"
-    if mood and mood != "neutral":
-        tags += f" | Stimmung: {mood} (grob geschätzt, nur als weiches Signal nutzen)"
-    voice_input = f"🎤 [{tags}] {text}"
+    voice_input = f"🎤 [Sprecher: {speaker_label}] {text}"
+    if mood and all(isinstance(mood.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
+        a, v, d = mood["arousal"], mood["valence"], mood["dominance"]
+        voice_input += (
+            f"\n\n[Akustische Stimmungsmessung deiner Sprachaufnahme — weiches Signal, "
+            f"im Kontext deuten, nicht überinterpretieren: Erregung/arousal={a:.2f}, "
+            f"Wertung/valence={v:.2f}, Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. "
+            f"Höhere Erregung deutet auf aufgeregter/angespannter/ungeduldiger, niedrigere "
+            f"Wertung auf unzufriedener/negativer, höhere Dominanz auf bestimmter/selbstsicherer. "
+            f"Richte Ton, Wärme und Länge deiner Antwort sinnvoll danach aus.]"
+        )
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
 

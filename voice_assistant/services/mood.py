@@ -56,26 +56,23 @@ class MoodAnalyzer:
 def run_mood(analyzer: MoodAnalyzer, wav_bytes: bytes, out: queue.Queue) -> None:
     try:
         result = analyzer.analyze(wav_bytes)
-        if not result:
-            print("⚠️  Mood: keine Antwort")
+        if result is None:
+            print("⚠️  Mood: keine Antwort vom Dienst")
             out.put(None)
             return
         label = (result.get("mood_proxy") or {}).get("label")
         ser = result.get("ser")
-        if ser:
-            arousal = ser.get("arousal")
-            valence = ser.get("valence")
-            dominance = ser.get("dominance")
+        if ser and all(isinstance(ser.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
+            a = ser["arousal"]
+            v = ser["valence"]
+            d = ser["dominance"]
             infer_ms = ser.get("infer_ms")
             device = ser.get("device")
-            try:
-                vals = f"arousal={arousal:.3f} valence={valence:.3f} dominance={dominance:.3f}"
-            except (TypeError, ValueError):
-                vals = f"arousal={arousal} valence={valence} dominance={dominance}"
-            print(f"🫧 [Mood] {label}  ser: {vals} ({infer_ms}ms/{device})")
+            print(f"🫧 [Mood] {label}  arousal={a:.3f} valence={v:.3f} dominance={d:.3f} ({infer_ms}ms/{device})")
+            out.put({"arousal": float(a), "valence": float(v), "dominance": float(d)})
         else:
-            print(f"🫧 [Mood] {label}  (Prosodie-Fallback, kein SER)")
-        out.put(label)
+            print(f"🫧 [Mood] {label} (Prosodie-Fallback, keine Dimensionen)")
+            out.put(None)
     except Exception as e:
         print(f"⚠️  Mood worker error: {e}")
         out.put(None)

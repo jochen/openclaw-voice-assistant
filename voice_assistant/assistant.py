@@ -404,8 +404,11 @@ def run() -> None:
                             print(f"[{now:.1f}s] ⚠️  Mood timeout — Stimmung unbekannt")
                             mood = None
                         spk_label = spk if spk else "unbekannt"
-                        mood_label = mood if mood else "unbekannt"
-                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}|{mood_label}]: '{text}'")
+                        if isinstance(mood, dict):
+                            mood_label = f"a{mood.get('arousal', 0):.2f} v{mood.get('valence', 0):.2f} d{mood.get('dominance', 0):.2f}"
+                        else:
+                            mood_label = ""
+                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
                         leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
                         reply_done_event.clear()
