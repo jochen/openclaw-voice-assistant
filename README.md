@@ -24,6 +24,7 @@ Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
 - **Python 3.11.9** (exact — `openwakeword` + `tflite-runtime` require this version on ARM64)
 - [OpenClaw](https://openclaw.dev) running locally on `http://127.0.0.1:18789`
 - [Speaches](https://github.com/speaches-ai/speaches) GPU container reachable (default: `http://<speaches-host>:8000`)
+- *(optional)* `voice-analysis` container (default: `http://<speaches-host>:8001`) — adds the acoustic mood signal and the `voice_analyze_last_output` tool; the assistant runs fine without it.
 
 **Mode: local** — ALSA microphone + ALSA speaker + optional WLED LED strip
 
@@ -109,6 +110,22 @@ Edit `config.yaml`. Common fields:
 | `respeaker.volume` | Speaker volume 0.0–1.0 (set at connect, no OTA needed) |
 | `respeaker.use_speaker` | `true` = TTS via ReSpeaker DAC; `false` = local ALSA speaker |
 
+### 6. Download Piper TTS models (local fallback + wakeword ack)
+
+`piper-tts` is in `requirements.txt`; the models are gitignored and loaded from hardcoded paths under `<project>/models/piper/`:
+
+```bash
+mkdir -p models/piper && cd models/piper
+BASE=https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE
+wget $BASE/thorsten/low/de_DE-thorsten-low.onnx
+wget $BASE/thorsten/low/de_DE-thorsten-low.onnx.json
+wget $BASE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx
+wget $BASE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx.json
+cd ../..
+```
+
+Each model needs both the `.onnx` and its `.onnx.json` sidecar. If the models already exist elsewhere (e.g. `~/.local/share/piper/`), symlinking them into `models/piper/` works too.
+
 ## Running
 
 ```bash
@@ -119,6 +136,24 @@ python -m voice_assistant
 The entry point re-execs itself inside the correct venv automatically.
 
 Override profile: `GASTON_PROFILE=clawdpi_rs python -m voice_assistant`
+
+## Autostart (systemd user service)
+
+A unit template ships in [`systemd/openclaw-voice-assist.service`](systemd/openclaw-voice-assist.service):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/openclaw-voice-assist.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now openclaw-voice-assist
+loginctl enable-linger pi        # start without an active login session
+```
+
+The unit pins `PATH` to include `ow-venv/bin` so the service finds `piper` and `aplay` for its subprocess calls. Logs:
+
+```bash
+journalctl _SYSTEMD_USER_UNIT=openclaw-voice-assist.service -f
+```
 
 ## Profiles
 
@@ -168,32 +203,34 @@ Typical format: `agent:main:telegram:group:-1003XXXXXXXXX`
 
 The script sets the HTTP header `x-openclaw-session-key`. Without it, OpenClaw creates a separate `openresponses-user:` namespace and voice turns are isolated from chat history.
 
-### AGENTS.md
+### AGENTS.md (voice directives)
 
-For correct voice behaviour, add to `~/.openclaw/workspace/AGENTS.md`:
+The OpenClaw workspace file `~/.openclaw/workspace/AGENTS.md` shapes how the assistant behaves on voice. Frame these as **goals**, not prohibitions — describe what you want to achieve so the model can act sensibly in context. A minimal voice section:
 
 ```markdown
-## Voice Commands
+## Voice (🎤)
 
-Messages starting with 🎤 are voice commands from speech recognition.
-Strict rules — no exceptions:
+Messages starting with 🎤 arrive via speech recognition, and your reply is **read out loud**. That's the yardstick: talk like a person would in conversation.
 
-- Always respond in the user's language
-- Maximum 2-3 short sentences
-- No markdown, no lists, no numbering
-- No emojis
-- Natural spoken language
+- Reply in the user's language, in natural spoken sentences.
+- Length follows the content — usually one to four sentences, more when the topic needs it; each sentence clear and complete.
+- It's spoken, so it should sound good — leave out what can't be heard (markdown, lists, numbering, emojis).
+- Transcriptions have small errors; interpret generously and act once the intent is clear.
 
-### Voice → Chat transitions
+### Speaker awareness & safety
 
-If a regular chat message follows a 🎤 message (within a few minutes, same topic),
-treat it as a continuation or correction of the last voice task:
+Each 🎤 message is prefixed with `[Sprecher: …]` (the recognised speaker, or `unbekannt`). Goal: impactful or hard-to-undo actions should only happen when it's clear a trusted person wants them. For an `unbekannt` speaker, be freely helpful with harmless things (info, status, simple queries); for anything with loss or damage potential, get confirmation from a known speaker first.
 
-1. Reconstruct the original task from context
-2. Re-execute the task with the correction applied — fully
-3. No meta-commentary about your own mistake
-4. The 2-3 sentence limit does not apply to chat replies
+### Mood signal (acoustic)
+
+Some 🎤 messages carry a line with `arousal` / `valence` / `dominance` values (0–1, ~0.5 neutral) measured from the voice — the *tone*, not the content. Let it inform your picture of the person and how you act, naturally, like a human picking up on someone's tone. It's rough; interpret in context, don't over-read, and don't usually name it out loud.
+
+### Voice & speaking rate
+
+You can freely choose and switch your own voice and speaking rate (`voice_list_voices`, `voice_set_voice`, `voice_set_speed`); pass a speaker's name as `for_speaker` to remember a preferred voice per person.
 ```
+
+The deployed `AGENTS.md` holds the full version (incl. voice → chat continuation handling).
 
 ## Speaker Recognition & Enrolment
 
@@ -227,15 +264,29 @@ The voice_assistant exposes a small loopback HTTP server on `127.0.0.1:18791` th
 
 Names are normalized (lowercase, alphanumeric + `-_`).
 
-### Voice-driven enrolment via OpenClaw plugin
+### OpenClaw plugin (voice tools)
 
-The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers three tools the LLM can call from voice:
+The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the tools the LLM can call during a voice turn:
 
-- `voice_enroll_speaker(name)` — triggered by *"learn my voice, I am Jochen"*
-- `voice_list_speakers()` — *"what voices do you know?"*
-- `voice_remove_speaker(name)` — *"forget the voice of Jochen"*
+| Tool | Purpose |
+|---|---|
+| `voice_speak_text(text)` | speak a short text out loud (fire-and-forget) |
+| `voice_enroll_speaker(name)` | store the last recording as this speaker's reference |
+| `voice_list_speakers()` / `voice_remove_speaker(name)` | manage known speakers |
+| `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (also per speaker via `for_speaker`) |
+| `voice_analyze_last_output(…)` | re-analyse the assistant's own last spoken reply (text fidelity, timing, prosody) |
 
-See [`openclaw-plugin/README.md`](openclaw-plugin/README.md) for installation. Once installed, voice-driven enrolment works end-to-end: just keep talking after the trigger phrase — the entire 30 s recording window is used as the reference.
+Install / register:
+
+```bash
+openclaw plugins install --link /home/pi/openclaw_voice_assist/openclaw-plugin/
+openclaw gateway restart
+openclaw plugins inspect voice-enrol --runtime --json   # status should be "loaded"
+```
+
+> **Important:** every tool must also be listed in `openclaw.plugin.json` under `contracts.tools` — OpenClaw (≥ 2026.6) silently refuses any tool that is only registered in `index.js`. After a restart, verify the gateway log has no `must declare contracts.tools for: …` lines.
+
+These tools call the assistant's loopback HTTP servers (enrolment `:18791`, speak `:18792`), so the voice_assistant must be running. See [`openclaw-plugin/README.md`](openclaw-plugin/README.md) for details.
 
 ### Limitations
 
@@ -258,12 +309,7 @@ Diarization: `POST {speaches_base}/v1/audio/diarization` — models `Wespeaker/w
 
 ### Piper TTS (local fallback)
 
-```bash
-pip install piper-tts
-mkdir -p ~/.local/share/piper && cd ~/.local/share/piper
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/low/de_DE-thorsten-low.onnx
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/low/de_DE-thorsten-low.onnx.json
-```
+When Speaches is unreachable, TTS falls back to Piper running on the Pi, using the models from `<project>/models/piper/` (see installation step 6). The pre-rendered "Ja?" wakeword acknowledgement also uses Piper.
 
 ## LED Status
 

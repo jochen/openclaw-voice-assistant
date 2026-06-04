@@ -22,3 +22,6 @@ pathvalidate==3.3.1
 
 # Verbalisierung (Zahlen, Ordinalia, Uhrzeiten in TTS-Text)
 num2words>=0.5.14
+
+# ReSpeaker — ESPHome Native API Client (nur für mode: respeaker)
+aioesphomeapi>=44.16.1
