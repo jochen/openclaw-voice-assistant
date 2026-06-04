@@ -28,10 +28,21 @@ log = logging.getLogger(__name__)
 class VoiceController:
     """Steuert TTS-Stimme, Tempo und Sprecher-Zuordnung zur Laufzeit."""
 
-    def __init__(self, base: str, default_model: str, default_voice: str) -> None:
+    def __init__(
+        self,
+        base: str,
+        default_model: str,
+        default_voice: str,
+        on_voice_changed=None,  # Callable[[], None] | None — nach erfolgreichem set_active
+    ) -> None:
         self.base = base.rstrip("/")
         self.default_model = default_model
         self.default_voice = default_voice
+        # Hook, der nach einem erfolgreichen Stimmwechsel feuert (z.B. um die
+        # "Ja?"-Quittung PIPER_OUT in der neuen aktiven Stimme neu zu rendern).
+        # Bewusst minimal gekoppelt: VoiceController kennt weder Quittungstext
+        # noch Zielpfad — das steckt im Callback (in assistant.py verdrahtet).
+        self.on_voice_changed = on_voice_changed
 
         # Sprecher→Stimme-Map laden (erstellt Verzeichnis falls nicht vorhanden)
         self._speaker_map: dict[str, dict[str, Any]] = {}
@@ -198,6 +209,13 @@ class VoiceController:
         ):
             self._unload_model(prev_model)
 
+        # "Ja?"-Quittung in der nun aktiven Stimme neu rendern (best effort).
+        if self.on_voice_changed is not None:
+            try:
+                self.on_voice_changed()
+            except Exception as exc:
+                log.warning("VoiceController.on_voice_changed Fehler: %s", exc)
+
         return True
 
     def set_speed(self, speed: float) -> None:
@@ -239,13 +257,11 @@ class VoiceController:
             t = threading.Thread(target=self.ensure_loaded, args=(m,), daemon=True)
             t.start()
         else:
-            # Auf Profil-Default zurückfallen
-            _state.voice_state.set(
-                model=self.default_model,
-                voice=self.default_voice,
-                speed=1.0,
-            )
-            log.debug("VoiceController: kein Eintrag für '%s' → Default", speaker)
+            # Keine gespeicherte Präferenz für diesen Sprecher → aktuell aktive
+            # Stimme BEIBEHALTEN (nicht auf Profil-Default zurücksetzen). So
+            # bleibt ein manueller Wechsel (voice_set_voice ohne for_speaker)
+            # über Turns hinweg bestehen.
+            log.debug("VoiceController: kein Eintrag für '%s' → aktive Stimme beibehalten", speaker)
 
     def unload(self, model: str) -> bool:
         """Entlädt ein Modell (Default wird nie entladen)."""

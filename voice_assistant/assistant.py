@@ -49,6 +49,7 @@ from voice_assistant.services.tts import (
     ThinkingWorker,
     prerender_followup_beep,
     prerender_ja,
+    rerender_ja_speaches,
 )
 from voice_assistant.state import (
     STATE_FOLLOWUP,
@@ -202,10 +203,17 @@ def run() -> None:
     )
 
     # --- VoiceController + voice_state mit Profil-Defaults initialisieren ---
+    # Callback: bei jedem erfolgreichen Stimmwechsel die "Ja?"-Quittung
+    # (PIPER_OUT) in der nun aktiven Stimme neu rendern. Minimale Kopplung —
+    # Quittungstext + SpeachesTts stecken hier im Closure, nicht im Controller.
+    def _rerender_ack() -> None:
+        rerender_ja_speaches(speaches_tts, profile.locale.wakeword_ack)
+
     voice_controller = VoiceController(
         base=profile.speaches_base,
         default_model=profile.speaches_tts_model,
         default_voice=profile.speaches_tts_voice,
+        on_voice_changed=_rerender_ack,
     )
     voice_state.set(
         model=profile.speaches_tts_model,
@@ -248,7 +256,9 @@ def run() -> None:
     # --- Services zusammenstecken ---
     stt_pipeline = SttPipeline(speaches_stt, local_stt)
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
-    thinking = ThinkingWorker(audio_sink.play_wav, profile.locale.thinking_phrases)
+    thinking = ThinkingWorker(
+        audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts
+    )
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
     mood_analyzer = MoodAnalyzer(VOICE_ANALYSIS_BASE) if VOICE_ANALYSIS_BASE else None
     workers = Workers(

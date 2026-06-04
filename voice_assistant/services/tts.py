@@ -385,6 +385,26 @@ def prerender_ja(text: str = "Ja?") -> None:
         print(f"⚠️  TTS setup failed: {e}")
 
 
+def rerender_ja_speaches(speaches: SpeachesTts, text: str = "Ja?") -> bool:
+    """Rendert die Wakeword-Quittung (PIPER_OUT) in der aktiven Speaches-Stimme neu.
+
+    True bei Erfolg. Bei Speaches-Fehler False — der bestehende (Piper-)Render
+    in PIPER_OUT bleibt dann unangetastet als Fallback liegen.
+    """
+    audio = speaches.synth(text)
+    if not audio:
+        print("⚠️  Quittung-Re-Render via Speaches fehlgeschlagen → bestehende Datei bleibt")
+        return False
+    try:
+        with open(PIPER_OUT, "wb") as f:
+            f.write(audio)
+        print(f"✅ Quittung in aktiver Stimme neu gerendert → {PIPER_OUT}")
+        return True
+    except Exception as e:
+        print(f"⚠️  Quittung schreiben fehlgeschlagen: {e}")
+        return False
+
+
 # ---------------------------------------------------------------------------
 # ReplyRecorder — puffert Audio + Text einer vollständigen Antwort
 # ---------------------------------------------------------------------------
@@ -610,11 +630,35 @@ class ReplyStreamSession:
 # ---------------------------------------------------------------------------
 
 class ThinkingWorker:
-    def __init__(self, play_wav: PlayWav, phrases: list) -> None:
+    def __init__(
+        self,
+        play_wav: PlayWav,
+        phrases: list,
+        speaches: SpeachesTts | None = None,
+    ) -> None:
         self.play_wav = play_wav
         self._phrases = phrases
+        # Optionaler Speaches-TTS: Heartbeat-Phrasen folgen der aktiven Stimme.
+        # Fällt auf lokalen Piper zurück, wenn None oder Speaches gerade fehlschlägt.
+        self.speaches = speaches
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def _render(self, phrase: str) -> str | None:
+        """Rendert die Heartbeat-Phrase als WAV-Datei und gibt den Pfad zurück.
+
+        Bevorzugt Speaches (aktive Stimme); bei Fehler/None → Piper-Fallback.
+        """
+        if self.speaches is not None and self.speaches.state.tts_ok():
+            audio = self.speaches.synth(phrase)
+            if audio:
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                        f.write(audio)
+                        return f.name
+                except Exception as e:
+                    print(f"⚠️  Heartbeat Speaches-WAV schreiben fehlgeschlagen: {e}")
+        return piper_synth(phrase)
 
     def _loop(self) -> None:
         phrases = iter(self._phrases)
@@ -624,7 +668,7 @@ class ThinkingWorker:
         while not self._stop.is_set():
             phrase = next(phrases, fallback)
             print(f"💭 Heartbeat: '{phrase}'")
-            tmp_wav = piper_synth(phrase)
+            tmp_wav = self._render(phrase)
             if tmp_wav:
                 with tts_lock:
                     if not self._stop.is_set():
