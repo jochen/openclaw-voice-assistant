@@ -99,6 +99,83 @@ export default definePluginEntry({
     });
 
     api.registerTool({
+      name: "voice_analyze_last_output",
+      label: "Letzte Sprachausgabe analysieren",
+      description:
+        "Analysiert die zuletzt vom Voice-Assistant gesprochene Antwort akustisch: " +
+        "Texttreue (kam der Text sauber rüber — WER/CER), Sprechtempo und Pausen, " +
+        "sowie Tonfall/Emotion der eigenen Ausgabe (arousal/valence/dominance via Speech Emotion Recognition). " +
+        "Verwenden, wenn der Nutzer fragt wie etwas klang ('klang das holprig?', 'war das gelangweilt?', " +
+        "'wie hast du das gesagt?'), oder wenn OpenClaw selbst prüfen will, wie seine letzte Ausgabe ankam. " +
+        "Analysiert NUR die zuletzt gesprochene Antwort — nicht die aktuelle Eingabe.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      async execute() {
+        let data;
+        try {
+          const res = await fetch(`${SPEAK_BASE}/analyze-last`);
+          const text = await res.text();
+          try {
+            data = text ? JSON.parse(text) : null;
+          } catch {
+            data = { raw: text };
+          }
+          if (!res.ok) {
+            const msg = data?.error ?? `HTTP ${res.status}`;
+            return textResult(`Keine analysierbare Aufnahme vorhanden: ${msg}`, { ok: false });
+          }
+        } catch (err) {
+          return textResult(`Analyse-Dienst nicht erreichbar: ${err.message}`, { ok: false });
+        }
+
+        // Kompakter Report für das LLM
+        const intended = data.intended ?? "";
+        const observed = data.observed ?? "";
+        const fidelity = data.text_fidelity ?? {};
+        const timing = data.timing ?? {};
+        const ser = data.ser ?? data.mood_proxy ?? {};
+
+        const lines = [];
+
+        // Texttreue
+        if (intended && observed && intended !== observed) {
+          lines.push(`Beabsichtigt: "${intended}"`);
+          lines.push(`Erkannt (Transkript): "${observed}"`);
+        } else if (observed) {
+          lines.push(`Transkript: "${observed}"`);
+        }
+        if (fidelity.wer != null) {
+          const match = fidelity.match ? "✓ sauber" : "✗ Abweichung";
+          lines.push(`Texttreue: WER ${fidelity.wer}%, CER ${fidelity.cer ?? "?"}% — ${match}`);
+        }
+
+        // Tempo & Pausen
+        if (timing.words_per_sec != null) {
+          const wps = timing.words_per_sec.toFixed(2);
+          const dur = timing.duration_s != null ? `, Dauer ${timing.duration_s.toFixed(1)} s` : "";
+          const pauseCount = (timing.pauses ?? []).length;
+          const pauseTotal = timing.pause_total_s != null ? `, Pausenzeit ${timing.pause_total_s.toFixed(1)} s` : "";
+          lines.push(`Tempo: ${wps} Wörter/s${dur}${pauseCount > 0 ? `, ${pauseCount} Pausen${pauseTotal}` : ""}`);
+        }
+
+        // Tonfall / SER
+        const serLabel = ser.label ?? ser.hint ?? "";
+        if (ser.arousal != null) {
+          lines.push(
+            `Tonfall: ${serLabel} | arousal=${ser.arousal.toFixed(2)}, valence=${(ser.valence ?? 0).toFixed(2)}, dominance=${(ser.dominance ?? 0).toFixed(2)}`
+          );
+        } else if (serLabel) {
+          lines.push(`Tonfall: ${serLabel}`);
+        }
+
+        const summary = lines.join("\n");
+        return textResult(summary || "Analyse abgeschlossen (keine Details verfügbar).", {
+          ok: true,
+          details: data,
+        });
+      },
+    });
+
+    api.registerTool({
       name: "voice_enroll_speaker",
       label: "Stimme anlernen",
       description:
