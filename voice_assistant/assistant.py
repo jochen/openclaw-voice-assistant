@@ -25,12 +25,14 @@ from voice_assistant.config import (
     RECORDING_MAX_SEC,
     SILENCE_CHUNKS_LIMIT,
     VAD_FRAME_SIZE,
+    VOICE_ANALYSIS_BASE,
     VOICE_DIR,
     Profile,
     load_profile,
 )
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.diarization import SpeachesDiarizer
+from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
 from voice_assistant.services.leds import (
@@ -55,6 +57,7 @@ from voice_assistant.state import (
     STATE_RECORDING,
     STATE_WAITING,
     current_state,
+    mood_queue,
     pending_reply_text,
     reply_done_event,
     speaker_queue,
@@ -233,6 +236,7 @@ def run() -> None:
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
     thinking = ThinkingWorker(audio_sink.play_wav, profile.locale.thinking_phrases)
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
+    mood_analyzer = MoodAnalyzer(VOICE_ANALYSIS_BASE) if VOICE_ANALYSIS_BASE else None
     workers = Workers(
         stt=stt_pipeline,
         speaker=speaker,
@@ -245,6 +249,7 @@ def run() -> None:
         no_reply_fallback=profile.locale.no_reply_fallback,
         voice_instruction=profile.locale.openclaw_voice_instruction,
         diarizer=diarizer,
+        mood_analyzer=mood_analyzer,
         use_stream=profile.openclaw_stream,
     )
 
@@ -362,6 +367,7 @@ def run() -> None:
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
                         workers.start_diarization(recorded_chunks.copy())
+                        workers.start_mood(recorded_chunks.copy())
                     else:
                         print(f"[{now:.1f}s] ⚠️  No speech detected")
                         leds.set_phase(LED_IDLE)
@@ -374,9 +380,13 @@ def run() -> None:
                     text = stt_queue.get_nowait()
                     if _is_stop_command(text, followup_round):
                         print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
-                        # Diarization-Resultat verwerfen damit Queue nicht überläuft
+                        # Diarization- und Mood-Resultat verwerfen damit Queues nicht überlaufen
                         try:
                             speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            mood_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
                         leds.set_phase(LED_IDLE)
@@ -388,14 +398,20 @@ def run() -> None:
                         except queue.Empty:
                             print(f"[{now:.1f}s] ⚠️  Diarization timeout — Sprecher unbekannt")
                             spk = None
+                        try:
+                            mood = mood_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            print(f"[{now:.1f}s] ⚠️  Mood timeout — Stimmung unbekannt")
+                            mood = None
                         spk_label = spk if spk else "unbekannt"
-                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}]: '{text}'")
+                        mood_label = mood if mood else "unbekannt"
+                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}|{mood_label}]: '{text}'")
                         leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
                         reply_done_event.clear()
                         pending_reply_text[0] = None
                         thinking.start()
-                        workers.start_openclaw_turn(text, speaker=spk)
+                        workers.start_openclaw_turn(text, speaker=spk, mood=mood)
                         state = STATE_WAITING
                         state_start = now
                         print(
@@ -405,6 +421,10 @@ def run() -> None:
                         print(f"[{now:.1f}s] ⚠️  Empty transcription")
                         try:
                             speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            mood_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
                         leds.set_phase(LED_IDLE)
@@ -486,6 +506,7 @@ def run() -> None:
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
                         workers.start_diarization(recorded_chunks.copy())
+                        workers.start_mood(recorded_chunks.copy())
                     else:
                         print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech")
                         leds.set_phase(LED_IDLE)

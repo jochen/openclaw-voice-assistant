@@ -5,6 +5,7 @@ Stellt zusätzlich `speak_reply` und den Lebenszeichen-Worker (_thinking) bereit
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -13,10 +14,13 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
+import wave
 from typing import Callable
 
 from voice_assistant.config import (
     FOLLOWUP_BEEP_PATH,
+    LAST_REPLY_TXT,
+    LAST_REPLY_WAV,
     PIPER_MODEL,
     PIPER_MODEL_EMO,
     PIPER_OUT,
@@ -345,6 +349,70 @@ def prerender_ja(text: str = "Ja?") -> None:
 
 
 # ---------------------------------------------------------------------------
+# ReplyRecorder — puffert Audio + Text einer vollständigen Antwort
+# ---------------------------------------------------------------------------
+class ReplyRecorder:
+    """Pro-Antwort-Instanz. Sammelt WAV-Frames aller Sätze und schreibt am Ende
+    eine kombinierte WAV-Datei sowie den Gesamt-Text in den Workspace.
+
+    active=False → alle Methoden sind No-Ops (Bestätigungs-TTS wird nie gepuffert).
+    """
+
+    def __init__(self, active: bool) -> None:
+        self.active = active
+        self._texts: list[str] = []
+        self._frames: list[bytes] = []
+        self._params: tuple[int, int, int] | None = None  # (nchannels, sampwidth, framerate)
+
+    def add_wav_bytes(self, text: str, wav_bytes: bytes) -> None:
+        if not self.active:
+            return
+        try:
+            with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+                params = (wf.getnchannels(), wf.getsampwidth(), wf.getframerate())
+                frames = wf.readframes(wf.getnframes())
+        except Exception:
+            return
+        if self._params is None:
+            self._params = params
+        elif params != self._params:
+            print("⚠️  last-reply buffer: Sample-Rate-Mismatch, Teil verworfen")
+            return
+        if text and text.strip():
+            self._texts.append(text.strip())
+        self._frames.append(frames)
+
+    def add_file(self, text: str, path: str) -> None:
+        if not self.active:
+            return
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            return
+        self.add_wav_bytes(text, data)
+
+    def finalize(self) -> None:
+        if not self.active or not self._frames or self._params is None:
+            return
+        from voice_assistant import state
+        nch, sw, fr = self._params
+        try:
+            with wave.open(LAST_REPLY_WAV, "wb") as wf:
+                wf.setnchannels(nch)
+                wf.setsampwidth(sw)
+                wf.setframerate(fr)
+                wf.writeframes(b"".join(self._frames))
+            text = " ".join(self._texts)
+            with open(LAST_REPLY_TXT, "w") as f:
+                f.write(text)
+            state.last_spoken.update(text, LAST_REPLY_WAV)
+            print(f"💾 last-reply gepuffert: {len(self._frames)} Satz/Sätze → {LAST_REPLY_WAV}")
+        except Exception as e:
+            print(f"⚠️  last-reply buffer failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # speak_reply — satzweises Vorlesen mit LED-Feedback
 # ---------------------------------------------------------------------------
 class ReplySpeaker:
@@ -360,10 +428,12 @@ class ReplySpeaker:
         self.leds = leds
         self.tts_prefix = tts_prefix
 
-    def _play_speaches_sentence(self, sentence: str) -> bool:
+    def _play_speaches_sentence(self, sentence: str, recorder: ReplyRecorder | None = None) -> bool:
         audio_data = self.speaches.synth(sentence)
         if not audio_data:
             return False
+        if recorder:
+            recorder.add_wav_bytes(sentence, audio_data)
         tmp_wav: str | None = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -392,6 +462,7 @@ class ReplySpeaker:
             sentences = split_into_sentences(clean)
             print(f"🔊 {len(sentences)} sentence(s)")
 
+            rec = ReplyRecorder(active=restore_leds)
             played = False
             if self.speaches.state.tts_ok():
                 print("🔄 TTS: Speaches (sentence by sentence)...")
@@ -399,12 +470,13 @@ class ReplySpeaker:
                     print(f"🔊 Sentence {i + 1}/{len(sentences)}: '{sentence}'")
                     if restore_leds:
                         self.leds.set_phase(LED_AUDIO_OUT)
-                    ok = self._play_speaches_sentence(sentence)
+                    ok = self._play_speaches_sentence(sentence, recorder=rec)
                     if not ok:
                         print(f"⚠️  Speaches failed at sentence {i + 1} → Piper fallback")
                         remaining = " ".join(sentences[i:])
                         tmp_wav = piper_synth(remaining)
                         if tmp_wav:
+                            rec.add_file(remaining, tmp_wav)
                             self.play_wav(tmp_wav)
                             os.unlink(tmp_wav)
                         break
@@ -416,10 +488,13 @@ class ReplySpeaker:
                     self.leds.set_phase(LED_AUDIO_OUT)
                 tmp_wav = piper_synth(clean)
                 if tmp_wav:
+                    rec.add_file(clean, tmp_wav)
                     self.play_wav(tmp_wav)
                     os.unlink(tmp_wav)
                 else:
                     print("❌ TTS completely failed")
+
+            rec.finalize()
 
             # Confirmation fertig → OpenClaw wartet noch; Antwort fertig → assistant.py übernimmt
             if not restore_leds:
@@ -443,6 +518,7 @@ class ReplyStreamSession:
         self.spoke = False
         self._led_set = False
         self._first = True
+        self.rec = ReplyRecorder(active=restore_leds)
 
     def feed(self, sentence: str) -> None:
         from voice_assistant.services.leds import (
@@ -464,11 +540,12 @@ class ReplyStreamSession:
             if self.sp.speaches.state.tts_ok():
                 if self.restore_leds:
                     self.sp.leds.set_phase(LED_AUDIO_OUT)
-                ok = self.sp._play_speaches_sentence(clean)
+                ok = self.sp._play_speaches_sentence(clean, recorder=self.rec)
                 if not ok:
                     print("⚠️  Speaches failed (stream) → Piper fallback")
                     tmp_wav = piper_synth(clean)
                     if tmp_wav:
+                        self.rec.add_file(clean, tmp_wav)
                         self.sp.play_wav(tmp_wav)
                         os.unlink(tmp_wav)
                 played = True
@@ -477,6 +554,7 @@ class ReplyStreamSession:
                     self.sp.leds.set_phase(LED_AUDIO_OUT)
                 tmp_wav = piper_synth(clean)
                 if tmp_wav:
+                    self.rec.add_file(clean, tmp_wav)
                     self.sp.play_wav(tmp_wav)
                     os.unlink(tmp_wav)
             self.spoke = True
@@ -484,6 +562,7 @@ class ReplyStreamSession:
     def end(self) -> bool:
         """Gibt True zurück, wenn mindestens ein Satz gesprochen wurde."""
         from voice_assistant.services.leds import LED_OPENCLAW
+        self.rec.finalize()
         if not self.restore_leds:
             self.sp.leds.set_phase(LED_OPENCLAW)
         return self.spoke

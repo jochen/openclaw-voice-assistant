@@ -16,6 +16,7 @@ def query(
     session: str,
     voice_instruction: str = "",
     speaker: str | None = None,
+    mood: str | None = None,
     on_done=None,
 ) -> str | None:
     """Send a voice turn to /v1/responses and return the final reply.
@@ -23,10 +24,15 @@ def query(
     speaker: erkannter Sprecher-Name (oder None für unbekannt). Wird im
         Wrapper-Prefix mitgegeben, damit das LLM weiß, wer spricht und
         ggf. ein Enrolment-Tool aufrufen kann.
+    mood: geschätzte Stimmung (oder None/neutral für kein Signal). Nur
+        deutliche Signale (nicht neutral/None) werden injiziert.
     on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
     """
     speaker_label = speaker if speaker else "unbekannt"
-    voice_input = f"🎤 [Sprecher: {speaker_label}] {text}"
+    tags = f"Sprecher: {speaker_label}"
+    if mood and mood != "neutral":
+        tags += f" | Stimmung: {mood} (grob geschätzt, nur als weiches Signal nutzen)"
+    voice_input = f"🎤 [{tags}] {text}"
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
     payload = json.dumps(
@@ -77,6 +83,7 @@ def query_stream(
     session: str,
     voice_instruction: str = "",
     speaker: str | None = None,
+    mood: str | None = None,
     on_sentence: Callable[[str], None] | None = None,
     on_first_text: Callable[[], None] | None = None,
 ) -> str | None:
@@ -84,6 +91,8 @@ def query_stream(
     via on_sentence-Callback, sobald split_into_sentences eine Satzgrenze erkennt.
 
     speaker: erkannter Sprecher-Name (oder None für unbekannt).
+    mood: geschätzte Stimmung (oder None/neutral für kein Signal). Nur
+        deutliche Signale (nicht neutral/None) werden injiziert.
     on_sentence: wird für jeden abgeschlossenen Satz aufgerufen (kann parallel sprechen).
     on_first_text: wird einmalig beim ersten Delta aufgerufen (z.B. ThinkingWorker stoppen).
     Gibt den vollständigen akkumulierten Text zurück (für Telegram-Spiegelung),
@@ -92,7 +101,10 @@ def query_stream(
     from voice_assistant.services.tts import StreamingSentenceBuffer
 
     speaker_label = speaker if speaker else "unbekannt"
-    voice_input = f"🎤 [Sprecher: {speaker_label}] {text}"
+    tags = f"Sprecher: {speaker_label}"
+    if mood and mood != "neutral":
+        tags += f" | Stimmung: {mood} (grob geschätzt, nur als weiches Signal nutzen)"
+    voice_input = f"🎤 [{tags}] {text}"
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
 

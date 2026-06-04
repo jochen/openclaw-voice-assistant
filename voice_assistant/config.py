@@ -273,6 +273,8 @@ WHISPER_LANGUAGE = "de"
 OPENCLAW_RESPONSES_URL = "http://127.0.0.1:18789/v1/responses"
 OPENCLAW_TIMEOUT = 300
 
+VOICE_ANALYSIS_BASE = "http://<speaches-host>:8001"
+
 SPEACHES_TIMEOUT = 15
 SPEACHES_RETRY_COOLDOWN = 60
 
@@ -288,6 +290,8 @@ MIN_SPEECH_CHUNKS = 4
 
 MAX_FOLLOWUP_ROUNDS = 3
 FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
+LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
+LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,

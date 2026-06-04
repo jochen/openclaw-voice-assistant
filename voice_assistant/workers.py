@@ -6,9 +6,11 @@ import threading
 
 from voice_assistant.services import openclaw, telegram
 from voice_assistant.services.diarization import SpeachesDiarizer, run_diarization
+from voice_assistant.services.mood import MoodAnalyzer, run_mood
 from voice_assistant.services.stt import SttPipeline, chunks_to_wav_bytes
 from voice_assistant.services.tts import ReplySpeaker, ThinkingWorker
 from voice_assistant.state import (
+    mood_queue,
     pending_reply_text,
     reply_done_event,
     speaker_queue,
@@ -30,6 +32,7 @@ class Workers:
         no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten.",
         voice_instruction: str = "",
         diarizer: SpeachesDiarizer | None = None,
+        mood_analyzer: MoodAnalyzer | None = None,
         use_stream: bool = True,
     ) -> None:
         self.stt = stt
@@ -43,6 +46,7 @@ class Workers:
         self.no_reply_fallback = no_reply_fallback
         self.voice_instruction = voice_instruction
         self.diarizer = diarizer
+        self.mood_analyzer = mood_analyzer
         self.use_stream = use_stream
 
     def start_stt(self, audio_chunks: list) -> threading.Thread:
@@ -76,6 +80,28 @@ class Workers:
         wav_bytes = chunks_to_wav_bytes(audio_chunks)
         run_diarization(self.diarizer, wav_bytes, speaker_queue)
 
+    def start_mood(self, audio_chunks: list) -> threading.Thread | None:
+        """Stimmungsanalyse parallel zur STT. Ergebnis landet in mood_queue.
+
+        Wenn kein MoodAnalyzer konfiguriert ist, wird sofort None in die Queue
+        geschoben — die State-Machine kann sich darauf verlassen, immer ein
+        Element abzuholen.
+        """
+        if self.mood_analyzer is None:
+            mood_queue.put(None)
+            return None
+        t = threading.Thread(
+            target=self._mood_worker,
+            args=(audio_chunks,),
+            daemon=True,
+        )
+        t.start()
+        return t
+
+    def _mood_worker(self, audio_chunks: list) -> None:
+        wav_bytes = chunks_to_wav_bytes(audio_chunks)
+        run_mood(self.mood_analyzer, wav_bytes, mood_queue)
+
     def start_confirmation(self, recognized_text: str) -> threading.Thread:
         t = threading.Thread(
             target=self.speaker.speak,
@@ -87,18 +113,18 @@ class Workers:
         return t
 
     def start_openclaw_turn(
-        self, user_text: str, speaker: str | None = None
+        self, user_text: str, speaker: str | None = None, mood: str | None = None
     ) -> threading.Thread:
         t = threading.Thread(
             target=self._openclaw_turn,
-            args=(user_text, speaker),
+            args=(user_text, speaker, mood),
             daemon=True,
         )
         t.start()
         return t
 
     # --- internal workers ---
-    def _openclaw_turn(self, user_text: str, speaker: str | None = None) -> None:
+    def _openclaw_turn(self, user_text: str, speaker: str | None = None, mood: str | None = None) -> None:
         speaker_label = speaker if speaker else "unbekannt"
         telegram.send(
             self.telegram_bot_token,
@@ -116,6 +142,7 @@ class Workers:
                 session=self.openclaw_session,
                 voice_instruction=self.voice_instruction,
                 speaker=speaker,
+                mood=mood,
                 on_sentence=session.feed,
                 on_first_text=self.thinking.stop,
             )
@@ -157,6 +184,7 @@ class Workers:
             session=self.openclaw_session,
             voice_instruction=self.voice_instruction,
             speaker=speaker,
+            mood=mood,
             on_done=self.thinking.stop,
         )
 
