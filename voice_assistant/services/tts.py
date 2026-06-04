@@ -260,13 +260,19 @@ class SpeachesTts:
         self.model = model
         self.voice = voice
 
-    def synth(self, text: str) -> bytes | None:
+    def _do_synth(self, model: str, voice: str, speed: float, text: str) -> bytes | None:
+        """Führt einen einzelnen Speaches-Aufruf durch. Gibt Bytes oder None zurück.
+
+        Wirft urllib.error.HTTPError mit code 404 wenn das Modell nicht geladen ist,
+        damit synth() einen Retry anstoßen kann.
+        """
         payload = json.dumps(
             {
-                "model": self.model,
+                "model": model,
                 "input": text,
-                "voice": self.voice,
+                "voice": voice,
                 "response_format": "wav",
+                "speed": speed,
             }
         ).encode("utf-8")
         req = urllib.request.Request(
@@ -275,14 +281,45 @@ class SpeachesTts:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        with urllib.request.urlopen(req, timeout=SPEACHES_TIMEOUT) as resp:
+            return resp.read()
+
+    def synth(self, text: str) -> bytes | None:
+        from voice_assistant.state import voice_state
+        vm, vv, vsp = voice_state.get()
+        model = vm or self.model
+        voice = vv or self.voice
+        speed = vsp if vsp else 1.0
+
         try:
-            with urllib.request.urlopen(req, timeout=SPEACHES_TIMEOUT) as resp:
-                data = resp.read()
-                if len(data) < 100:
-                    raise ValueError(f"TTS Antwort zu klein ({len(data)} Bytes)")
-                self.state.mark_tts_ok()
-                return data
+            data = self._do_synth(model, voice, speed, text)
+            if data is not None and len(data) < 100:
+                raise ValueError(f"TTS Antwort zu klein ({len(data)} Bytes)")
+            self.state.mark_tts_ok()
+            return data
         except urllib.error.HTTPError as e:
+            if e.code == 404:
+                # Modell nicht geladen → einmal nachladen und nochmal versuchen
+                print(f"⚠️  Speaches TTS 404 für '{model}' — versuche zu laden …")
+                try:
+                    import urllib.parse
+                    encoded = urllib.parse.quote(model, safe="")
+                    load_req = urllib.request.Request(
+                        f"{self.base}/v1/models/{encoded}",
+                        data=b"",
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(load_req, timeout=30):
+                        pass
+                    data = self._do_synth(model, voice, speed, text)
+                    if data is not None and len(data) < 100:
+                        raise ValueError(f"TTS Antwort nach Reload zu klein ({len(data)} Bytes)")
+                    self.state.mark_tts_ok()
+                    return data
+                except Exception as retry_exc:
+                    print(f"⚠️  Speaches TTS Retry fehlgeschlagen: {retry_exc}")
+                    self.state.mark_tts_failed()
+                    return None
             body_err = e.read().decode(errors="replace")
             print(f"⚠️  Speaches TTS HTTP {e.code}: {body_err[:120]}")
             self.state.mark_tts_failed()

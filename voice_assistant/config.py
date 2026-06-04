@@ -303,6 +303,7 @@ VOICE_DIR = os.path.join(WORKSPACE, "voice")
 LAST_RECORDING_PATH = os.path.join(VOICE_DIR, "last_recording.wav")
 SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
 SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
+SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
 
 # Lokaler Enrolment-HTTP-Server (von OpenClaw-Tool angesprochen)
 ENROLL_SERVER_HOST = "127.0.0.1"

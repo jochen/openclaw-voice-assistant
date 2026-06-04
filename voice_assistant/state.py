@@ -4,6 +4,46 @@ import queue
 import threading
 
 
+class VoiceState:
+    """Threadsicherer Holder für die aktiv gewählte TTS-Stimme + Tempo."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.model: str | None = None    # None = Default aus Profil benutzen
+        self.voice: str | None = None
+        self.speed: float = 1.0
+        self.last_speaker: str | None = None  # zuletzt erkannter Sprecher
+
+    def set(
+        self,
+        model: str | None = None,
+        voice: str | None = None,
+        speed: float | None = None,
+    ) -> None:
+        with self._lock:
+            if model is not None:
+                self.model = model
+            if voice is not None:
+                self.voice = voice
+            if speed is not None:
+                self.speed = speed
+
+    def get(self) -> tuple[str | None, str | None, float]:
+        with self._lock:
+            return self.model, self.voice, self.speed
+
+    def set_last_speaker(self, spk: str | None) -> None:
+        with self._lock:
+            self.last_speaker = spk
+
+    def get_last_speaker(self) -> str | None:
+        with self._lock:
+            return self.last_speaker
+
+
+voice_state = VoiceState()
+
+
 class LastSpoken:
     """Threadsicherer Halter für die zuletzt gesprochene Antwort."""
 

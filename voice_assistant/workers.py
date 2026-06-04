@@ -34,6 +34,7 @@ class Workers:
         diarizer: SpeachesDiarizer | None = None,
         mood_analyzer: MoodAnalyzer | None = None,
         use_stream: bool = True,
+        voice_controller=None,  # VoiceController | None — nur Halten/Durchreichen
     ) -> None:
         self.stt = stt
         self.speaker = speaker
@@ -48,6 +49,10 @@ class Workers:
         self.diarizer = diarizer
         self.mood_analyzer = mood_analyzer
         self.use_stream = use_stream
+        # VoiceController wird in assistant.py verwendet (apply_speaker_default
+        # vor start_confirmation/start_openclaw_turn). Workers hält die Referenz
+        # für späteren Zugriff durch OpenClaw-Tools (HTTP-Endpoint), falls nötig.
+        self.voice_controller = voice_controller
 
     def start_stt(self, audio_chunks: list) -> threading.Thread:
         t = threading.Thread(

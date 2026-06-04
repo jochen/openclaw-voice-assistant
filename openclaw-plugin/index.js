@@ -99,6 +99,163 @@ export default definePluginEntry({
     });
 
     api.registerTool({
+      name: "voice_list_voices",
+      label: "TTS-Stimmen auflisten",
+      description:
+        "Listet alle verfügbaren TTS-Stimmen und die aktuell aktive. " +
+        "Vorher aufrufen, um zu wissen welche Stimmen es gibt, bevor du mit voice_set_voice wechselst.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      async execute() {
+        let data;
+        try {
+          const res = await fetch(`${SPEAK_BASE}/voices`);
+          const text = await res.text();
+          try {
+            data = text ? JSON.parse(text) : null;
+          } catch {
+            data = { raw: text };
+          }
+          if (!res.ok) {
+            const msg = data?.error ?? `HTTP ${res.status}`;
+            return textResult(`Konnte Stimmen nicht abrufen: ${msg}`, { ok: false });
+          }
+        } catch (err) {
+          return textResult(`Voice-Dienst nicht erreichbar: ${err.message}`, { ok: false });
+        }
+
+        const available = data?.available ?? [];
+        const loaded = data?.loaded ?? [];
+        const active = data?.active ?? {};
+        const lastSpeaker = data?.last_speaker ?? null;
+
+        const lines = [];
+        if (available.length) {
+          lines.push("Verfügbare Stimmen:");
+          for (const v of available) {
+            lines.push(`- ${v.voice} (Modell ${v.model}, Sprache ${v.language})`);
+          }
+        } else {
+          lines.push("Keine Stimmen verfügbar.");
+        }
+        if (active?.voice) {
+          lines.push(
+            `Aktuell aktiv: ${active.voice} (Modell ${active.model}, Tempo ${active.speed ?? 1.0}).`
+          );
+        }
+        if (lastSpeaker) {
+          lines.push(`Zuletzt erkannter Sprecher: ${lastSpeaker}.`);
+        }
+
+        return textResult(lines.join("\n"), { ok: true, details: data });
+      },
+    });
+
+    api.registerTool({
+      name: "voice_set_voice",
+      label: "TTS-Stimme wechseln",
+      description:
+        "Wechselt die Stimme, mit der der Voice-Assistant spricht (z.B. wenn der Nutzer eine andere/weibliche/lustige Stimme will). " +
+        "voice ist der Stimmenname aus voice_list_voices; model optional für exakte Wahl. " +
+        "speed optional (1.0 normal, >1 schneller). " +
+        "for_speaker: wenn gesetzt, wird diese Stimme dauerhaft für diesen Sprecher gemerkt und künftig automatisch verwendet — nutze dafür den erkannten Sprechernamen.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["voice"],
+        properties: {
+          voice: { type: "string", description: "Stimmenname aus voice_list_voices (z.B. 'kerstin')." },
+          model: { type: "string", description: "Optional: exakte Modell-ID, falls eine Stimme in mehreren Modellen existiert." },
+          speed: { type: "number", description: "Optional: Sprechtempo (1.0 normal, >1 schneller, <1 langsamer)." },
+          for_speaker: { type: "string", description: "Optional: erkannter Sprechername, für den diese Stimme dauerhaft gemerkt werden soll." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const voice = String(params?.voice ?? "").trim();
+        if (!voice) {
+          return textResult("Fehler: Keine Stimme angegeben.", { ok: false });
+        }
+        const payload = { voice };
+        if (params?.model) payload.model = String(params.model).trim();
+        if (params?.speed != null) payload.speed = Number(params.speed);
+        if (params?.for_speaker) payload.for_speaker = String(params.for_speaker).trim();
+
+        let data;
+        try {
+          const res = await fetch(`${SPEAK_BASE}/voice/set`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const text = await res.text();
+          try {
+            data = text ? JSON.parse(text) : null;
+          } catch {
+            data = { raw: text };
+          }
+          if (!res.ok) {
+            const msg = data?.error ?? `HTTP ${res.status}`;
+            return textResult(`Konnte Stimme nicht wechseln: ${msg}`, { ok: false });
+          }
+        } catch (err) {
+          return textResult(`Voice-Dienst nicht erreichbar: ${err.message}`, { ok: false });
+        }
+
+        const active = data?.active ?? {};
+        const speedTxt = active.speed != null && active.speed !== 1.0 ? ` mit Tempo ${active.speed}` : "";
+        const remembered = payload.for_speaker
+          ? ` Ich merke mir das für ${payload.for_speaker}.`
+          : "";
+        return textResult(
+          `Alles klar, ich spreche jetzt mit der Stimme ${active.voice ?? voice}${speedTxt}.${remembered}`,
+          { ok: true, details: data }
+        );
+      },
+    });
+
+    api.registerTool({
+      name: "voice_set_speed",
+      label: "Sprechtempo ändern",
+      description:
+        "Ändert nur das Sprechtempo (1.0 normal, 1.3 zügiger, 0.8 langsamer).",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["speed"],
+        properties: {
+          speed: { type: "number", description: "Sprechtempo (1.0 normal, 1.3 zügiger, 0.8 langsamer)." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const speed = Number(params?.speed);
+        if (!Number.isFinite(speed)) {
+          return textResult("Fehler: Ungültiges Tempo.", { ok: false });
+        }
+        let data;
+        try {
+          const res = await fetch(`${SPEAK_BASE}/voice/speed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ speed }),
+          });
+          const text = await res.text();
+          try {
+            data = text ? JSON.parse(text) : null;
+          } catch {
+            data = { raw: text };
+          }
+          if (!res.ok) {
+            const msg = data?.error ?? `HTTP ${res.status}`;
+            return textResult(`Konnte Tempo nicht ändern: ${msg}`, { ok: false });
+          }
+        } catch (err) {
+          return textResult(`Voice-Dienst nicht erreichbar: ${err.message}`, { ok: false });
+        }
+        const active = data?.active ?? {};
+        return textResult(`Sprechtempo ist jetzt ${active.speed ?? speed}.`, { ok: true, details: data });
+      },
+    });
+
+    api.registerTool({
       name: "voice_analyze_last_output",
       label: "Letzte Sprachausgabe analysieren",
       description:

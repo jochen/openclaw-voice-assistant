@@ -5,6 +5,10 @@ Endpoints:
   GET  /status        → {"status": "ok"}
   GET  /analyze-last  → analysiert die zuletzt gesprochene Antwort (WAV + Text)
                          via VOICE_ANALYSIS_BASE/analyze, gibt Report zurück
+  GET  /voices        → verfügbare/geladene TTS-Stimmen + aktiver Zustand
+  POST /voice/set     → Stimme (optional Tempo / pro Sprecher merken) setzen
+  POST /voice/speed   → nur Sprechtempo ändern
+  POST /voice/unload  → ein TTS-Modell entladen
 """
 
 from __future__ import annotations
@@ -31,6 +35,21 @@ from voice_assistant.state import (
 from voice_assistant.services import telegram
 from voice_assistant.services.tts import ReplySpeaker
 
+# Vom start_speak_server() gesetzt, damit der Request-Handler ihn erreicht
+# (gleiches Muster wie der modul-globale announce_queue-Zustand).
+_voice_controller = None
+
+
+def _resolve_model_for_voice(available: list[dict], voice: str) -> str | None:
+    """Findet das Modell zu einer Stimme. Bevorzugt -medium, sonst erstes."""
+    matches = [e for e in available if e.get("voice") == voice]
+    if not matches:
+        return None
+    for e in matches:
+        if "-medium" in (e.get("model") or ""):
+            return e["model"]
+    return matches[0].get("model")
+
 
 class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:
@@ -51,7 +70,135 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/analyze-last":
             self._handle_analyze_last()
             return
+        if self.path == "/voices":
+            self._handle_voices()
+            return
         self._send_json(404, {"error": "not found"})
+
+    # ------------------------------------------------------------------
+    # Voice-Control-Routen
+    # ------------------------------------------------------------------
+
+    def _active_state(self) -> dict:
+        from voice_assistant.state import voice_state
+
+        model, voice, speed = voice_state.get()
+        return {"model": model, "voice": voice, "speed": speed}
+
+    def _read_json_body(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0:
+            return {}
+        try:
+            data = json.loads(self.rfile.read(length).decode() or "{}")
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _handle_voices(self) -> None:
+        from voice_assistant.state import voice_state
+
+        if _voice_controller is None:
+            self._send_json(503, {"error": "voice controller not available"})
+            return
+        try:
+            available = _voice_controller.list_available()
+            loaded = sorted(_voice_controller.loaded_models())
+        except Exception as e:
+            self._send_json(502, {"error": f"voice controller error: {e}"})
+            return
+        self._send_json(200, {
+            "available": available,
+            "loaded": loaded,
+            "active": self._active_state(),
+            "last_speaker": voice_state.get_last_speaker(),
+        })
+
+    def _handle_voice_set(self) -> None:
+        if _voice_controller is None:
+            self._send_json(503, {"error": "voice controller not available"})
+            return
+        body = self._read_json_body()
+        voice = str(body.get("voice", "")).strip()
+        if not voice:
+            self._send_json(400, {"error": "missing required field 'voice'"})
+            return
+        model = body.get("model")
+        model = str(model).strip() if model else ""
+        for_speaker = body.get("for_speaker")
+        for_speaker = str(for_speaker).strip() if for_speaker else ""
+        speed = body.get("speed")
+        if speed is not None:
+            try:
+                speed = float(speed)
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "field 'speed' must be a number"})
+                return
+
+        if not model:
+            try:
+                available = _voice_controller.list_available()
+            except Exception as e:
+                self._send_json(502, {"error": f"voice controller error: {e}"})
+                return
+            model = _resolve_model_for_voice(available, voice)
+            if not model:
+                self._send_json(400, {
+                    "error": f"no model found for voice '{voice}'",
+                })
+                return
+
+        try:
+            if for_speaker:
+                ok = _voice_controller.set_for_speaker(for_speaker, model, voice, speed)
+            else:
+                ok = _voice_controller.set_active(model, voice, speed)
+        except Exception as e:
+            self._send_json(502, {"error": f"set voice failed: {e}"})
+            return
+        if not ok:
+            self._send_json(502, {
+                "error": f"could not load/activate model '{model}'",
+            })
+            return
+        self._send_json(200, {"ok": True, "active": self._active_state()})
+
+    def _handle_voice_speed(self) -> None:
+        if _voice_controller is None:
+            self._send_json(503, {"error": "voice controller not available"})
+            return
+        body = self._read_json_body()
+        speed = body.get("speed")
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "field 'speed' must be a number"})
+            return
+        try:
+            _voice_controller.set_speed(speed)
+        except Exception as e:
+            self._send_json(502, {"error": f"set speed failed: {e}"})
+            return
+        self._send_json(200, {"ok": True, "active": self._active_state()})
+
+    def _handle_voice_unload(self) -> None:
+        if _voice_controller is None:
+            self._send_json(503, {"error": "voice controller not available"})
+            return
+        body = self._read_json_body()
+        model = str(body.get("model", "")).strip()
+        if not model:
+            self._send_json(400, {"error": "missing required field 'model'"})
+            return
+        try:
+            ok = _voice_controller.unload(model)
+        except Exception as e:
+            self._send_json(502, {"error": f"unload failed: {e}"})
+            return
+        self._send_json(200, {"ok": bool(ok), "model": model})
 
     def _handle_analyze_last(self) -> None:
         import os
@@ -113,6 +260,15 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(200, report)
 
     def do_POST(self) -> None:
+        if self.path == "/voice/set":
+            self._handle_voice_set()
+            return
+        if self.path == "/voice/speed":
+            self._handle_voice_speed()
+            return
+        if self.path == "/voice/unload":
+            self._handle_voice_unload()
+            return
         if self.path != "/speak":
             self._send_json(404, {"error": "not found"})
             return
@@ -131,7 +287,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(202, {"queued": True, "length": len(text)})
 
 
-def start_speak_server() -> threading.Thread:
+def start_speak_server(voice_controller=None) -> threading.Thread:
+    global _voice_controller
+    _voice_controller = voice_controller
     server = HTTPServer((SPEAK_SERVER_HOST, SPEAK_SERVER_PORT), _Handler)
     t = threading.Thread(target=server.serve_forever, name="speak-server", daemon=True)
     t.start()

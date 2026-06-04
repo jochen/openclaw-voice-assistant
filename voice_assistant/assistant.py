@@ -35,6 +35,7 @@ from voice_assistant.services.diarization import SpeachesDiarizer
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
+from voice_assistant.services.voice_control import VoiceController
 from voice_assistant.services.leds import (
     LED_BOOT, LED_IDLE, LED_WAKEWORD, LED_RECORDING,
     LED_STT, LED_CONFIRMATION, LED_ERROR, LED_NEAR_MISS, LED_FOLLOWUP, LED_END,
@@ -62,6 +63,7 @@ from voice_assistant.state import (
     reply_done_event,
     speaker_queue,
     stt_queue,
+    voice_state,
 )
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
 from voice_assistant.wakeword.respeaker import RespeakerWakeword
@@ -199,6 +201,18 @@ def run() -> None:
         profile.speaches_tts_voice,
     )
 
+    # --- VoiceController + voice_state mit Profil-Defaults initialisieren ---
+    voice_controller = VoiceController(
+        base=profile.speaches_base,
+        default_model=profile.speaches_tts_model,
+        default_voice=profile.speaches_tts_voice,
+    )
+    voice_state.set(
+        model=profile.speaches_tts_model,
+        voice=profile.speaches_tts_voice,
+        speed=1.0,
+    )
+
     # --- Audio (Source + Sink) baut und startet ---
     audio_source, audio_sink = _make_audio(profile)
     audio_source.start()
@@ -251,11 +265,12 @@ def run() -> None:
         diarizer=diarizer,
         mood_analyzer=mood_analyzer,
         use_stream=profile.openclaw_stream,
+        voice_controller=voice_controller,
     )
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
-    start_speak_server()
+    start_speak_server(voice_controller=voice_controller)
     start_announce_worker(
         speaker,
         telegram_bot_token=profile.telegram_bot_token,
@@ -409,6 +424,9 @@ def run() -> None:
                         else:
                             mood_label = ""
                         print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
+                        # Sprecher-Stimme sofort setzen (async Laden im Hintergrund)
+                        voice_state.set_last_speaker(spk)
+                        voice_controller.apply_speaker_default(spk)
                         leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
                         reply_done_event.clear()
