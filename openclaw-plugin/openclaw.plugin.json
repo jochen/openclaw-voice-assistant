@@ -10,7 +10,11 @@
       "voice_enroll_speaker",
       "voice_list_speakers",
       "voice_remove_speaker",
-      "voice_speak_text"
+      "voice_speak_text",
+      "voice_list_voices",
+      "voice_set_voice",
+      "voice_set_speed",
+      "voice_analyze_last_output"
     ]
   },
   "configSchema": {
