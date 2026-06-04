@@ -155,7 +155,7 @@ class Workers:
 
             if spoke:
                 # Antwort wurde (zumindest teilweise) live gesprochen
-                print(f"✅ OpenClaw stream complete: '{(full_reply or '')[:80]}...'")
+                print(f"✅ OpenClaw stream complete: '{full_reply or ''}'")
                 if full_reply:
                     telegram.send(
                         self.telegram_bot_token,
@@ -194,7 +194,7 @@ class Workers:
         )
 
         if full_reply:
-            print(f"✅ OpenClaw complete: '{full_reply[:80]}...'")
+            print(f"✅ OpenClaw complete: '{full_reply}'")
             telegram.send(
                 self.telegram_bot_token,
                 self.telegram_chat_id,
