@@ -14,10 +14,13 @@ class MoodAnalyzer:
     def __init__(self, base: str) -> None:
         self.base = base
 
-    def analyze(self, wav_bytes: bytes) -> str | None:
-        """POST WAV an {base}/mood, gibt mood_proxy.label zurück (oder None).
+    def analyze(self, wav_bytes: bytes) -> dict | None:
+        """POST WAV an {base}/mood, gibt das komplette Response-Dict zurück (oder None).
 
-        Antwort-JSON: {"prosody": {...}, "mood_proxy": {"label": "...", "hint": "..."}}
+        Antwort-JSON: {"prosody": {...}, "mood_proxy": {"label": "...", "hint": "..."},
+                       "ser": {"arousal": 0.33, "valence": 0.46, "dominance": 0.33,
+                               "label": "...", "infer_ms": 15, "device": "cuda"}}
+        (`ser` kann null sein wenn der SER-Dienst nicht verfügbar ist.)
         """
         boundary = "----GastonMoodBoundary"
         body = (
@@ -47,15 +50,31 @@ class MoodAnalyzer:
             print(f"⚠️  Mood error: {e}")
             return None
 
-        mood_proxy = result.get("mood_proxy", {})
-        label = mood_proxy.get("label")
-        return label if label else None
+        return result
 
 
 def run_mood(analyzer: MoodAnalyzer, wav_bytes: bytes, out: queue.Queue) -> None:
     try:
-        label = analyzer.analyze(wav_bytes)
-        print(f"🫧 [Mood] {label or 'neutral/unbekannt'}")
+        result = analyzer.analyze(wav_bytes)
+        if not result:
+            print("⚠️  Mood: keine Antwort")
+            out.put(None)
+            return
+        label = (result.get("mood_proxy") or {}).get("label")
+        ser = result.get("ser")
+        if ser:
+            arousal = ser.get("arousal")
+            valence = ser.get("valence")
+            dominance = ser.get("dominance")
+            infer_ms = ser.get("infer_ms")
+            device = ser.get("device")
+            try:
+                vals = f"arousal={arousal:.3f} valence={valence:.3f} dominance={dominance:.3f}"
+            except (TypeError, ValueError):
+                vals = f"arousal={arousal} valence={valence} dominance={dominance}"
+            print(f"🫧 [Mood] {label}  ser: {vals} ({infer_ms}ms/{device})")
+        else:
+            print(f"🫧 [Mood] {label}  (Prosodie-Fallback, kein SER)")
         out.put(label)
     except Exception as e:
         print(f"⚠️  Mood worker error: {e}")

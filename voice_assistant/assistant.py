@@ -362,7 +362,6 @@ def run() -> None:
                         f"{len(recorded_chunks) * 1280 / RATE_OW:.1f}s audio"
                     )
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
-                        _save_last_recording(recorded_chunks)
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
@@ -393,6 +392,7 @@ def run() -> None:
                         followup_round = 0
                         state = STATE_LISTENING
                     elif text:
+                        _save_last_recording(recorded_chunks)
                         try:
                             spk = speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
@@ -501,7 +501,6 @@ def run() -> None:
                         f"{dur:.1f}s, RMS={avg_rms:.4f}, VAD={vad_str}"
                     )
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
-                        _save_last_recording(recorded_chunks)
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
