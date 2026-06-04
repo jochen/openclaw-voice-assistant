@@ -33,12 +33,10 @@ def query(
     if mood and all(isinstance(mood.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
         a, v, d = mood["arousal"], mood["valence"], mood["dominance"]
         voice_input += (
-            f"\n\n[Akustische Stimmungsmessung deiner Sprachaufnahme — weiches Signal, "
-            f"im Kontext deuten, nicht überinterpretieren: Erregung/arousal={a:.2f}, "
-            f"Wertung/valence={v:.2f}, Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. "
-            f"Höhere Erregung deutet auf aufgeregter/angespannter/ungeduldiger, niedrigere "
-            f"Wertung auf unzufriedener/negativer, höhere Dominanz auf bestimmter/selbstsicherer. "
-            f"Richte Ton, Wärme und Länge deiner Antwort sinnvoll danach aus.]"
+            f"\n\n[Akustische Stimmungsmessung deiner Sprachaufnahme (weiches Signal, grob, "
+            f"im Kontext deuten): Erregung/arousal={a:.2f}, Wertung/valence={v:.2f}, "
+            f"Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. Beziehe das in dein "
+            f"Verständnis und dein Vorgehen ein, ohne es zu überinterpretieren oder explizit zu benennen.]"
         )
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
@@ -112,12 +110,10 @@ def query_stream(
     if mood and all(isinstance(mood.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
         a, v, d = mood["arousal"], mood["valence"], mood["dominance"]
         voice_input += (
-            f"\n\n[Akustische Stimmungsmessung deiner Sprachaufnahme — weiches Signal, "
-            f"im Kontext deuten, nicht überinterpretieren: Erregung/arousal={a:.2f}, "
-            f"Wertung/valence={v:.2f}, Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. "
-            f"Höhere Erregung deutet auf aufgeregter/angespannter/ungeduldiger, niedrigere "
-            f"Wertung auf unzufriedener/negativer, höhere Dominanz auf bestimmter/selbstsicherer. "
-            f"Richte Ton, Wärme und Länge deiner Antwort sinnvoll danach aus.]"
+            f"\n\n[Akustische Stimmungsmessung deiner Sprachaufnahme (weiches Signal, grob, "
+            f"im Kontext deuten): Erregung/arousal={a:.2f}, Wertung/valence={v:.2f}, "
+            f"Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. Beziehe das in dein "
+            f"Verständnis und dein Vorgehen ein, ohne es zu überinterpretieren oder explizit zu benennen.]"
         )
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
