@@ -13,6 +13,12 @@ class VoiceState:
         self.voice: str | None = None
         self.speed: float = 1.0
         self.last_speaker: str | None = None  # zuletzt erkannter Sprecher
+        # Sprecher, dem die aktuell aktive TEMPORÄRE Stimme „gehört".
+        # None = aktive Stimme ist Profil-Default oder eine gespeicherte
+        # Präferenz (kein temporärer Besitz).
+        self.voice_owner: str | None = None
+        # Zeitpunkt der letzten Stimmen-Anwendung (time.monotonic-Skala).
+        self.last_apply_ts: float = 0.0
 
     def set(
         self,
@@ -39,6 +45,22 @@ class VoiceState:
     def get_last_speaker(self) -> str | None:
         with self._lock:
             return self.last_speaker
+
+    def set_voice_owner(self, owner: str | None) -> None:
+        with self._lock:
+            self.voice_owner = owner
+
+    def get_voice_owner(self) -> str | None:
+        with self._lock:
+            return self.voice_owner
+
+    def set_last_apply_ts(self, ts: float) -> None:
+        with self._lock:
+            self.last_apply_ts = ts
+
+    def get_last_apply_ts(self) -> float:
+        with self._lock:
+            return self.last_apply_ts
 
 
 voice_state = VoiceState()

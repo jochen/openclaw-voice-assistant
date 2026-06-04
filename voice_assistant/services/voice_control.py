@@ -14,13 +14,14 @@ import json
 import logging
 import os
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
 
 from voice_assistant import state as _state
-from voice_assistant.config import SPEAKER_VOICES_PATH
+from voice_assistant.config import SPEAKER_VOICES_PATH, VOICE_RESET_PAUSE_SEC
 
 log = logging.getLogger(__name__)
 
@@ -185,17 +186,21 @@ class VoiceController:
     # Öffentliche Steuer-Methoden
     # ------------------------------------------------------------------
 
-    def set_active(self, model: str, voice: str, speed: float | None = None) -> bool:
-        """Lädt model (falls nötig) und setzt es als aktiv.
+    def _apply(self, model: str, voice: str, speed: float | None = None) -> bool:
+        """Lädt model (falls nötig) und setzt es als aktiv (state.voice_state).
 
         Das vorherige Nicht-Default-Modell wird nach dem Laden entladen,
-        damit GPU-RAM freigegeben wird.
+        damit GPU-RAM freigegeben wird. Feuert on_voice_changed.
+
+        Verwaltet KEINEN Besitz/Default-Status (voice_owner/last_apply_ts) —
+        das machen die aufrufenden Methoden (set_active/set_for_speaker/
+        apply_speaker_default).
         """
         prev_model, _, _ = _state.voice_state.get()
 
         ok = self.ensure_loaded(model)
         if not ok:
-            log.warning("VoiceController.set_active: '%s' konnte nicht geladen werden.", model)
+            log.warning("VoiceController._apply: '%s' konnte nicht geladen werden.", model)
             return False
 
         _state.voice_state.set(model=model, voice=voice, speed=speed)
@@ -218,6 +223,19 @@ class VoiceController:
 
         return True
 
+    def set_active(self, model: str, voice: str, speed: float | None = None) -> bool:
+        """Manueller Tool-Wechsel (voice_set_voice OHNE for_speaker).
+
+        Markiert die Stimme als TEMPORÄR und besitzergebunden: Besitzer ist der
+        aktuell erkannte Sprecher (last_speaker). Diese Stimme bleibt nur über
+        Turns desselben Sprechers innerhalb VOICE_RESET_PAUSE_SEC erhalten.
+        """
+        ok = self._apply(model, voice, speed)
+        if ok:
+            _state.voice_state.set_voice_owner(_state.voice_state.get_last_speaker())
+            _state.voice_state.set_last_apply_ts(time.monotonic())
+        return ok
+
     def set_speed(self, speed: float) -> None:
         """Setzt nur das Sprechtempo (ohne Modell/Voice zu ändern)."""
         _state.voice_state.set(speed=speed)
@@ -226,42 +244,73 @@ class VoiceController:
     def set_for_speaker(
         self, speaker: str, model: str, voice: str, speed: float | None = None
     ) -> bool:
-        """Setzt die Stimme und merkt sie dauerhaft für diesen Sprecher."""
-        ok = self.set_active(model, voice, speed)
+        """Setzt die Stimme und merkt sie dauerhaft für diesen Sprecher.
+
+        Die Stimme ist damit GESPEICHERT, nicht temporär — kein voice_owner.
+        """
+        ok = self._apply(model, voice, speed)
         if ok:
             entry: dict[str, Any] = {"model": model, "voice": voice}
             if speed is not None:
                 entry["speed"] = speed
             self._speaker_map[speaker] = entry
             self._save_map()
+            _state.voice_state.set_voice_owner(None)
+            _state.voice_state.set_last_apply_ts(time.monotonic())
             log.info("VoiceController: '%s' → %s gespeichert", speaker, entry)
         return ok
 
     def apply_speaker_default(self, speaker: str | None) -> None:
-        """Setzt state.voice_state sofort auf den gespeicherten Wert für speaker.
+        """Wählt die passende Stimme für den aktuell erkannten Sprecher.
+
+        Besitzer- und zeitgebundene Semantik (Regeln in Reihenfolge):
+          1. speaker hat eine GESPEICHERTE Stimme → diese anwenden (temp-Besitz
+             aufheben).
+          2. sonst, wenn aktuell eine TEMPORÄRE Stimme aktiv ist UND ihr
+             Besitzer == speaker UND die Pause seit der letzten Anwendung
+             < VOICE_RESET_PAUSE_SEC → temporäre Stimme BEIBEHALTEN.
+          3. sonst → auf Profil-Default (Thorsten, speed 1.0) zurückfallen
+             (temp-Besitz aufheben).
 
         Das Laden des Modells (ensure_loaded) läuft fire-and-forget in einem
         Daemon-Thread, damit der Haupt-Loop nicht blockiert. Die state-Werte
         werden sofort gesetzt — SpeachesTts.synth macht den 404-Retry, falls
         das Modell beim ersten Satz noch nicht vollständig geladen ist.
         """
+        now = time.monotonic()
+
+        # Regel 1: gespeicherte Präferenz
         if speaker and speaker in self._speaker_map:
             entry = self._speaker_map[speaker]
             m = entry.get("model", self.default_model)
             v = entry.get("voice", self.default_voice)
             sp = entry.get("speed", 1.0)
             _state.voice_state.set(model=m, voice=v, speed=sp)
-            log.info("VoiceController: apply '%s' → model='%s' voice='%s' speed=%s",
+            _state.voice_state.set_voice_owner(None)
+            _state.voice_state.set_last_apply_ts(now)
+            log.info("VoiceController: apply '%s' Regel=gespeichert → model='%s' voice='%s' speed=%s",
                      speaker, m, v, sp)
-            # Async laden (fire-and-forget)
             t = threading.Thread(target=self.ensure_loaded, args=(m,), daemon=True)
             t.start()
-        else:
-            # Keine gespeicherte Präferenz für diesen Sprecher → aktuell aktive
-            # Stimme BEIBEHALTEN (nicht auf Profil-Default zurücksetzen). So
-            # bleibt ein manueller Wechsel (voice_set_voice ohne for_speaker)
-            # über Turns hinweg bestehen.
-            log.debug("VoiceController: kein Eintrag für '%s' → aktive Stimme beibehalten", speaker)
+            return
+
+        # Regel 2: temporäre Stimme desselben Besitzers, Pause noch nicht abgelaufen
+        owner = _state.voice_state.get_voice_owner()
+        last_ts = _state.voice_state.get_last_apply_ts()
+        if owner is not None and owner == speaker and (now - last_ts) < VOICE_RESET_PAUSE_SEC:
+            # nur Zeitstempel auffrischen, Stimme/Besitz unberührt lassen
+            _state.voice_state.set_last_apply_ts(now)
+            log.info("VoiceController: apply '%s' Regel=temp-behalten (Besitzer, %.0fs Pause)",
+                     speaker, now - last_ts)
+            return
+
+        # Regel 3: Default-Reset (anderer/voiceless/unbekannter Sprecher oder
+        # lange Pause beim selben Sprecher)
+        self._apply(self.default_model, self.default_voice, 1.0)
+        _state.voice_state.set_voice_owner(None)
+        _state.voice_state.set_last_apply_ts(now)
+        log.info("VoiceController: apply '%s' Regel=default-reset → model='%s' voice='%s'",
+                 speaker, self.default_model, self.default_voice)
 
     def unload(self, model: str) -> bool:
         """Entlädt ein Modell (Default wird nie entladen)."""
