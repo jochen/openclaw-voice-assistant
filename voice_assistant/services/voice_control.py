@@ -53,6 +53,19 @@ class VoiceController:
     # Persistenz
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _norm(name: str | None) -> str | None:
+        """Normalisiert einen Sprecher-Namen für case-insensitiven Vergleich.
+
+        Diarization-Label (z.B. 'jochen', vom Enrollment-Dateinamen) und der
+        vom LLM via for_speaker übergebene Name (z.B. 'Jochen') müssen sonst
+        nicht zusammenpassen → Map-Lookup scheitert. casefold() + strip()
+        macht den Abgleich robust.
+        """
+        if not name:
+            return None
+        return name.strip().casefold()
+
     def _load_map(self) -> None:
         try:
             os.makedirs(os.path.dirname(SPEAKER_VOICES_PATH), exist_ok=True)
@@ -60,8 +73,14 @@ class VoiceController:
                 with open(SPEAKER_VOICES_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict):
-                    self._speaker_map = data
-                    log.debug("VoiceController: Map geladen (%d Sprecher)", len(data))
+                    # Keys normalisieren (migriert Altbestand wie 'Jochen' → 'jochen')
+                    migrated: dict[str, dict[str, Any]] = {}
+                    for k, v in data.items():
+                        migrated[self._norm(k) or k] = v
+                    self._speaker_map = migrated
+                    if migrated != data:
+                        self._save_map()
+                    log.debug("VoiceController: Map geladen (%d Sprecher)", len(migrated))
         except Exception as exc:
             log.warning("VoiceController: Fehler beim Laden der Speaker-Map: %s", exc)
 
@@ -253,7 +272,7 @@ class VoiceController:
             entry: dict[str, Any] = {"model": model, "voice": voice}
             if speed is not None:
                 entry["speed"] = speed
-            self._speaker_map[speaker] = entry
+            self._speaker_map[self._norm(speaker) or speaker] = entry
             self._save_map()
             _state.voice_state.set_voice_owner(None)
             _state.voice_state.set_last_apply_ts(time.monotonic())
@@ -278,10 +297,11 @@ class VoiceController:
         das Modell beim ersten Satz noch nicht vollständig geladen ist.
         """
         now = time.monotonic()
+        key = self._norm(speaker)
 
         # Regel 1: gespeicherte Präferenz
-        if speaker and speaker in self._speaker_map:
-            entry = self._speaker_map[speaker]
+        if key and key in self._speaker_map:
+            entry = self._speaker_map[key]
             m = entry.get("model", self.default_model)
             v = entry.get("voice", self.default_voice)
             sp = entry.get("speed", 1.0)
@@ -297,7 +317,7 @@ class VoiceController:
         # Regel 2: temporäre Stimme desselben Besitzers, Pause noch nicht abgelaufen
         owner = _state.voice_state.get_voice_owner()
         last_ts = _state.voice_state.get_last_apply_ts()
-        if owner is not None and owner == speaker and (now - last_ts) < VOICE_RESET_PAUSE_SEC:
+        if owner is not None and self._norm(owner) == key and (now - last_ts) < VOICE_RESET_PAUSE_SEC:
             # nur Zeitstempel auffrischen, Stimme/Besitz unberührt lassen
             _state.voice_state.set_last_apply_ts(now)
             log.info("VoiceController: apply '%s' Regel=temp-behalten (Besitzer, %.0fs Pause)",
