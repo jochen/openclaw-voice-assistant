@@ -3,11 +3,37 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from typing import Callable
 
 from voice_assistant.config import OPENCLAW_RESPONSES_URL, OPENCLAW_TIMEOUT
+
+# Sentinel, das OpenClaw zurückgibt, wenn keine Ausgabe erfolgen soll — z.B.
+# wenn die Spracheingabe nicht an den Assistenten gerichtet war (Fernseher/
+# Hintergrundgespräch). In diesem Fall bricht der Assistent komplett ab: keine
+# Audioausgabe, kein Telegram-Post, kein Follow-up-Zuhören.
+#
+# Der Vertrag wird NICHT hier definiert, sondern OpenClaw-seitig im Workspace-
+# Kontext, der in den Agent-Prompt geladen wird — kanonische Quelle:
+#   /home/pi/.openclaw/workspace/SYSTEMNOTIZEN.md  → "NO_REPLY-Regel (2026-05-08)"
+#   "Wenn keine Ausgabe erfolgen soll, muss die Antwort exakt `NO_REPLY` sein."
+# (Die Regel ist bewusst generisch; die TV-Erkennung ist eine Generalisierung
+# des Modells, kein eigener Trigger.) Hier nur die Erkennung/der Abbruch.
+NO_REPLY_SENTINEL = "NO_REPLY"
+_NO_REPLY_RE = re.compile(r"^\W*NO[ _]?REPLY\W*$", re.IGNORECASE)
+
+
+def is_no_reply(text: str | None) -> bool:
+    """True, wenn die (komplette) LLM-Antwort nur das NO_REPLY-Sentinel ist.
+
+    Tolerant gegenüber Groß/Klein, Leer-/Unterstrich und umgebender
+    Interpunktion ('no reply.', 'NO_REPLY' …), aber nur als Voll-Match — eine
+    mehrsätzige echte Antwort, die das Wort beiläufig enthält, wird NICHT
+    unterdrückt.
+    """
+    return bool(text) and bool(_NO_REPLY_RE.match(text.strip()))
 
 
 def query(

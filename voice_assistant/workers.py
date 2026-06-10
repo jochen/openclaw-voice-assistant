@@ -131,16 +131,43 @@ class Workers:
     # --- internal workers ---
     def _openclaw_turn(self, user_text: str, speaker: str | None = None, mood: dict | None = None) -> None:
         speaker_label = speaker if speaker else "unbekannt"
-        telegram.send(
-            self.telegram_bot_token,
-            self.telegram_chat_id,
-            user_text,
-            prefix=f"🎤 [{speaker_label}] ",
-        )
+
+        # Die User-Eingabe wird erst gespiegelt, sobald eine echte (Nicht-
+        # NO_REPLY-)Antwort feststeht. So bleibt der Chat sauber, wenn OpenClaw
+        # die Aufnahme als Fernseher/Hintergrund erkennt und NO_REPLY liefert.
+        posted = [False]
+
+        def post_user_input() -> None:
+            if posted[0]:
+                return
+            posted[0] = True
+            telegram.send(
+                self.telegram_bot_token,
+                self.telegram_chat_id,
+                user_text,
+                prefix=f"🎤 [{speaker_label}] ",
+            )
+
+        def finish_no_reply(full_reply: str | None) -> None:
+            # OpenClaw hat die Eingabe als nicht-adressiert erkannt: komplett
+            # abbrechen — keine Audioausgabe, kein Telegram, kein Follow-up
+            # (pending_reply_text=None ⇒ Gate in assistant.py bleibt zu).
+            print(f"🔇 NO_REPLY → abgebrochen (kein Audio/Telegram/Follow-up): '{full_reply}'")
+            pending_reply_text[0] = None
+            reply_done_event.set()
 
         # --- Streaming-Pfad: Sätze werden gesprochen, sobald sie generiert sind ---
         if self.use_stream:
             session = self.speaker.stream_session(restore_leds=True)
+
+            def guarded_feed(sentence: str) -> None:
+                # NO_REPLY-Sentinel niemals sprechen; echte Sätze posten erst
+                # jetzt die User-Eingabe (vor der ersten realen Ausgabe).
+                if openclaw.is_no_reply(sentence):
+                    return
+                post_user_input()
+                session.feed(sentence)
+
             full_reply = openclaw.query_stream(
                 user_text,
                 token=self.openclaw_token,
@@ -148,14 +175,19 @@ class Workers:
                 voice_instruction=self.voice_instruction,
                 speaker=speaker,
                 mood=mood,
-                on_sentence=session.feed,
+                on_sentence=guarded_feed,
                 on_first_text=self.thinking.stop,
             )
             spoke = session.end()
 
+            if openclaw.is_no_reply(full_reply):
+                finish_no_reply(full_reply)
+                return
+
             if spoke:
                 # Antwort wurde (zumindest teilweise) live gesprochen
                 print(f"✅ OpenClaw stream complete: '{full_reply or ''}'")
+                post_user_input()
                 if full_reply:
                     telegram.send(
                         self.telegram_bot_token,
@@ -169,6 +201,7 @@ class Workers:
 
             if full_reply:
                 # Text kam, wurde aber nicht gesprochen (z.B. leer nach clean) → normal
+                post_user_input()
                 telegram.send(
                     self.telegram_bot_token,
                     self.telegram_chat_id,
@@ -193,8 +226,13 @@ class Workers:
             on_done=self.thinking.stop,
         )
 
+        if openclaw.is_no_reply(full_reply):
+            finish_no_reply(full_reply)
+            return
+
         if full_reply:
             print(f"✅ OpenClaw complete: '{full_reply}'")
+            post_user_input()
             telegram.send(
                 self.telegram_bot_token,
                 self.telegram_chat_id,
@@ -204,6 +242,8 @@ class Workers:
             pending_reply_text[0] = full_reply
             self.speaker.speak(full_reply)
         else:
+            # Echter Leerlauf/Fehler (kein Sentinel): Eingabe spiegeln + Fallback ansagen
+            post_user_input()
             pending_reply_text[0] = None
             self.speaker.speak(self.no_reply_fallback)
 
