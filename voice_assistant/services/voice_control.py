@@ -283,6 +283,12 @@ class VoiceController:
         """Wählt die passende Stimme für den aktuell erkannten Sprecher.
 
         Besitzer- und zeitgebundene Semantik (Regeln in Reihenfolge):
+          0. speaker NICHT identifiziert (None, z.B. sehr kurze Ansage):
+             - innerhalb VOICE_RESET_PAUSE_SEC seit der letzten Anwendung →
+               aktuell aktive Stimme HALTEN (nur Zeitstempel auffrischen).
+               'None' bedeutet „nicht zuordenbar", nicht „anderer Sprecher" —
+               erst ein positiv erkannter ANDERER Sprecher wechselt die Stimme.
+             - sonst (Pause abgelaufen, Gesprächsanfang ohne ID) → Default.
           1. speaker hat eine GESPEICHERTE Stimme → diese anwenden (temp-Besitz
              aufheben).
           2. sonst, wenn aktuell eine TEMPORÄRE Stimme aktiv ist UND ihr
@@ -298,6 +304,24 @@ class VoiceController:
         """
         now = time.monotonic()
         key = self._norm(speaker)
+
+        # Regel 0: Sprecher nicht identifiziert (kurze Ansage / Diarization-Timeout)
+        if key is None:
+            last_ts = _state.voice_state.get_last_apply_ts()
+            if last_ts and (now - last_ts) < VOICE_RESET_PAUSE_SEC:
+                # Direkter Follow-up: aktive Stimme halten, nicht auf Default
+                # zurückfallen. Zeitstempel auffrischen, damit eine Kette
+                # kurzer Ansagen die Stimme am Leben hält.
+                _state.voice_state.set_last_apply_ts(now)
+                log.info("VoiceController: apply '?' Regel=halten (Sprecher unbekannt, %.0fs Pause)",
+                         now - last_ts)
+                return
+            # Pause abgelaufen / Gesprächsanfang ohne ID → Default-Reset
+            self._apply(self.default_model, self.default_voice, 1.0)
+            _state.voice_state.set_voice_owner(None)
+            _state.voice_state.set_last_apply_ts(now)
+            log.info("VoiceController: apply '?' Regel=default-reset (unbekannt, Pause abgelaufen)")
+            return
 
         # Regel 1: gespeicherte Präferenz
         if key and key in self._speaker_map:

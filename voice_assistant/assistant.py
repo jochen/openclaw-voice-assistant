@@ -434,8 +434,13 @@ def run() -> None:
                         else:
                             mood_label = ""
                         print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
-                        # Sprecher-Stimme sofort setzen (async Laden im Hintergrund)
-                        voice_state.set_last_speaker(spk)
+                        # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
+                        # last_speaker nur bei positiver ID überschreiben — ein
+                        # nicht zuordenbarer Kurz-Follow-up (spk=None) soll den
+                        # zuletzt erkannten Sprecher (= Besitzer einer manuell
+                        # gesetzten Stimme) nicht verlieren.
+                        if spk:
+                            voice_state.set_last_speaker(spk)
                         voice_controller.apply_speaker_default(spk)
                         leds.set_phase(LED_CONFIRMATION)
                         workers.start_confirmation(text)
