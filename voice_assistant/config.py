@@ -133,9 +133,13 @@ class Profile:
     # Nützlich in Lärm-Umgebungen (Fablab): Hintergrundrauschen-RMS messen,
     # dann Schwelle knapp darüber setzen (z.B. 900 wenn Rauschen ca. 724 RMS).
     vad_voice_rms_min: float = 0.0
-    # Anzahl aufeinanderfolgender stiller Chunks zum Beenden der Aufnahme.
-    # 0 = globaler Default (SILENCE_CHUNKS_LIMIT = 25 ≈ 2 s).
-    # In lauten Umgebungen kleinerer Wert (z.B. 10 ≈ 800 ms) sinnvoll.
+    # Endpointing: Stille-Dauer (Sekunden) bis die Aufnahme beendet wird.
+    # ZEITBASIERT — gilt identisch auf allen Profilen, egal wie lang ein
+    # Audio-Chunk je nach Quelle real ist (ALSA-16k=80ms, ALSA-48k-resample≈27ms,
+    # ReSpeaker=40ms). Der frühere chunk-basierte Wert war je Profil 0,67–2,0 s.
+    silence_seconds: float = 2.0
+    # Legacy-Override in *Chunks*. > 0 schlägt silence_seconds; nur für
+    # Rückwärtskompatibilität. Bevorzugt silence_seconds setzen.
     silence_chunks_limit: int = 0
 
     # Locale
@@ -248,6 +252,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         tts_prefix=str(raw.get("tts_prefix", "")),
         vad_aggressiveness=int(raw.get("vad_aggressiveness", 3)),
         vad_voice_rms_min=float(raw.get("vad_voice_rms_min", 0.0)),
+        silence_seconds=float(raw.get("silence_seconds", 2.0)),
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
         locale=locale,
     )
@@ -292,6 +297,10 @@ MAX_FOLLOWUP_ROUNDS = 3
 FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
+
+# Endpointing-Telemetrie: eine JSONL-Zeile pro Aufnahme/Follow-up zum
+# empirischen Tunen von silence_seconds (Pausen-Verhalten je Sprecher).
+ENDPOINT_LOG_PATH = os.path.join(WORKSPACE, "endpoint.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,

@@ -12,7 +12,9 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import wave
 from typing import Callable
@@ -302,7 +304,6 @@ class SpeachesTts:
                 # Modell nicht geladen → einmal nachladen und nochmal versuchen
                 print(f"⚠️  Speaches TTS 404 für '{model}' — versuche zu laden …")
                 try:
-                    import urllib.parse
                     encoded = urllib.parse.quote(model, safe="")
                     load_req = urllib.request.Request(
                         f"{self.base}/v1/models/{encoded}",
@@ -635,12 +636,24 @@ class ThinkingWorker:
         play_wav: PlayWav,
         phrases: list,
         speaches: SpeachesTts | None = None,
+        quiet_factor: float = 1.5,
+        min_quiet: float = 10.0,
+        max_quiet: float = 30.0,
+        interval: float = 25.0,
     ) -> None:
         self.play_wav = play_wav
         self._phrases = phrases
         # Optionaler Speaches-TTS: Heartbeat-Phrasen folgen der aktiven Stimme.
         # Fällt auf lokalen Piper zurück, wenn None oder Speaches gerade fehlschlägt.
         self.speaches = speaches
+        # Wartezeit vor dem ERSTEN Warte-Satz ist an die zuvor gesprochene Länge
+        # (Echo/Ansage) gekoppelt: kurze Ansage → früher Lebenszeichen, lange
+        # Ansage → mehr Luft. gap = clamp(ansage_dauer * factor, min, max).
+        self._quiet_factor = quiet_factor
+        self._min_quiet = min_quiet
+        self._max_quiet = max_quiet
+        # Abstand zwischen weiteren Warte-Sätzen — bewusst weiter auseinander.
+        self._interval = interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -663,18 +676,50 @@ class ThinkingWorker:
     def _loop(self) -> None:
         phrases = iter(self._phrases)
         fallback = self._phrases[-1] if self._phrases else "..."
-        if self._stop.wait(timeout=15):
-            return
+        # tts_lock wird durchgehend gehalten, solange das Echo bzw. die Antwort
+        # spricht. Wir messen diese gehaltene Zeit = die "vorher gesprochene Länge"
+        # und koppeln die Wartezeit vor dem ersten Warte-Satz daran.
+        speak_start = 0.0     # Beginn der laufenden Ansage
+        spoken_len = 0.0      # Dauer der zuletzt von außen gesprochenen Ansage
+        quiet_since = time.time()
+        was_locked = False
+        fired = False         # seit der letzten Ansage schon ein Warte-Satz?
         while not self._stop.is_set():
-            phrase = next(phrases, fallback)
-            print(f"💭 Heartbeat: '{phrase}'")
-            tmp_wav = self._render(phrase)
-            if tmp_wav:
-                with tts_lock:
-                    if not self._stop.is_set():
-                        self.play_wav(tmp_wav)
-                os.unlink(tmp_wav)
-            self._stop.wait(timeout=20)
+            now = time.time()
+            locked = tts_lock.locked()
+            if locked and not was_locked:
+                speak_start = now                # Ansage beginnt
+            elif was_locked and not locked:
+                spoken_len = now - speak_start    # Ansage endete → Länge merken
+                quiet_since = now
+                fired = False                     # nach neuer Ansage wieder erlauben
+            was_locked = locked
+
+            if not locked:
+                # Erster Warte-Satz: Wartezeit ∝ vorher gesprochener Länge,
+                # geklemmt auf [min_quiet, max_quiet]. Danach fester Abstand.
+                if fired:
+                    gap = self._interval
+                else:
+                    gap = max(self._min_quiet,
+                              min(self._max_quiet, spoken_len * self._quiet_factor))
+                if now - quiet_since >= gap:
+                    phrase = next(phrases, fallback)
+                    print(
+                        f"💭 Heartbeat: '{phrase}' "
+                        f"(Ansage {spoken_len:.1f}s → Wartezeit {gap:.1f}s)"
+                    )
+                    tmp_wav = self._render(phrase)
+                    if tmp_wav:
+                        with tts_lock:
+                            if not self._stop.is_set():
+                                self.play_wav(tmp_wav)
+                        os.unlink(tmp_wav)
+                    quiet_since = time.time()
+                    fired = True
+                    was_locked = False            # eigene Ausgabe nicht als Ansage zählen
+            if self._stop.wait(timeout=1.0):
+                return
 
     def start(self) -> None:
         self._stop.clear()

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import re
 import time
 from collections import deque
+from datetime import datetime
 
 import numpy as np
 import webrtcvad
@@ -15,6 +17,7 @@ from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
 from voice_assistant.config import (
     DIARIZATION_JOIN_TIMEOUT,
+    ENDPOINT_LOG_PATH,
     FOLLOWUP_BEEP_PATH,
     LAST_RECORDING_PATH,
     MAX_FOLLOWUP_ROUNDS,
@@ -149,6 +152,36 @@ def _is_speech_chunk(
     return result
 
 
+# Endet ein Transkript "sauber" (Satzzeichen) oder offen (Konjunktion/Füllwort)?
+# Ein offenes Ende ist ein starkes Indiz, dass die Aufnahme mitten im Satz
+# abgeschnitten wurde — die wichtigste Metrik zum Beurteilen von Pause-Cuts.
+_OPEN_TAIL = {
+    "und", "oder", "aber", "weil", "dass", "wenn", "also", "dann", "noch",
+    "ähm", "äh", "öh", "hm", "mit", "für", "auf", "in", "zu", "der", "die",
+    "das", "ein", "eine", "ich", "wir", "ist", "war",
+}
+
+
+def _ends_clean(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t[-1] in ".!?…":
+        return True
+    last = re.sub(r"[^\wäöüß]", "", t.split()[-1].lower())
+    return last not in _OPEN_TAIL
+
+
+def _log_endpoint(meta: dict) -> None:
+    """Hängt eine JSONL-Zeile mit Endpointing-Telemetrie an. Best-effort."""
+    try:
+        meta = {"ts": datetime.now().isoformat(timespec="seconds"), **meta}
+        with open(ENDPOINT_LOG_PATH, "a") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    except Exception as exc:  # Logging darf den Loop nie crashen
+        print(f"⚠️  endpoint-log: {exc}")
+
+
 def _format_wake_scores(scores: deque) -> str:
     """Formatiert den Score-Verlauf eines Wakeword-Events als Einzeiler.
 
@@ -244,12 +277,19 @@ def run() -> None:
     print("🔧 Initialising WebRTC VAD...")
     vad = webrtcvad.Vad(profile.vad_aggressiveness)
     _vad_rms_min = profile.vad_voice_rms_min
-    _silence_limit = profile.silence_chunks_limit or SILENCE_CHUNKS_LIMIT
+    # Endpointing zeitbasiert: silence_seconds gilt auf jedem Profil gleich.
+    # Die reale Chunk-Länge variiert je Quelle (ALSA-16k=80ms, 48k-resample≈27ms,
+    # ReSpeaker=40ms), darum wird das Chunk-Limit erst beim ersten Audio aufgelöst.
+    _silence_seconds = profile.silence_seconds
+    _silence_override = profile.silence_chunks_limit  # > 0 = explizit in Chunks
+    _chunk_sec = 0.0                                  # beim ersten Chunk gemessen
+    _silence_limit = _silence_override or SILENCE_CHUNKS_LIMIT  # Fallback bis Messung
     print(
         f"✅ WebRTC VAD ready "
         f"(aggressiveness={profile.vad_aggressiveness}, "
         f"rms_min={_vad_rms_min:.0f}, "
-        f"silence_chunks={_silence_limit})"
+        f"silence_seconds={_silence_seconds:.2f}"
+        f"{f', override={_silence_override} chunks' if _silence_override else ''})"
     )
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
@@ -292,7 +332,9 @@ def run() -> None:
     state_start = time.time()
     recorded_chunks: list = []
     silence_counter = 0
+    max_internal_pause = 0                  # längste Pause, die durch Sprache wieder aufging
     speech_detected = False
+    endpoint_meta: dict = {}                # Endpointing-Telemetrie der aktuellen Aufnahme
     wake_hits = 0                           # aufeinanderfolgende Frames über Threshold
     near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
@@ -309,6 +351,17 @@ def run() -> None:
             audio_16 = audio_source.read_chunk()
             now = time.time()
             current_state[0] = state
+
+            # Reale Chunk-Länge einmalig messen → zeitbasiertes Endpointing auflösen
+            if _chunk_sec == 0.0 and len(audio_16) > 0:
+                _chunk_sec = len(audio_16) / RATE_OW
+                if not _silence_override:
+                    _silence_limit = max(1, round(_silence_seconds / _chunk_sec))
+                print(
+                    f"📏 Endpointing: chunk={_chunk_sec * 1000:.0f}ms, "
+                    f"silence_limit={_silence_limit} chunks "
+                    f"≈ {_silence_limit * _chunk_sec:.2f}s"
+                )
 
             # --- LISTENING ---
             if state == STATE_LISTENING:
@@ -342,6 +395,7 @@ def run() -> None:
                         state_start = time.time()
                         recorded_chunks = []
                         silence_counter = 0
+                        max_internal_pause = 0
                         speech_detected = False
                     elif wake_hits >= 1:
                         print(f"[{now:.1f}s] ⚡ Near-Miss ({wake_hits} Frame{'s' if wake_hits > 1 else ''}){beam_str}")
@@ -365,6 +419,7 @@ def run() -> None:
                     state_start = time.time()
                     recorded_chunks = []
                     silence_counter = 0
+                    max_internal_pause = 0
                     speech_detected = False
                     wake_hits = 0
 
@@ -372,6 +427,8 @@ def run() -> None:
             elif state == STATE_RECORDING:
                 recorded_chunks.append(audio_16.copy())
                 if _is_speech_chunk(vad, audio_16, _vad_rms_min):
+                    if speech_detected:
+                        max_internal_pause = max(max_internal_pause, silence_counter)
                     speech_detected = True
                     silence_counter = 0
                 elif speech_detected:
@@ -382,10 +439,20 @@ def run() -> None:
 
                 if stop or timeout:
                     reason = "silence" if stop else "timeout"
+                    dur = len(recorded_chunks) * _chunk_sec
                     print(
                         f"[{now:.1f}s] ⏹  Recording stopped ({reason}), "
-                        f"{len(recorded_chunks) * 1280 / RATE_OW:.1f}s audio"
+                        f"{dur:.1f}s audio"
                     )
+                    endpoint_meta = {
+                        "phase": "recording",
+                        "reason": reason,
+                        "dur_s": round(dur, 2),
+                        "silence_limit": _silence_limit,
+                        "silence_seconds": round(_silence_limit * _chunk_sec, 2),
+                        "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
+                        "followup_round": followup_round,
+                    }
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
@@ -433,6 +500,14 @@ def run() -> None:
                             mood_label = f"a{mood.get('arousal', 0):.2f} v{mood.get('valence', 0):.2f} d{mood.get('dominance', 0):.2f}"
                         else:
                             mood_label = ""
+                        if endpoint_meta:
+                            endpoint_meta.update({
+                                "speaker": spk_label,
+                                "transcript": text,
+                                "ends_clean": _ends_clean(text),
+                            })
+                            _log_endpoint(endpoint_meta)
+                            endpoint_meta = {}
                         print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
                         # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
                         # last_speaker nur bei positiver ID überschreiben — ein
@@ -501,6 +576,7 @@ def run() -> None:
                         state_start = time.time()
                         recorded_chunks = []
                         silence_counter = 0
+                        max_internal_pause = 0
                         speech_detected = False
                         followup_rms_sum = 0.0
                         followup_rms_count = 0
@@ -518,6 +594,8 @@ def run() -> None:
                 followup_rms_sum += rms
                 followup_rms_count += 1
                 if _is_speech_chunk(vad, audio_16, _vad_rms_min):
+                    if speech_detected:
+                        max_internal_pause = max(max_internal_pause, silence_counter)
                     speech_detected = True
                     silence_counter = 0
                     followup_vad_speech += 1
@@ -531,11 +609,21 @@ def run() -> None:
                     avg_rms = followup_rms_sum / followup_rms_count if followup_rms_count else 0.0
                     vad_str = f"{followup_vad_speech}/{followup_rms_count}"
                     reason = "Stille" if stop else "Timeout"
-                    dur = len(recorded_chunks) * 1280 / RATE_OW
+                    dur = len(recorded_chunks) * _chunk_sec
                     print(
                         f"[{now:.1f}s] ⏹  Follow-up beendet ({reason}), "
                         f"{dur:.1f}s, RMS={avg_rms:.4f}, VAD={vad_str}"
                     )
+                    endpoint_meta = {
+                        "phase": "followup",
+                        "reason": "silence" if stop else "timeout",
+                        "dur_s": round(dur, 2),
+                        "silence_limit": _silence_limit,
+                        "silence_seconds": round(_silence_limit * _chunk_sec, 2),
+                        "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
+                        "avg_rms": round(avg_rms, 4),
+                        "followup_round": followup_round,
+                    }
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING

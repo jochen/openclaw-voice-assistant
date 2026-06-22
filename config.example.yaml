@@ -49,10 +49,14 @@ profiles:
     # In lauten Umgebungen (Fablab, Werkstatt) anpassen:
     #   1. Hintergrund-RMS messen (test_wakeword.py oder aus voice_assistant-Logs)
     #   2. vad_voice_rms_min knapp über dem Hintergrund-RMS setzen
-    #   3. silence_chunks_limit reduzieren damit Aufnahme schneller endet
+    #   3. silence_seconds verkürzen damit Aufnahme schneller endet
     # vad_aggressiveness: 3         # 0–3, Default 3 (aggressivste Geräuschunterdrückung)
     # vad_voice_rms_min: 0          # 0 = deaktiviert; Fablab-Empfehlung: ~900
-    # silence_chunks_limit: 0       # 0 = Default (25 ≈ 2 s); Fablab-Empfehlung: 10
+    # silence_seconds: 2.0          # Stille bis Aufnahme-Ende (ZEITBASIERT, gilt auf
+    #                               #   allen Profilen gleich). Höher = geduldiger bei
+    #                               #   Denkpausen, aber träger. Fablab/laut: ~1.0
+    # silence_chunks_limit: 0       # Legacy-Override in Chunks; > 0 schlägt silence_seconds.
+    #                               #   Nur falls explizit chunk-genau nötig. 0 = aus.
 
     # Locale — all fields optional, defaults shown here (German)
     # locale:
