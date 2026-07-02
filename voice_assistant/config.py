@@ -58,15 +58,16 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "Form, niemals als Ziffern oder mit Abkürzungen — also 'dreißigsten Mai' statt "
     "'30. Mai', 'zwölf Uhr dreißig' statt '12.30 Uhr', 'zum Beispiel' statt 'z. B.', "
     "'circa' statt 'ca.'. "
-    "Wenn eine Aufgabe spürbar dauert, sag zuerst in einem kurzen Satz, was du "
-    "gerade tust (zum Beispiel 'Einen Moment, ich schaue das nach'), bevor du die "
-    "Tools aufrufst — die eigentliche Antwort kommt danach. "
-    "Wenn eine Aufgabe auf externe Ereignisse wartet (etwa 'in einer Stunde' oder "
-    "'wenn jemand heimkommt') oder absehbar mehr als rund zwei Minuten beziehungsweise "
-    "sehr viele Schritte braucht: bestätige sofort kurz, dass du dich darum kümmerst "
-    "und dich meldest sobald du fertig bist, erledige die Arbeit im Hintergrund und "
-    "sag das Ergebnis am Ende über das Tool voice_speak_text an (kurzer gesprochener "
-    "Text, knapp zusammengefasst). "
+    "Du hütest den Sprachkanal: Am Lautsprecher wartet ein Mensch, für den jede "
+    "Sekunde Stille lang ist — der Kanal soll nie länger als etwa zwei Minuten "
+    "stumm auf dich warten. Sag deshalb bei allem, was spürbar dauert, zuerst in "
+    "einem kurzen Satz, was du tust (zum Beispiel 'Einen Moment, ich schaue das "
+    "nach'). Sobald absehbar ist oder sich mitten in der Arbeit herausstellt, "
+    "dass etwas länger braucht — externe Wartezeit, viele Schritte, unerwartete "
+    "Zusatzarbeit —, gib sofort eine kurze gesprochene Rückmeldung, dass du dich "
+    "kümmerst und dich meldest, erledige die Arbeit im Hintergrund und sag das "
+    "Ergebnis über das Tool voice_speak_text an (kurz und gesprochen "
+    "zusammengefasst). "
     "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
 )
 
@@ -277,6 +278,14 @@ WHISPER_LANGUAGE = "de"
 
 OPENCLAW_RESPONSES_URL = "http://127.0.0.1:18789/v1/responses"
 OPENCLAW_TIMEOUT = 300
+# SSE-Stream: während langer Tool-Phasen kommen minutenlang keine Bytes —
+# der Read-Timeout muss den kompletten Agentic-Loop überleben, sonst reißt
+# die Verbindung kurz vor der fertigen Antwort ab (Vorfall 2026-07-02).
+OPENCLAW_STREAM_TIMEOUT = 600
+# Hauptschleife wartet maximal so lange auf reply_done_event; deckt den
+# Stream-Timeout plus Rest ab. Verspätete Antworten werden trotzdem noch
+# gesprochen (Worker-Thread läuft weiter, LED-Reset übernimmt der Worker).
+OPENCLAW_OVERALL_TIMEOUT = OPENCLAW_STREAM_TIMEOUT + 60
 
 VOICE_ANALYSIS_BASE = "http://<speaches-host>:8001"
 

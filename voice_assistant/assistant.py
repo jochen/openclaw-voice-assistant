@@ -22,7 +22,7 @@ from voice_assistant.config import (
     LAST_RECORDING_PATH,
     MAX_FOLLOWUP_ROUNDS,
     MIN_SPEECH_CHUNKS,
-    OPENCLAW_TIMEOUT,
+    OPENCLAW_OVERALL_TIMEOUT,
     PIPER_OUT,
     RATE_OW,
     RECORDING_MAX_SEC,
@@ -526,7 +526,7 @@ def run() -> None:
                         state = STATE_WAITING
                         state_start = now
                         print(
-                            f"[{now:.1f}s] ⏳ Waiting for reply (max {OPENCLAW_TIMEOUT}s)..."
+                            f"[{now:.1f}s] ⏳ Waiting for reply (max {OPENCLAW_OVERALL_TIMEOUT}s)..."
                         )
                     else:
                         print(f"[{now:.1f}s] ⚠️  Empty transcription")
@@ -549,7 +549,7 @@ def run() -> None:
 
             # --- WAITING (for OpenClaw reply + TTS) ---
             elif state == STATE_WAITING:
-                if now - state_start > OPENCLAW_TIMEOUT + 30:
+                if now - state_start > OPENCLAW_OVERALL_TIMEOUT:
                     print(f"[{now:.1f}s] ⚠️  Overall timeout exceeded")
                     thinking.stop()
                     leds.set_phase(LED_ERROR)

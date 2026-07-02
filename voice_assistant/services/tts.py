@@ -683,7 +683,7 @@ class ThinkingWorker:
         spoken_len = 0.0      # Dauer der zuletzt von außen gesprochenen Ansage
         quiet_since = time.time()
         was_locked = False
-        fired = False         # seit der letzten Ansage schon ein Warte-Satz?
+        fired_count = 0       # Warte-Sätze seit der letzten Ansage
         while not self._stop.is_set():
             now = time.time()
             locked = tts_lock.locked()
@@ -692,14 +692,16 @@ class ThinkingWorker:
             elif was_locked and not locked:
                 spoken_len = now - speak_start    # Ansage endete → Länge merken
                 quiet_since = now
-                fired = False                     # nach neuer Ansage wieder erlauben
+                fired_count = 0                   # nach neuer Ansage wieder erlauben
             was_locked = locked
 
             if not locked:
                 # Erster Warte-Satz: Wartezeit ∝ vorher gesprochener Länge,
-                # geklemmt auf [min_quiet, max_quiet]. Danach fester Abstand.
-                if fired:
-                    gap = self._interval
+                # geklemmt auf [min_quiet, max_quiet]. Danach wachsender Abstand
+                # (×1.5 pro Wiederholung, max 120 s) — bei langen Agentic-Turns
+                # nervt ein starrer 25-s-Takt mehr als er beruhigt.
+                if fired_count:
+                    gap = min(self._interval * (1.5 ** (fired_count - 1)), 120.0)
                 else:
                     gap = max(self._min_quiet,
                               min(self._max_quiet, spoken_len * self._quiet_factor))
@@ -716,7 +718,7 @@ class ThinkingWorker:
                                 self.play_wav(tmp_wav)
                         os.unlink(tmp_wav)
                     quiet_since = time.time()
-                    fired = True
+                    fired_count += 1
                     was_locked = False            # eigene Ausgabe nicht als Ansage zählen
             if self._stop.wait(timeout=1.0):
                 return

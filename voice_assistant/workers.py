@@ -6,10 +6,13 @@ import threading
 
 from voice_assistant.services import openclaw, telegram
 from voice_assistant.services.diarization import SpeachesDiarizer, run_diarization
+from voice_assistant.services.leds import LED_IDLE
 from voice_assistant.services.mood import MoodAnalyzer, run_mood
 from voice_assistant.services.stt import SttPipeline, chunks_to_wav_bytes
 from voice_assistant.services.tts import ReplySpeaker, ThinkingWorker
 from voice_assistant.state import (
+    STATE_WAITING,
+    current_state,
     mood_queue,
     pending_reply_text,
     reply_done_event,
@@ -130,6 +133,19 @@ class Workers:
 
     # --- internal workers ---
     def _openclaw_turn(self, user_text: str, speaker: str | None = None, mood: dict | None = None) -> None:
+        try:
+            self._run_openclaw_turn(user_text, speaker, mood)
+        finally:
+            # Hat die Hauptschleife den Turn per Overall-Timeout schon verlassen,
+            # setzt niemand mehr die LED nach dem (verspäteten) Sprechen zurück —
+            # der Ring bliebe sonst dauerhaft auf AUDIO_OUT (grün pulsierend).
+            if current_state[0] != STATE_WAITING:
+                try:
+                    self.speaker.leds.set_phase(LED_IDLE)
+                except Exception:
+                    pass
+
+    def _run_openclaw_turn(self, user_text: str, speaker: str | None = None, mood: dict | None = None) -> None:
         speaker_label = speaker if speaker else "unbekannt"
 
         # Die User-Eingabe wird erst gespiegelt, sobald eine echte (Nicht-
@@ -157,6 +173,7 @@ class Workers:
             reply_done_event.set()
 
         # --- Streaming-Pfad: Sätze werden gesprochen, sobald sie generiert sind ---
+        timed_out = False
         if self.use_stream:
             session = self.speaker.stream_session(restore_leds=True)
 
@@ -168,7 +185,7 @@ class Workers:
                 post_user_input()
                 session.feed(sentence)
 
-            full_reply = openclaw.query_stream(
+            full_reply, timed_out = openclaw.query_stream(
                 user_text,
                 token=self.openclaw_token,
                 session=self.openclaw_session,
@@ -213,18 +230,32 @@ class Workers:
                 reply_done_event.set()
                 return
 
-            print("⚠️  Streaming ohne Ausgabe → non-streaming Fallback")
+            if timed_out:
+                # Server arbeitet vermutlich noch am Turn: Auftrag NICHT erneut
+                # posten (Doppel-Ausführung!), stattdessen Stand/Ergebnis abfragen.
+                print("⚠️  Stream-Timeout → Status-Nachfrage statt erneutem Auftrag")
+                full_reply = openclaw.query_status(
+                    token=self.openclaw_token,
+                    session=self.openclaw_session,
+                    on_done=self.thinking.stop,
+                )
+            else:
+                print("⚠️  Streaming ohne Ausgabe → non-streaming Fallback")
+                full_reply = None
+        else:
+            full_reply = None
 
         # --- Non-streaming-Pfad (Flag aus ODER Streaming lieferte nichts) ---
-        full_reply = openclaw.query(
-            user_text,
-            token=self.openclaw_token,
-            session=self.openclaw_session,
-            voice_instruction=self.voice_instruction,
-            speaker=speaker,
-            mood=mood,
-            on_done=self.thinking.stop,
-        )
+        if full_reply is None and not (self.use_stream and timed_out):
+            full_reply = openclaw.query(
+                user_text,
+                token=self.openclaw_token,
+                session=self.openclaw_session,
+                voice_instruction=self.voice_instruction,
+                speaker=speaker,
+                mood=mood,
+                on_done=self.thinking.stop,
+            )
 
         if openclaw.is_no_reply(full_reply):
             finish_no_reply(full_reply)

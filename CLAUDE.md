@@ -29,7 +29,8 @@ AudioSource (ALSA | ReSpeaker via ESPHome) → WakewordEngine
   → WebRTC VAD + recording
   → STT (Speaches, fallback: faster-whisper local)
   → Confirmation TTS in parallel thread ("Ich habe verstanden: ...")
-  → POST /v1/responses to OpenClaw (vollständiger Agentic Loop, non-streaming)
+  → POST /v1/responses to OpenClaw (vollständiger Agentic Loop, SSE-Streaming;
+    non-streaming Fallback)
   → Antwort satzweise via TTS (Speaches, fallback: Piper) über AudioSink
   → Telegram notification
 ```
@@ -81,7 +82,7 @@ interpretiert (Rückwärtskompatibilität in `voice_assistant/config.py`).
 | Service | URL | Purpose |
 |---|---|---|
 | Speaches (GPU container) | `http://<speaches-host>:8000` | STT + TTS (OpenAI-compatible) |
-| OpenClaw | `http://127.0.0.1:18789/v1/responses` | AI brain, non-streaming, session-based |
+| OpenClaw | `http://127.0.0.1:18789/v1/responses` | AI brain, SSE-streaming, session-based |
 | WLED controller | `wled_controller.py` (repo-local) | LED-Status |
 | Piper TTS | `/home/pi/.local/share/piper/*.onnx` | Lokaler TTS-Fallback |
 | Telegram Bot API | `https://api.telegram.org/...` | Mirror queries and replies |
@@ -107,22 +108,32 @@ Fünf Zustände in der Hauptschleife (`voice_assistant/assistant.py`):
 - Bestätigungs-TTS ("Ich habe verstanden: …") läuft in eigenem Thread (`ReplySpeaker`).
 - `_openclaw_turn` in eigenem Thread: OpenClaw anfragen → Telegram spiegeln
   → Antwort satzweise vorlesen → `state.reply_done_event` setzen.
-- `ThinkingWorker` feuert alle 20 s eine Lebenszeichen-Phrase (Piper), wenn
-  OpenClaw zu langsam antwortet.
+- `ThinkingWorker` feuert Lebenszeichen-Phrasen mit wachsendem Abstand
+  (erster nach gesprochener Länge, dann ~25 s ×1.5 pro Wiederholung, max
+  120 s), wenn OpenClaw zu langsam antwortet.
 - `state.tts_lock` verhindert überlappende Audio-Wiedergabe.
 
 ## OpenClaw Request Format
 
-Voice-Anfragen werden mit einer Prompt-Direktive umhüllt
-(`services/openclaw.py`):
+Voice-Anfragen werden mit einer Prompt-Direktive umhüllt (Default:
+`config.py:_DEFAULT_VOICE_INSTRUCTION`, pro Profil überschreibbar):
 
 ```
-🎤 {user_text}
+🎤 [Sprecher: jochen] {user_text}
 
-[VOICE: Ruf zuerst alle nötigen Tools auf, dann antworte in max 2-3 gesprochenen
-Sätzen auf Deutsch. Kein Markdown, keine Listen. Niemals etwas erfinden —
-entweder Tool aufrufen oder sagen was du nicht weißt.]
+[Hinweis zur Verarbeitung dieser Spracheingabe ...]
 ```
+
+Die Direktive ist im Mandats-Stil formuliert (Ziel/Blickweise statt
+Einzelregeln): gesprochene Antwort in Fließtext, Zahlen/Daten ausgeschrieben,
+und "Du hütest den Sprachkanal" — bei Aufgaben, die (auch erst mitten in der
+Arbeit erkennbar) länger dauern, sofort kurze Rückmeldung geben, im
+Hintergrund weiterarbeiten und das Ergebnis per `voice_speak_text` ansagen.
+
+Anfragen laufen per SSE-Streaming; der Read-Timeout
+(`OPENCLAW_STREAM_TIMEOUT`, 600 s) überlebt lange Tool-Phasen ohne Deltas.
+Bei Stream-Timeout wird der Auftrag NICHT erneut gepostet (Doppel-Ausführung),
+sondern per `query_status()` nur das Ergebnis des laufenden Turns abgefragt.
 
 Der `x-openclaw-session-key`-Header trägt die Session-Kennung (z.B.
 `agent:main:telegram:group:<telegram-group>`) und teilt die Session mit dem

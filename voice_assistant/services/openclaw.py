@@ -8,7 +8,11 @@ import urllib.error
 import urllib.request
 from typing import Callable
 
-from voice_assistant.config import OPENCLAW_RESPONSES_URL, OPENCLAW_TIMEOUT
+from voice_assistant.config import (
+    OPENCLAW_RESPONSES_URL,
+    OPENCLAW_STREAM_TIMEOUT,
+    OPENCLAW_TIMEOUT,
+)
 
 # Sentinel, das OpenClaw zurückgibt, wenn keine Ausgabe erfolgen soll — z.B.
 # wenn die Spracheingabe nicht an den Assistenten gerichtet war (Fernseher/
@@ -36,6 +40,23 @@ def is_no_reply(text: str | None) -> bool:
     return bool(text) and bool(_NO_REPLY_RE.match(text.strip()))
 
 
+# Nach Stream-Timeout: Der Server arbeitet vermutlich noch am ursprünglichen
+# Turn. Diese Nachfrage wird als NEUER Turn hinter dem laufenden eingereiht
+# und liefert dessen Ergebnis — ohne den Auftrag erneut auszuführen.
+STATUS_PROMPT = (
+    "[Systemnachricht vom Voice-Kanal, kein neuer Auftrag: Die Verbindung zu "
+    "deiner laufenden Antwort ist clientseitig abgerissen, der Nutzer wartet am "
+    "Lautsprecher. Fasse jetzt das Ergebnis beziehungsweise den Stand deiner "
+    "letzten Aufgabe in wenigen gesprochenen Sätzen auf Deutsch zusammen — "
+    "führe den Auftrag nicht erneut aus.]"
+)
+
+
+def query_status(token: str, session: str, on_done=None) -> str | None:
+    """Ergebnis/Stand des letzten Turns abfragen, ohne den Auftrag neu zu posten."""
+    return query(STATUS_PROMPT, token=token, session=session, on_done=on_done, wrap=False)
+
+
 def query(
     text: str,
     token: str,
@@ -44,6 +65,7 @@ def query(
     speaker: str | None = None,
     mood: dict | None = None,
     on_done=None,
+    wrap: bool = True,
 ) -> str | None:
     """Send a voice turn to /v1/responses and return the final reply.
 
@@ -53,9 +75,10 @@ def query(
     mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
+    wrap: False = text unverändert senden (Systemnachrichten statt Mikrofon-Transkription).
     """
     speaker_label = speaker if speaker else "unbekannt"
-    voice_input = f"🎤 [Sprecher: {speaker_label}] {text}"
+    voice_input = f"🎤 [Sprecher: {speaker_label}] {text}" if wrap else text
     if mood and all(isinstance(mood.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
         a, v, d = mood["arousal"], mood["valence"], mood["dominance"]
         voice_input += (
@@ -117,7 +140,7 @@ def query_stream(
     mood: dict | None = None,
     on_sentence: Callable[[str], None] | None = None,
     on_first_text: Callable[[], None] | None = None,
-) -> str | None:
+) -> tuple[str | None, bool]:
     """Streaming-Variante von query(): liest SSE-Events und liefert fertige Sätze
     via on_sentence-Callback, sobald split_into_sentences eine Satzgrenze erkennt.
 
@@ -126,8 +149,10 @@ def query_stream(
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     on_sentence: wird für jeden abgeschlossenen Satz aufgerufen (kann parallel sprechen).
     on_first_text: wird einmalig beim ersten Delta aufgerufen (z.B. ThinkingWorker stoppen).
-    Gibt den vollständigen akkumulierten Text zurück (für Telegram-Spiegelung),
-    oder None bei Fehler.
+    Gibt (text, timed_out) zurück: den vollständigen akkumulierten Text (für
+    Telegram-Spiegelung) oder None bei Fehler, und ob der Abbruch ein Timeout
+    war. timed_out=True heißt: der Server arbeitet vermutlich noch am Turn —
+    der Auftrag darf dann NICHT erneut gepostet werden (Doppel-Ausführung).
     """
     from voice_assistant.services.tts import StreamingSentenceBuffer
 
@@ -169,7 +194,7 @@ def query_stream(
     first_text_fired = False
 
     try:
-        with urllib.request.urlopen(req, timeout=OPENCLAW_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=OPENCLAW_STREAM_TIMEOUT) as resp:
             current_event: str | None = None
             for raw_line in resp:
                 line = raw_line.decode("utf-8").rstrip("\r\n")
@@ -206,7 +231,7 @@ def query_stream(
 
                     elif evt_type == "response.failed":
                         print("❌ OpenClaw stream: response.failed")
-                        return None
+                        return None, False
 
                     elif evt_type == "response.completed":
                         # flush verbleibende Sätze
@@ -214,7 +239,7 @@ def query_stream(
                         if on_sentence:
                             for s in remaining:
                                 on_sentence(s)
-                        return full_text or None
+                        return full_text or None, False
 
                 elif line == "":
                     # SSE-Block-Trenner — kein State nötig, current_event zurücksetzen
@@ -225,11 +250,20 @@ def query_stream(
         if on_sentence:
             for s in remaining:
                 on_sentence(s)
-        return full_text or None
+        return full_text or None, False
 
     except urllib.error.HTTPError as e:
         print(f"❌ OpenClaw stream HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
-        return None
+        return None, False
+    except TimeoutError:
+        print(f"❌ OpenClaw stream timeout ({OPENCLAW_STREAM_TIMEOUT}s ohne Daten)")
+        return full_text or None, True
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, TimeoutError):
+            print(f"❌ OpenClaw stream timeout ({OPENCLAW_STREAM_TIMEOUT}s ohne Daten)")
+            return full_text or None, True
+        print(f"❌ OpenClaw stream error: {e}")
+        return None, False
     except Exception as e:
         print(f"❌ OpenClaw stream error: {e}")
-        return None
+        return None, False
