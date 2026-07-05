@@ -1,0 +1,21 @@
+# Gaston-Wakeword — trainiert 2026-07-05 auf ai-stack (Wakeword-Studio M2, Runde 2)
+name: gaston
+display: "Gaston"
+model: gaston.tflite
+# 0.35: Live-Test 2026-07-05 zeigte 1-2-Frame-Near-Misses bei echtem "Gaston";
+# FP-Sweep mit 3-Frame-Debounce ergab 0.00 FP/h bis hinunter zu Threshold 0.25.
+threshold: 0.35
+spellings:
+  - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
+  - "Gastong (40%)"
+created: 2026-07-05
+training:
+  generator: piper-sample-generator (onnx-Voices, deutsch)
+  voices: thorsten-medium/high/emotional, karlsson, pavoque, ramona, kerstin(nur nasal, gedrosselt), eva_k(nur gastong)
+  positive_samples: 29995
+  adversarial_negatives: 30000
+  config: gaston.yaml (layer_size 64, max_negative_weight 500, fp_target 0.5/h)
+  validation:
+    augmented_test_recall_at_0.5: 0.19
+    raw_clip_recall_kerncluster: 0.93-1.00
+    false_per_hour_at_0.5: 0.19
