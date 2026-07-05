@@ -255,6 +255,17 @@ class VoiceController:
             _state.voice_state.set_last_apply_ts(time.monotonic())
         return ok
 
+    def set_default_voice(self, voice: str) -> None:
+        """Setzt die Default-Stimme für Regel 0/3 in apply_speaker_default.
+
+        Wird beim Wakeword-Trigger aufgerufen (assistant.py): die Stimme des
+        getriggerten Wakewords wird zum neuen Ausgangspunkt, bis eine
+        gespeicherte oder temporäre Sprecher-Präferenz greift (Regel 1/2 haben
+        weiterhin Vorrang — siehe apply_speaker_default).
+        """
+        if voice:
+            self.default_voice = voice
+
     def set_speed(self, speed: float) -> None:
         """Setzt nur das Sprechtempo (ohne Modell/Voice zu ändern)."""
         _state.voice_state.set(speed=speed)

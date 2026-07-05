@@ -74,6 +74,19 @@ profiles:
     #     - "Fast fertig."
     #     - "Noch einen Augenblick."
 
+    # Wakewords — optional. Fehlt der Block komplett: ein Eintrag 'hey_jarvis'
+    # mit den Profil-Defaults oben (Rückwärtskompatibilität). Mehrere Einträge
+    # erlauben parallel aktive Wakewords, die je auf eine eigene OpenClaw-
+    # Session routen (x-openclaw-session-key) — Details: Wakeword_Studio_Spec.md.
+    # wakewords:
+    #   - bundle: gaston                        # models/wakewords/gaston/
+    #     session: "agent:main:telegram:group:DEINE_CHAT_ID"
+    #     ack: "Ja?"                            # optional, Default: locale.wakeword_ack
+    #     tts_voice: "de_DE-thorsten-medium"     # optional, Default: speaches_tts_voice
+    #     threshold: 0.6                        # optional, Default: manifest.yaml oder 0.65
+    #   - bundle: hey_jarvis                    # eingebautes openwakeword-Modell
+    #     session: "agent:zweiter:telegram:group:ANDERE_CHAT_ID"
+
   # ---------------------------------------------------------------------
   # Beispiel "respeaker" - Mic + LED-Ring + Speaker am ReSpeaker
   # ---------------------------------------------------------------------

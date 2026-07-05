@@ -95,6 +95,23 @@ class LedsConfig:
 
 
 @dataclass
+class WakewordConfig:
+    """Ein aktives Wakeword + sein Routing-Ziel (Multi-Wakeword, Meilenstein 1
+    der Wakeword-Studio-Spec, siehe Wakeword_Studio_Spec.md Teil 2).
+
+    bundle: Name eines Bundle-Verzeichnisses unter models/wakewords/<bundle>/
+        ODER ein eingebauter openwakeword-Modellname ('hey_jarvis', 'alexa', …).
+        Auflösung passiert in wakeword/openwakeword_engine.py.
+    threshold: None = aus manifest.yaml (oder Default 0.5) ableiten.
+    """
+    bundle: str
+    session: str = ""
+    ack: str = ""
+    tts_voice: str = ""
+    threshold: float | None = None
+
+
+@dataclass
 class Profile:
     """Gebündelte Profil-Konfiguration, nach Sachgebiet gruppiert."""
     name: str
@@ -146,6 +163,10 @@ class Profile:
     # Locale
     locale: LocaleConfig = field(default_factory=LocaleConfig)
 
+    # Wakewords — fehlt der Block in config.yaml: ein Eintrag 'hey_jarvis'
+    # mit Profil-Defaults (Rückwärtskompatibilität, siehe _parse_wakewords).
+    wakewords: list = field(default_factory=list)
+
 
 def _load_yaml() -> dict[str, Any]:
     try:
@@ -181,6 +202,55 @@ def _detect_profile_name(cfg: dict[str, Any]) -> str:
 
     print("❌  No profiles defined in config.yaml.")
     sys.exit(1)
+
+
+def _parse_wakewords(
+    raw: dict[str, Any], openclaw_session: str, speaches_tts_voice: str, wakeword_ack: str
+) -> list[WakewordConfig]:
+    """Baut die Liste aktiver Wakewords aus dem optionalen `wakewords:`-Block.
+
+    Fehlt der Block: ein Eintrag 'hey_jarvis' mit den Profil-Defaults — exakt
+    das bisherige Verhalten (Rückwärtskompatibilität wie beim alten flachen
+    YAML-Schema).
+    """
+    entries_raw = raw.get("wakewords")
+    if not entries_raw:
+        return [
+            WakewordConfig(
+                bundle="hey_jarvis",
+                session=openclaw_session,
+                ack=wakeword_ack,
+                tts_voice=speaches_tts_voice,
+            )
+        ]
+
+    result: list[WakewordConfig] = []
+    for entry in entries_raw:
+        bundle = str((entry or {}).get("bundle", "")).strip()
+        if not bundle:
+            print("⚠️  wakewords-Eintrag ohne 'bundle' übersprungen")
+            continue
+        threshold_raw = entry.get("threshold")
+        result.append(
+            WakewordConfig(
+                bundle=bundle,
+                session=str(entry.get("session") or openclaw_session),
+                ack=str(entry.get("ack") or wakeword_ack),
+                tts_voice=str(entry.get("tts_voice") or speaches_tts_voice),
+                threshold=float(threshold_raw) if threshold_raw is not None else None,
+            )
+        )
+    if not result:
+        print("⚠️  wakewords-Block leer/ungültig → Fallback auf 'hey_jarvis'")
+        return [
+            WakewordConfig(
+                bundle="hey_jarvis",
+                session=openclaw_session,
+                ack=wakeword_ack,
+                tts_voice=speaches_tts_voice,
+            )
+        ]
+    return result
 
 
 def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
@@ -256,6 +326,12 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         silence_seconds=float(raw.get("silence_seconds", 2.0)),
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
         locale=locale,
+        wakewords=_parse_wakewords(
+            raw,
+            openclaw_session=str(raw.get("openclaw_session", "")),
+            speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
+            wakeword_ack=locale.wakeword_ack,
+        ),
     )
 
 
@@ -292,7 +368,11 @@ VOICE_ANALYSIS_BASE = "http://<speaches-host>:8001"
 SPEACHES_TIMEOUT = 15
 SPEACHES_RETRY_COOLDOWN = 60
 
-OW_MODEL_PATH = "/tmp/ow_models_min"
+# Wakeword-Bundles (Wakeword-Studio, Teil 1 der Spec): models/wakewords/<name>/
+# mit manifest.yaml + .tflite. Existiert kein Bundle-Verzeichnis für einen
+# konfigurierten Namen, wird er als eingebauter openwakeword-Modellname
+# durchgereicht (z.B. 'hey_jarvis', 'alexa').
+WAKEWORDS_DIR = os.path.join(PROJECT_DIR, "models", "wakewords")
 
 # Audio-Parameter (Wakeword läuft immer auf 16 kHz mono int16)
 RATE_OW = 16000

@@ -77,6 +77,16 @@ Jedes Profil hat einen **`mode`**-Schalter:
 Das alte flache YAML-Schema wird weiter akzeptiert und als `mode: local`
 interpretiert (Rückwärtskompatibilität in `voice_assistant/config.py`).
 
+Optionaler Profil-Block `wakewords:` (Multi-Wakeword + Routing, siehe
+`Wakeword_Studio_Spec.md`): je Eintrag `bundle` (Name unter
+`models/wakewords/<bundle>/` oder eingebautes openwakeword-Modell wie
+`hey_jarvis`), plus optional `session`, `ack`, `tts_voice`, `threshold` —
+fehlende Felder fallen auf die Profil-Defaults zurück. Fehlt der Block ganz,
+verhält sich das Profil wie bisher (ein `hey_jarvis`-Eintrag). Beim Trigger
+merkt sich `assistant.py`, welches Wakeword gefeuert hat, und nutzt dessen
+`session`/`tts_voice` für den OpenClaw-Turn (Sprecher-Stimmenauflösung hat
+weiterhin Vorrang vor der Wakeword-Stimme).
+
 ## Key External Dependencies
 
 | Service | URL | Purpose |
@@ -95,7 +105,8 @@ Speaches-Versuch (`services/speaches.py:SpeachesState`).
 
 Fünf Zustände in der Hauptschleife (`voice_assistant/assistant.py`):
 
-1. **LISTENING** — WakewordEngine bekommt jeden 16-kHz-Chunk; triggert bei Score > 0.5
+1. **LISTENING** — WakewordEngine bekommt jeden 16-kHz-Chunk; triggert bei Score über
+   dem Wakeword-Threshold (Config > manifest.yaml > Default 0.65)
 2. **RECORDING** — Chunks werden gesammelt; endet bei Stille (25 stille Chunks
    nach Sprache) oder nach 15 s Timeout
 3. **PROCESSING** — wartet auf STT-Ergebnis aus `state.stt_queue`
@@ -159,6 +170,10 @@ Der `LedDirector` verteilt die Kommandos auf **alle aktiven** LED-Senken
 - Piper "Ja?" pre-rendered WAV: `/home/pi/.openclaw/workspace/ja.wav`
 - Piper models: `/home/pi/openclaw_voice_assist/models/piper/de_DE-thorsten_emotional-medium.onnx`,
   `de_DE-thorsten-low.onnx` (im Projekt, gitignored wegen Größe; je `.onnx` + Pflicht-Sidecar `.onnx.json`)
-- openwakeword models: `/tmp/ow_models_min`
+- Wakeword-Bundles (eigene Wakewords, Manifest + `.tflite`):
+  `/home/pi/openclaw_voice_assist/models/wakewords/<name>/` (committed außer
+  `samples/`; siehe `models/wakewords/README.md`). Eingebaute openwakeword-
+  Modelle (`hey_jarvis`, `alexa`, …) kommen weiterhin aus den Package-
+  Ressourcen, kein Env-Var-Override nötig.
 - Venv (Python 3.11, openwakeword/tflite/piper/num2words): `/home/pi/openclaw_voice_assist/ow-venv`
 - ESPHome venv (getrennt, nur fürs Flashen): `/home/pi/openclaw_voice_assist/esphome-venv`

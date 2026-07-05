@@ -372,16 +372,20 @@ def prerender_followup_beep() -> None:
         print(f"⚠️  Follow-up beep failed: {e}")
 
 
-def prerender_ja(text: str = "Ja?") -> None:
-    """Pre-renders the wakeword acknowledgement with Piper."""
+def prerender_ja(text: str = "Ja?", out_path: str = PIPER_OUT) -> None:
+    """Pre-renders the wakeword acknowledgement with Piper.
+
+    out_path: Default PIPER_OUT (ja.wav) — bei mehreren Wakewords bekommt
+    jedes seine eigene Datei (siehe assistant.py._wakeword_ack_path).
+    """
     print(f"🎤 Pre-rendering wakeword acknowledgement ('{text}') with Piper...")
     try:
         subprocess.run(
-            ["piper", "--model", PIPER_MODEL_EMO, "--output_file", PIPER_OUT, "--speaker=1", text],
+            ["piper", "--model", PIPER_MODEL_EMO, "--output_file", out_path, "--speaker=1", text],
             check=True,
             capture_output=True,
         )
-        print(f"✅ Audio file created: {PIPER_OUT}")
+        print(f"✅ Audio file created: {out_path}")
     except Exception as e:
         print(f"⚠️  TTS setup failed: {e}")
 

@@ -30,7 +30,9 @@ from voice_assistant.config import (
     VAD_FRAME_SIZE,
     VOICE_ANALYSIS_BASE,
     VOICE_DIR,
+    WORKSPACE,
     Profile,
+    WakewordConfig,
     load_profile,
 )
 from voice_assistant.services import speaches as speaches_mod
@@ -124,8 +126,21 @@ def _make_audio(profile: Profile):
 
 def _make_wakeword(profile: Profile):
     if profile.mode == "respeaker":
-        return RespeakerWakeword(profile.respeaker)
-    return OpenWakewordEngine("hey_jarvis")
+        return RespeakerWakeword(profile.respeaker, profile.wakewords)
+    return OpenWakewordEngine(profile.wakewords)
+
+
+def _wakeword_ack_path(bundle: str, multi: bool) -> str:
+    """Dateipfad der vorgerenderten Quittung ('Ja?') für ein Wakeword.
+
+    Ist nur EIN Wakeword konfiguriert (Default- oder Rückwärtskompat-Fall):
+    exakt PIPER_OUT (ja.wav) wie bisher. Bei mehreren Wakewords bekommt jedes
+    seine eigene Datei, damit unterschiedliche Ack-Texte nebeneinander bestehen.
+    """
+    if not multi:
+        return PIPER_OUT
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", bundle) or "wakeword"
+    return os.path.join(WORKSPACE, f"ack_{safe}.wav")
 
 
 def _make_leds(profile: Profile) -> LedDirector:
@@ -269,11 +284,24 @@ def run() -> None:
     )
     leds.set_boot_step(8)   # Speaches-Check abgeschlossen
 
-    prerender_ja(profile.locale.wakeword_ack)
+    # Wakeword-Quittungen: bei genau einem Wakeword (Default/Rückwärtskompat)
+    # exakt wie bisher eine Datei (PIPER_OUT); bei mehreren je Wakeword eine
+    # eigene, damit unterschiedliche Ack-Texte möglich sind.
+    _multi_wakewords = len(profile.wakewords) > 1
+    ack_paths: dict[str, str] = {}
+    for _ww in profile.wakewords:
+        _path = _wakeword_ack_path(_ww.bundle, _multi_wakewords)
+        ack_paths[_ww.bundle] = _path
+        prerender_ja(_ww.ack, out_path=_path)
     prerender_followup_beep()
 
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)
+    wakeword_by_name: dict[str, WakewordConfig] = {w.bundle: w for w in profile.wakewords}
+    # Aktuell "aktives" Wakeword — bestimmt Session/Stimme des laufenden
+    # Dialogs. Bleibt bei Kurz-Follow-ups (kein neues Wakeword) unverändert
+    # bis zum nächsten Trigger.
+    current_wakeword: WakewordConfig = profile.wakewords[0]
     print("🔧 Initialising WebRTC VAD...")
     vad = webrtcvad.Vad(profile.vad_aggressiveness)
     _vad_rms_min = profile.vad_voice_rms_min
@@ -369,24 +397,29 @@ def run() -> None:
                     leds.set_phase(LED_IDLE)
                     near_miss_until = 0.0
 
-                score = wakeword.feed(audio_16)
-                if score is not None:
-                    recent_scores.append(score)
-                if score is None:
+                hit = wakeword.feed(audio_16)
+                if hit is not None:
+                    recent_scores.append(hit.score)
+                if hit is None:
                     pass  # noch 1280 Samples sammeln bevor neue Prediction
-                elif score > 0.65:
+                elif hit.score > hit.threshold:
                     wake_hits += 1
+                    # Best-scorender Kandidat dieses Frames wird zum aktiven
+                    # Wakeword — bleibt stehen, bis der Streak endet (unten).
+                    current_wakeword = wakeword_by_name.get(hit.name, current_wakeword)
                     if wake_hits == 3:
                         leds.set_phase(LED_WAKEWORD)
-                        print(f"[{now:.1f}s] 🟢 Wakeword detected")
+                        print(f"[{now:.1f}s] 🟢 Wakeword detected: {current_wakeword.bundle}")
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                     if wake_hits >= 3:
                         print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)}{beam_str}")
-                        if os.path.exists(PIPER_OUT):
+                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                        if os.path.exists(ack_path):
                             print("🔊 Playing acknowledgement...")
-                            audio_sink.play_wav(PIPER_OUT)
+                            audio_sink.play_wav(ack_path)
+                        voice_controller.set_default_voice(current_wakeword.tts_voice)
                         leds.set_phase(LED_RECORDING)
                         near_miss_until = 0.0
                         wakeword.reset()
@@ -408,9 +441,11 @@ def run() -> None:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                     print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)} (Timeout){beam_str}")
-                    if os.path.exists(PIPER_OUT):
+                    ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                    if os.path.exists(ack_path):
                         print("🔊 Spiele Ja? ...")
-                        audio_sink.play_wav(PIPER_OUT)
+                        audio_sink.play_wav(ack_path)
+                    voice_controller.set_default_voice(current_wakeword.tts_voice)
                     leds.set_phase(LED_RECORDING)
                     near_miss_until = 0.0
                     wakeword.reset()
@@ -522,7 +557,9 @@ def run() -> None:
                         reply_done_event.clear()
                         pending_reply_text[0] = None
                         thinking.start()
-                        workers.start_openclaw_turn(text, speaker=spk, mood=mood)
+                        workers.start_openclaw_turn(
+                            text, speaker=spk, mood=mood, session=current_wakeword.session
+                        )
                         state = STATE_WAITING
                         state_start = now
                         print(

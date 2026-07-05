@@ -11,4 +11,9 @@ test_responses_step*.py
 prompt*.txt
 verlauf_*.txt
 .claude
-models/
+
+# Piper-Modelle: gitignored wegen Größe (siehe CLAUDE.md, Datei-Pfade)
+models/piper/
+# Wakeword-Bundles (manifest.yaml + .tflite) werden committed — nur die
+# echten Referenz-Aufnahmen (Familienstimmen) bleiben lokal.
+models/wakewords/*/samples/

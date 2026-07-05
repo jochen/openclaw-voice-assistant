@@ -121,20 +121,29 @@ class Workers:
         return t
 
     def start_openclaw_turn(
-        self, user_text: str, speaker: str | None = None, mood: dict | None = None
+        self,
+        user_text: str,
+        speaker: str | None = None,
+        mood: dict | None = None,
+        session: str | None = None,
     ) -> threading.Thread:
+        """session: Routing-Ziel des getriggerten Wakewords (x-openclaw-session-key).
+        None → Fallback auf self.openclaw_session (Profil-Default)."""
         t = threading.Thread(
             target=self._openclaw_turn,
-            args=(user_text, speaker, mood),
+            args=(user_text, speaker, mood, session),
             daemon=True,
         )
         t.start()
         return t
 
     # --- internal workers ---
-    def _openclaw_turn(self, user_text: str, speaker: str | None = None, mood: dict | None = None) -> None:
+    def _openclaw_turn(
+        self, user_text: str, speaker: str | None = None, mood: dict | None = None,
+        session: str | None = None,
+    ) -> None:
         try:
-            self._run_openclaw_turn(user_text, speaker, mood)
+            self._run_openclaw_turn(user_text, speaker, mood, session)
         finally:
             # Hat die Hauptschleife den Turn per Overall-Timeout schon verlassen,
             # setzt niemand mehr die LED nach dem (verspäteten) Sprechen zurück —
@@ -145,7 +154,15 @@ class Workers:
                 except Exception:
                     pass
 
-    def _run_openclaw_turn(self, user_text: str, speaker: str | None = None, mood: dict | None = None) -> None:
+    def _run_openclaw_turn(
+        self, user_text: str, speaker: str | None = None, mood: dict | None = None,
+        session: str | None = None,
+    ) -> None:
+        # Wakeword-Routing: session_key kommt vom getriggerten Wakeword
+        # (assistant.py); None (z.B. altes Aufruf-Schema) fällt auf den
+        # Profil-Default zurück. Eigener Name, weil "session" weiter unten
+        # bereits für das ReplyStreamSession-Objekt vergeben ist.
+        session_key = session or self.openclaw_session
         speaker_label = speaker if speaker else "unbekannt"
 
         # Die User-Eingabe wird erst gespiegelt, sobald eine echte (Nicht-
@@ -188,7 +205,7 @@ class Workers:
             full_reply, timed_out = openclaw.query_stream(
                 user_text,
                 token=self.openclaw_token,
-                session=self.openclaw_session,
+                session=session_key,
                 voice_instruction=self.voice_instruction,
                 speaker=speaker,
                 mood=mood,
@@ -236,7 +253,7 @@ class Workers:
                 print("⚠️  Stream-Timeout → Status-Nachfrage statt erneutem Auftrag")
                 full_reply = openclaw.query_status(
                     token=self.openclaw_token,
-                    session=self.openclaw_session,
+                    session=session_key,
                     on_done=self.thinking.stop,
                 )
             else:
@@ -250,7 +267,7 @@ class Workers:
             full_reply = openclaw.query(
                 user_text,
                 token=self.openclaw_token,
-                session=self.openclaw_session,
+                session=session_key,
                 voice_instruction=self.voice_instruction,
                 speaker=speaker,
                 mood=mood,

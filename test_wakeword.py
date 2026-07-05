@@ -60,7 +60,9 @@ async def main():
         await asyncio.sleep(1)
     print("\rLOSGEHT — sag 'hey jarvis'!          ")
 
-    engine = OpenWakewordEngine("hey_jarvis")
+    from voice_assistant.config import WakewordConfig
+
+    engine = OpenWakewordEngine([WakewordConfig(bundle="hey_jarvis")])
     buf = b""
     max_score = 0.0
     triggered = 0
@@ -82,15 +84,16 @@ async def main():
             samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
             samples -= samples.mean()
             samples = np.clip(samples * 8, -32768, 32767).astype(np.int16)
-            score = engine.feed(samples)
-            if score is None:
+            hit = engine.feed(samples)
+            if hit is None:
                 continue
+            score = hit.score
             if score > max_score:
                 max_score = score
             if score > 0.05:
-                marker = " *** TRIGGER ***" if score > 0.5 else ""
+                marker = " *** TRIGGER ***" if score > hit.threshold else ""
                 print(f"  t={time.time()-start:.1f}s  score={score:.3f}{marker}")
-                if score > 0.5:
+                if score > hit.threshold:
                     triggered += 1
 
     print(f"\nFertig. Audio-Chunks: {chunks_total}  Max-Score: {max_score:.3f}  Trigger: {triggered}x")
