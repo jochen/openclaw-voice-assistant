@@ -414,7 +414,7 @@ def run() -> None:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                     if wake_hits >= 3:
-                        print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)}{beam_str}")
+                        print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores)}{beam_str}")
                         ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                         if os.path.exists(ack_path):
                             print("🔊 Playing acknowledgement...")
@@ -431,7 +431,10 @@ def run() -> None:
                         max_internal_pause = 0
                         speech_detected = False
                     elif wake_hits >= 1:
-                        print(f"[{now:.1f}s] ⚡ Near-Miss ({wake_hits} Frame{'s' if wake_hits > 1 else ''}){beam_str}")
+                        # Wakeword-Name mitloggen: current_wakeword wurde von den
+                        # Frames dieses Streaks gesetzt → erlaubt False-Positive-
+                        # Zuordnung pro Modell.
+                        print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] ({wake_hits} Frame{'s' if wake_hits > 1 else ''}){beam_str}")
                         leds.set_phase(LED_NEAR_MISS)
                         near_miss_until = now + 0.6
                     wake_hits = 0
@@ -440,7 +443,7 @@ def run() -> None:
                 if wake_hits >= 25:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    print(f"[{now:.1f}s] 📊 {_format_wake_scores(recent_scores)} (Timeout){beam_str}")
+                    print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores)} (Timeout){beam_str}")
                     ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     if os.path.exists(ack_path):
                         print("🔊 Spiele Ja? ...")
