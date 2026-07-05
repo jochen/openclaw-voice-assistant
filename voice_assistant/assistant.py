@@ -364,6 +364,11 @@ def run() -> None:
     speech_detected = False
     endpoint_meta: dict = {}                # Endpointing-Telemetrie der aktuellen Aufnahme
     wake_hits = 0                           # aufeinanderfolgende Frames über Threshold
+    # Ein einzelner Frame unter Threshold beendet den Streak NICHT (echte
+    # "Gaston"-Rufe tauchen mitten im Wort kurz ab und wurden als 2+1-Near-Miss
+    # gespalten). FP-geprüft: 3 Hits mit 1-Frame-Lücke = 0.00 FP/h auf 10.7h
+    # Validierungs-Audio (eval_gap.py, 2026-07-05).
+    wake_gap_used = False
     near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
     followup_round = 0                     # aktuelle Follow-up-Runde (0 = kein Follow-up aktiv)
@@ -410,6 +415,9 @@ def run() -> None:
                     if wake_hits == 3:
                         leds.set_phase(LED_WAKEWORD)
                         print(f"[{now:.1f}s] 🟢 Wakeword detected: {current_wakeword.bundle}")
+                elif wake_hits > 0 and not wake_gap_used:
+                    # erste Lücke im Streak tolerieren (zählt nicht als Hit)
+                    wake_gap_used = True
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
@@ -434,10 +442,12 @@ def run() -> None:
                         # Wakeword-Name mitloggen: current_wakeword wurde von den
                         # Frames dieses Streaks gesetzt → erlaubt False-Positive-
                         # Zuordnung pro Modell.
-                        print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] ({wake_hits} Frame{'s' if wake_hits > 1 else ''}){beam_str}")
+                        last_scores = " ".join(f"{s:.2f}" for s in list(recent_scores)[-5:])
+                        print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] ({wake_hits} Frame{'s' if wake_hits > 1 else ''}: {last_scores}){beam_str}")
                         leds.set_phase(LED_NEAR_MISS)
                         near_miss_until = now + 0.6
                     wake_hits = 0
+                    wake_gap_used = False
 
                 # Sicherheits-Timeout: nicht länger als 1s auf Streak-Ende warten
                 if wake_hits >= 25:
@@ -460,6 +470,7 @@ def run() -> None:
                     max_internal_pause = 0
                     speech_detected = False
                     wake_hits = 0
+                    wake_gap_used = False
 
             # --- RECORDING ---
             elif state == STATE_RECORDING:
