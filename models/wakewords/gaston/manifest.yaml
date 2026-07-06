@@ -9,6 +9,9 @@ spellings:
   - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
   - "Gastong (40%)"
 created: 2026-07-05
+# Quell-Modell der tflite (onnx2tf -kat x → float32): gaston.onnx braucht die
+# externen Gewichte gaston.onnx.data zwingend daneben.
+source_model: gaston.onnx
 training:
   generator: piper-sample-generator (onnx-Voices, deutsch)
   voices: thorsten-medium/high/emotional, karlsson, pavoque, ramona, kerstin(nur nasal, gedrosselt), eva_k(nur gastong)
