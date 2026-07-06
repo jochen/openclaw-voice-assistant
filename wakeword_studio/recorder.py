@@ -460,6 +460,122 @@ def run_record(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# review-Subcommand — Aufnahmen nachträglich anhören und aussortieren
+# ---------------------------------------------------------------------------
+
+def _collect_wavs(paths: list[str]) -> list[str]:
+    wavs: list[str] = []
+    for p in paths:
+        if os.path.isdir(p):
+            for root, _dirs, files in os.walk(p):
+                wavs += [os.path.join(root, f) for f in sorted(files) if f.endswith(".wav")]
+        elif p.endswith(".wav"):
+            wavs.append(p)
+    return wavs
+
+
+def _drop_from_sessions(samples_dir: str, rel_file: str) -> None:
+    """Entfernt die Metadaten-Zeile(n) einer gelöschten Datei aus sessions.jsonl."""
+    log_path = os.path.join(samples_dir, "sessions.jsonl")
+    if not os.path.exists(log_path):
+        return
+    kept: list[str] = []
+    with open(log_path, "r") as f:
+        for line in f:
+            try:
+                if json.loads(line).get("file") == rel_file:
+                    continue
+            except (ValueError, AttributeError):
+                pass
+            kept.append(line)
+    with open(log_path, "w") as f:
+        f.writelines(kept)
+
+
+def run_review(args) -> int:
+    profile = load_profile()
+
+    bundle_dir = os.path.join(WAKEWORDS_DIR, args.bundle)
+    samples_dir = os.path.join(bundle_dir, "samples")
+    if args.paths:
+        paths = args.paths
+    elif args.speaker:
+        paths = [os.path.join(samples_dir, args.speaker)]
+    else:
+        paths = [samples_dir]
+
+    wavs = _collect_wavs(paths)
+    if not wavs:
+        print(f"❌ Keine WAV-Dateien gefunden in: {', '.join(paths)}")
+        return 1
+
+    print("🔧 Lade Wakeword-Modell zum Scoring …")
+    from wakeword_studio.scoring import BundleScorer, load_wav_16k
+
+    scorer = BundleScorer(args.bundle)
+
+    # Wiedergabe läuft über denselben Ausgabe-Pfad wie der Assistant — im
+    # ReSpeaker-Modus kollidieren announce + TTS-HTTP-Port mit dem Service.
+    was_active = _service_active()
+    if was_active and not args.keep_service:
+        print(f"⏸  Stoppe {SERVICE_UNIT} für die Wiedergabe …")
+        _service_ctl("stop")
+
+    deleted: list[str] = []
+    kept = 0
+    try:
+        sink = _make_sink(profile)
+        print(f"\n🔍 Review — {len(wavs)} Aufnahmen. Pro Datei: anhören, dann entscheiden.\n")
+
+        for idx, path in enumerate(wavs, 1):
+            try:
+                samples = load_wav_16k(path)
+                verdict = scorer.score_pcm(samples)
+            except Exception as exc:
+                print(f"⚠️  {path}: {exc} — übersprungen")
+                continue
+            rel = os.path.relpath(path, samples_dir)
+            dur = len(samples) / RATE_OW
+            print(f"── {idx}/{len(wavs)}  {rel}  ({dur:.2f}s)")
+            print(f"   {_score_line(verdict)}")
+
+            choice = "a"
+            while choice == "a":
+                print("   🔊 …")
+                sink.play_wav(path)
+                try:
+                    choice = input("   [Enter]=behalten  l=löschen  a=nochmal  q=fertig: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    choice = "q"
+
+            if choice == "l":
+                os.unlink(path)
+                _drop_from_sessions(samples_dir, rel)
+                deleted.append(rel)
+                print("   🗑  Gelöscht (auch aus sessions.jsonl).\n")
+            elif choice == "q":
+                print("⏹  Review beendet.")
+                break
+            else:
+                kept += 1
+                print()
+    finally:
+        if was_active and not args.keep_service:
+            print(f"▶️  Starte {SERVICE_UNIT} wieder …")
+            _service_ctl("start")
+
+    print(f"\n📊 Review: {kept} behalten, {len(deleted)} gelöscht.")
+    if deleted:
+        for rel in deleted:
+            print(f"   🗑  {rel}")
+        print(
+            "\n   Im samples/-Repo committen (git add -A && git commit) — dann ist\n"
+            "   das Aussortieren nachvollziehbar und rückholbar."
+        )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # score-Subcommand
 # ---------------------------------------------------------------------------
 
@@ -469,13 +585,7 @@ def run_score(args) -> int:
     bundle_dir = os.path.join(WAKEWORDS_DIR, args.bundle)
     paths = args.paths or [os.path.join(bundle_dir, "samples")]
 
-    wavs: list[str] = []
-    for p in paths:
-        if os.path.isdir(p):
-            for root, _dirs, files in os.walk(p):
-                wavs += [os.path.join(root, f) for f in sorted(files) if f.endswith(".wav")]
-        elif p.endswith(".wav"):
-            wavs.append(p)
+    wavs = _collect_wavs(paths)
     if not wavs:
         print(f"❌ Keine WAV-Dateien gefunden in: {', '.join(paths)}")
         return 1

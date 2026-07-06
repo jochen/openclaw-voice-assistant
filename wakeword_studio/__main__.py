@@ -54,12 +54,27 @@ def main() -> int:
     sco.add_argument("--threshold", type=float, default=None, help="Threshold-Override (Default: manifest.yaml)")
     sco.add_argument("paths", nargs="*", help="WAV-Dateien/Verzeichnisse (Default: samples/ des Bundles)")
 
+    rev = sub.add_parser(
+        "review",
+        help="Aufnahmen anhören und aussortieren (löscht Datei + sessions.jsonl-Zeile)",
+    )
+    rev.add_argument("--bundle", default="gaston", help="Bundle unter models/wakewords/ (Default: gaston)")
+    rev.add_argument("--speaker", default=None, help="nur Aufnahmen dieser Person durchgehen")
+    rev.add_argument(
+        "--keep-service",
+        action="store_true",
+        help="Assistant-Service nicht stoppen (nur sinnvoll im local-Modus)",
+    )
+    rev.add_argument("paths", nargs="*", help="WAV-Dateien/Verzeichnisse (Default: samples/ des Bundles)")
+
     args = parser.parse_args()
 
-    from wakeword_studio.recorder import run_record, run_score
+    from wakeword_studio.recorder import run_record, run_review, run_score
 
     if args.cmd == "record":
         return run_record(args)
+    if args.cmd == "review":
+        return run_review(args)
     return run_score(args)
 
 
