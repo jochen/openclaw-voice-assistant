@@ -25,6 +25,11 @@ STREAK_TRIGGER = 3
 # Stille vor/nach dem Clip: openwakeword-Feature-Puffer aufwärmen bzw. den
 # letzten Frame noch durchs Modell schieben
 _PAD_SAMPLES = RATE_OW // 2
+# Live ist die Frame-Ausrichtung relativ zum Wortanfang zufällig — ein Clip
+# wird deshalb an mehreren Offsets ausgewertet. `triggered` = irgendein
+# Offset löst aus; `robust` = Anteil der Offsets, die auslösen (Maß dafür,
+# wie sicher der Trigger im Alltag kommt).
+_OFFSETS = (0, _OW_FRAME // 4, _OW_FRAME // 2, 3 * _OW_FRAME // 4)
 
 
 def load_wav_16k(path: str) -> np.ndarray:
@@ -71,38 +76,52 @@ class BundleScorer:
 
         self._model = Model(wakeword_models=[model_arg])
 
-    def score_pcm(self, samples: np.ndarray) -> dict:
-        """16-kHz-mono-int16 → max_score, Frame-Hits, Streak, Live-Trigger-Urteil."""
+    def _score_offset(self, samples: np.ndarray, offset: int) -> tuple[float, int]:
+        """Ein Durchlauf mit fester Frame-Ausrichtung → (max_score, best_streak)."""
         self._model.reset()
-        pad = np.zeros(_PAD_SAMPLES, dtype=np.int16)
-        padded = np.concatenate([pad, samples.astype(np.int16), pad])
+        pad_front = np.zeros(_PAD_SAMPLES + offset, dtype=np.int16)
+        pad_back = np.zeros(_PAD_SAMPLES, dtype=np.int16)
+        padded = np.concatenate([pad_front, samples.astype(np.int16), pad_back])
 
-        scores: list[float] = []
-        for i in range(0, len(padded) - _OW_FRAME + 1, _OW_FRAME):
-            result = self._model.predict(padded[i : i + _OW_FRAME])
-            scores.append(float(result.get(self._key, 0.0)))
-
+        max_score = 0.0
         best_streak = 0
         streak = 0
         gap_used = False
-        frames_over = 0
-        for s in scores:
+        for i in range(0, len(padded) - _OW_FRAME + 1, _OW_FRAME):
+            result = self._model.predict(padded[i : i + _OW_FRAME])
+            s = float(result.get(self._key, 0.0))
+            max_score = max(max_score, s)
             if s > self.threshold:
                 streak += 1
-                frames_over += 1
             elif streak > 0 and not gap_used:
                 gap_used = True
             else:
                 best_streak = max(best_streak, streak)
                 streak = 0
                 gap_used = False
-        best_streak = max(best_streak, streak)
+        return max_score, max(best_streak, streak)
+
+    def score_pcm(self, samples: np.ndarray) -> dict:
+        """16-kHz-mono-int16 → max_score, Streak, Live-Trigger-Urteil.
+
+        Wertet den Clip an mehreren Frame-Offsets aus (live ist die
+        Ausrichtung zufällig) und aggregiert: triggered = bester Offset,
+        robust = wie viele der Offsets auslösen würden.
+        """
+        max_score = 0.0
+        best_streak = 0
+        hits = 0
+        for offset in _OFFSETS:
+            score, streak = self._score_offset(samples, offset)
+            max_score = max(max_score, score)
+            best_streak = max(best_streak, streak)
+            hits += streak >= STREAK_TRIGGER
 
         return {
-            "max_score": max(scores, default=0.0),
-            "frames_over": frames_over,
+            "max_score": max_score,
             "best_streak": best_streak,
-            "triggered": best_streak >= STREAK_TRIGGER,
+            "triggered": hits > 0,
+            "robust": f"{hits}/{len(_OFFSETS)}",
             "threshold": self.threshold,
         }
 

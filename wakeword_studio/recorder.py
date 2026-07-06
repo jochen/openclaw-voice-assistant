@@ -264,7 +264,7 @@ def _score_line(verdict: dict) -> str:
     mark = "✅ würde triggern" if verdict["triggered"] else "❌ würde NICHT triggern"
     return (
         f"max_score={verdict['max_score']:.2f}  streak={verdict['best_streak']} "
-        f"(Threshold {verdict['threshold']:.2f}) → {mark}"
+        f"robust={verdict['robust']} (Threshold {verdict['threshold']:.2f}) → {mark}"
     )
 
 
@@ -408,6 +408,7 @@ def run_record(args) -> int:
                 "max_score": round(verdict["max_score"], 4),
                 "best_streak": verdict["best_streak"],
                 "triggered": verdict["triggered"],
+                "robust": verdict["robust"],
                 "threshold": scorer.threshold,
                 "min_rms": round(min_rms, 1),
                 "profile": profile.name,
@@ -484,17 +485,24 @@ def run_score(args) -> int:
         f"🔎 {len(wavs)} Datei(en) gegen '{args.bundle}' "
         f"(Threshold {scorer.threshold:.2f}, Trigger = Streak ≥ 3 mit 1-Gap):\n"
     )
+    from wakeword_studio.scoring import load_wav_16k
+
     triggered = 0
     for path in wavs:
         try:
-            verdict = scorer.score_wav(path)
+            samples = load_wav_16k(path)
+            verdict = scorer.score_pcm(samples)
         except Exception as exc:
             print(f"   ⚠️  {path}: {exc}")
             continue
         mark = "✅" if verdict["triggered"] else "❌"
         triggered += verdict["triggered"]
         rel = os.path.relpath(path, bundle_dir)
-        print(f"   {mark} {rel:<50} max={verdict['max_score']:.2f} streak={verdict['best_streak']}")
+        dur = len(samples) / 16000
+        print(
+            f"   {mark} {rel:<50} {dur:4.1f}s  max={verdict['max_score']:.2f} "
+            f"streak={verdict['best_streak']} robust={verdict['robust']}"
+        )
 
     print(f"\n   Trigger-Quote: {triggered}/{len(wavs)} bei Threshold {scorer.threshold:.2f}")
     return 0
