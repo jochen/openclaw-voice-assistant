@@ -1,6 +1,31 @@
 # Wakeword-Studio — Spezifikation
 
-Stand: 2026-07-05 · Status: Entwurf, diskutiert
+Stand: 2026-07-06 · Status: M1+M2 live, Phase A umgesetzt
+
+## Umsetzungsstand (2026-07-06)
+
+- **M1 Runtime multi-wakeword + Routing**: fertig (`579e3cc`), gaston +
+  hey_jarvis laufen parallel auf clawdpi1.
+- **M2 erstes echtes Modell**: `gaston` trainiert und live (`87d3010`,
+  Threshold 0.35). Pipeline-Skripte + Stolpersteine im ai-stack-Git
+  (`~/ai-stack/wakeword-studio/`).
+- **Phase A (Erfassen)**: umgesetzt als `wakeword_studio/`-Package
+  (`232c4dc`, `17b9569`, `ab70fdf`) — `record` (geführte Aufnahmen,
+  Grundpegel-Kalibrierung, Sofort-Scoring, LED-Anzeige), `review`
+  (anhören/aussortieren), `score` (Test-Set-Regression, Multi-Offset).
+  Erste 20 echte jochen-Takes als Test-Set; `samples/` ist ein eigenes
+  privates Repo (gitlab.brokenpipe.de/jochen/wakeword-samples-gaston).
+- **Trigger-Semantik erweitert**: `min_hits` pro Wakeword (Config >
+  manifest.yaml > Default 3, `badfd81`). Kurzes "Gaston" (~0.5 s ≈ 6
+  Frames) steht auf 2 — FP-geprüft 0.09 FP/h auf 10.7 h Validierung;
+  Test-Set 11/20 statt 8/20 Trigger @0.35.
+- **Erkenntnis fürs Studio**: rein TTS-trainierte Modelle liefern auf
+  echter Sprache spitze Scores (oft nur 1–2 Frames hoch); Threshold-
+  Senken hilft nicht. Schwächen von gaston Runde 2: langsam/überdeutlich,
+  leise, fern.
+- **Nächster Schritt ("Hebel b")**: Trainings-Runde 3 mit den echten
+  Aufnahmen als zusätzliche Positives + Tempo-/Distanz-Augmentation.
+  Danach M3 Verifier (Phase E) und Studio-CLI-Ausbau (Phasen B–D, F).
 
 ## Ziel
 
