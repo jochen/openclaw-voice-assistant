@@ -61,6 +61,22 @@ voice_assistant/
     openclaw.py          /v1/responses Client
 ```
 
+### Wakeword-Studio-CLI (`wakeword_studio/`)
+
+Eigenes Package neben `voice_assistant/`, gleicher venv-Re-Exec:
+
+```bash
+python -m wakeword_studio record --speaker <name>   # Phase A: geführte echte Aufnahmen
+python -m wakeword_studio score [--bundle gaston]   # Test-Set gegen Modell scoren
+```
+
+`record` stoppt die User-Unit `openclaw-voice-assist.service` (Mic-Stream ist
+exklusiv), nimmt geführt Takes über den Profil-Mic-Pfad auf, scored jeden Take
+sofort mit Live-Trigger-Semantik (Streak ≥ 3 über Threshold, 1-Frame-Gap) und
+startet den Service danach wieder. Ablage in
+`models/wakewords/<bundle>/samples/<sprecher>/` — das ist ein eigenes privates
+Git-Repo (Familienstimmen, nie auf GitHub; siehe `samples/README.md` dort).
+
 ## Profile System
 
 Zwei Profile werden automatisch per Hostname oder `GASTON_PROFILE` gewählt:

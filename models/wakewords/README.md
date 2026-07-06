@@ -20,7 +20,10 @@ threshold: 0.5   # empfohlener Trigger-Score
 
 - `manifest.yaml` + `.tflite` sind **portabel** und werden committed.
 - `samples/` bleibt lokal (`.gitignore`: `models/wakewords/*/samples/`) — Stimmen
-  der Familie gehören nicht auf GitHub.
+  der Familie gehören nicht auf GitHub. Stattdessen ist `samples/` ein eigenes
+  **privates** Git-Repo (gitlab.brokenpipe.de); Aufnahme + Scoring über das CLI:
+  `python -m wakeword_studio record --speaker <name>` bzw.
+  `python -m wakeword_studio score` (siehe `wakeword_studio/`).
 - Existiert für einen in `config.yaml` unter `wakewords:` konfigurierten
   `bundle`-Namen kein Verzeichnis hier, wird der Name stattdessen als
   eingebauter openwakeword-Modellname behandelt (z.B. `hey_jarvis`, `alexa`).
