@@ -109,6 +109,8 @@ class WakewordConfig:
     ack: str = ""
     tts_voice: str = ""
     threshold: float | None = None
+    # None = aus manifest.yaml (oder Default 3) ableiten. Siehe WakewordHit.min_hits.
+    min_hits: int | None = None
 
 
 @dataclass
@@ -231,6 +233,7 @@ def _parse_wakewords(
             print("⚠️  wakewords-Eintrag ohne 'bundle' übersprungen")
             continue
         threshold_raw = entry.get("threshold")
+        min_hits_raw = entry.get("min_hits")
         result.append(
             WakewordConfig(
                 bundle=bundle,
@@ -238,6 +241,7 @@ def _parse_wakewords(
                 ack=str(entry.get("ack") or wakeword_ack),
                 tts_voice=str(entry.get("tts_voice") or speaches_tts_voice),
                 threshold=float(threshold_raw) if threshold_raw is not None else None,
+                min_hits=int(min_hits_raw) if min_hits_raw is not None else None,
             )
         )
     if not result:

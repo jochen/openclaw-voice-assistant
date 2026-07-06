@@ -5,6 +5,10 @@ model: gaston.tflite
 # 0.35: Live-Test 2026-07-05 zeigte 1-2-Frame-Near-Misses bei echtem "Gaston";
 # FP-Sweep mit 3-Frame-Debounce ergab 0.00 FP/h bis hinunter zu Threshold 0.25.
 threshold: 0.35
+# "Gaston" ist kurz (~0.5s ≈ 6 Frames) — echte Rufe erreichen oft nur
+# 2er-Streaks (Test-Set 2026-07-06: +3 von 20 Takes gegenüber min_hits 3).
+# FP-geprüft: 2 Hits mit 1-Frame-Gap = 0.09 FP/h auf 10.7h Validierung.
+min_hits: 2
 spellings:
   - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
   - "Gastong (40%)"

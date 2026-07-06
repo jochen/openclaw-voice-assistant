@@ -20,11 +20,16 @@ class WakewordHit:
         Default 0.65). score > threshold heißt: dieses Wakeword hat in diesem
         Frame seinen Schwellwert überschritten — der eigentliche Trigger-
         Entscheid (Debounce über mehrere Frames) bleibt beim Aufrufer.
+    min_hits: benötigte Streak-Länge (Frames über Threshold, 1-Gap-toleriert)
+        bis zum Trigger. Kurze Wakewords ("Gaston" ≈ 0.5 s ≈ 6 Frames)
+        erreichen strukturell kürzere Streaks als lange ("hey Jarvis") und
+        dürfen deshalb per manifest.yaml/Config auf 2 heruntergehen.
     """
 
     name: str
     score: float
     threshold: float
+    min_hits: int = 3
 
 
 class WakewordEngine(Protocol):

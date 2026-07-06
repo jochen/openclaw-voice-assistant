@@ -23,6 +23,9 @@ _OW_FRAME = 1280  # openwakeword verarbeitet intern 1280 Samples (80ms @ 16kHz)
 # das produktiv eingestellte Verhalten der eingebauten Modelle bleibt erhalten.
 # Eigene Bundles setzen ihren Wert im manifest.yaml (aus der Validierung).
 _DEFAULT_THRESHOLD = 0.65
+# Streak-Länge bis zum Trigger (siehe WakewordHit.min_hits) — kurze Wakewords
+# setzen im manifest.yaml einen kleineren Wert.
+_DEFAULT_MIN_HITS = 3
 
 
 def _resolve_bundle(bundle: str) -> tuple[str, dict]:
@@ -61,13 +64,20 @@ class OpenWakewordEngine:
                 if w.threshold is not None
                 else float(manifest.get("threshold", _DEFAULT_THRESHOLD))
             )
+            min_hits = (
+                w.min_hits
+                if w.min_hits is not None
+                else int(manifest.get("min_hits", _DEFAULT_MIN_HITS))
+            )
             # Bundle-Pfad → Key ist der Dateiname ohne Endung (so vergibt
             # openwakeword.Model die Keys für predict()); eingebauter Name →
             # Key ist der Name selbst (unverändert durchgereicht).
             is_path = os.path.exists(model_arg)
             key = os.path.splitext(os.path.basename(model_arg))[0] if is_path else model_arg
             model_args.append(model_arg)
-            self._entries.append({"key": key, "name": w.bundle, "threshold": threshold})
+            self._entries.append(
+                {"key": key, "name": w.bundle, "threshold": threshold, "min_hits": min_hits}
+            )
 
         from openwakeword import Model  # type: ignore[import-not-found]
 
@@ -84,14 +94,18 @@ class OpenWakewordEngine:
         chunk, self._buf = self._buf[:_OW_FRAME], self._buf[_OW_FRAME:]
         result = self._model.predict(chunk)
 
-        best_name: str | None = None
+        best: dict | None = None
         best_score = -1.0
-        best_threshold = _DEFAULT_THRESHOLD
         for entry in self._entries:
             score = float(result.get(entry["key"], 0.0))
             if score > best_score:
-                best_name, best_score, best_threshold = entry["name"], score, entry["threshold"]
-        return WakewordHit(name=best_name or "", score=best_score, threshold=best_threshold)
+                best, best_score = entry, score
+        return WakewordHit(
+            name=best["name"] if best else "",
+            score=best_score,
+            threshold=best["threshold"] if best else _DEFAULT_THRESHOLD,
+            min_hits=best["min_hits"] if best else _DEFAULT_MIN_HITS,
+        )
 
     def reset(self) -> None:
         self._model.reset()

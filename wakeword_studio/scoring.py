@@ -20,8 +20,9 @@ from voice_assistant.wakeword.openwakeword_engine import (
     _resolve_bundle,
 )
 
-# Wie assistant.py: wake_hits >= 3 löst aus (mit 1-Frame-Gap-Toleranz)
-STREAK_TRIGGER = 3
+# Default-Streak-Länge wie assistant.py; pro Bundle via manifest.yaml
+# `min_hits` überschrieben (kurze Wakewords → 2). Immer mit 1-Frame-Gap-Toleranz.
+DEFAULT_MIN_HITS = 3
 # Stille vor/nach dem Clip: openwakeword-Feature-Puffer aufwärmen bzw. den
 # letzten Frame noch durchs Modell schieben
 _PAD_SAMPLES = RATE_OW // 2
@@ -68,6 +69,7 @@ class BundleScorer:
             if threshold is not None
             else float(manifest.get("threshold", _DEFAULT_THRESHOLD))
         )
+        self.min_hits = int(manifest.get("min_hits", DEFAULT_MIN_HITS))
         is_path = os.path.exists(model_arg)
         self._key = (
             os.path.splitext(os.path.basename(model_arg))[0] if is_path else model_arg
@@ -115,7 +117,7 @@ class BundleScorer:
             score, streak = self._score_offset(samples, offset)
             max_score = max(max_score, score)
             best_streak = max(best_streak, streak)
-            hits += streak >= STREAK_TRIGGER
+            hits += streak >= self.min_hits
 
         return {
             "max_score": max_score,

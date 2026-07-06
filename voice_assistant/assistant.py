@@ -366,9 +366,13 @@ def run() -> None:
     wake_hits = 0                           # aufeinanderfolgende Frames über Threshold
     # Ein einzelner Frame unter Threshold beendet den Streak NICHT (echte
     # "Gaston"-Rufe tauchen mitten im Wort kurz ab und wurden als 2+1-Near-Miss
-    # gespalten). FP-geprüft: 3 Hits mit 1-Frame-Lücke = 0.00 FP/h auf 10.7h
-    # Validierungs-Audio (eval_gap.py, 2026-07-05).
+    # gespalten). FP-geprüft: 3 Hits mit 1-Frame-Lücke = 0.00 FP/h und
+    # 2 Hits mit 1-Frame-Lücke = 0.09 FP/h auf 10.7h Validierungs-Audio
+    # (eval_gap.py, 2026-07-05/06).
     wake_gap_used = False
+    # Benötigte Streak-Länge des aktuellen Streaks — kommt pro Wakeword aus
+    # manifest.yaml/Config (kurze Wörter erreichen kürzere Streaks).
+    current_min_hits = 3
     near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
     followup_round = 0                     # aktuelle Follow-up-Runde (0 = kein Follow-up aktiv)
@@ -412,7 +416,8 @@ def run() -> None:
                     # Best-scorender Kandidat dieses Frames wird zum aktiven
                     # Wakeword — bleibt stehen, bis der Streak endet (unten).
                     current_wakeword = wakeword_by_name.get(hit.name, current_wakeword)
-                    if wake_hits == 3:
+                    current_min_hits = hit.min_hits
+                    if wake_hits == current_min_hits:
                         leds.set_phase(LED_WAKEWORD)
                         print(f"[{now:.1f}s] 🟢 Wakeword detected: {current_wakeword.bundle}")
                 elif wake_hits > 0 and not wake_gap_used:
@@ -421,7 +426,7 @@ def run() -> None:
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    if wake_hits >= 3:
+                    if wake_hits >= current_min_hits:
                         print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores)}{beam_str}")
                         ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                         if os.path.exists(ack_path):
