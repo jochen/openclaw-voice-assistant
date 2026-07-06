@@ -6,6 +6,13 @@ live zu hören bekommt (inkl. ReSpeaker-Gain/DC-Filter). Der laufende
 Assistant-Service wird für die Dauer der Session gestoppt (Mic-Stream ist
 exklusiv) und danach wieder gestartet.
 
+Gegen Fehlstarts durch Nebengeräusche: beim Session-Start wird der
+Grundpegel des Raums gemessen und die RMS-Schwelle darüber gelegt, und ein
+Take beginnt erst bei zwei Sprach-Chunks in Folge. Nach [Enter] gibt es eine
+kurze Totzeit (Tastenklick!) plus "Jetzt!"-Cue; während der Aufnahme zeigt
+der LED-Ring/WLED die Recording-Phase. Jeder Take wird nach dem Scoring
+automatisch vorgespielt (--no-play schaltet das ab).
+
 Ablage: models/wakewords/<bundle>/samples/<sprecher>/<ts>_<stil>.wav
 plus eine Metadaten-Zeile pro Take in samples/sessions.jsonl. Das samples/-
 Verzeichnis ist im Projekt-Git ignoriert (Familienstimmen!) und wird als
@@ -33,6 +40,11 @@ from voice_assistant.config import (
     Profile,
     load_profile,
 )
+from voice_assistant.services.leds import (
+    LED_IDLE,
+    LED_RECORDING,
+    LedDirector,
+)
 
 SERVICE_UNIT = "openclaw-voice-assist.service"
 
@@ -42,6 +54,13 @@ WAIT_SPEECH_SEC = 15.0   # max. Wartezeit auf Sprachbeginn je Take
 MAX_SPEECH_SEC = 3.0     # Hard-Cap ab Sprachbeginn
 END_SILENCE_SEC = 0.6    # so viel Stille beendet den Take
 TRAIL_KEEP_SEC = 0.25    # Reststille am Ende, die im Sample bleibt
+ARM_DELAY_SEC = 0.7      # Totzeit nach [Enter] (Tastenklick nicht aufnehmen)
+SPEECH_START_CHUNKS = 2  # so viele Sprach-Chunks in Folge starten den Take
+CALIBRATE_SEC = 1.5      # Grundpegel-Messung beim Session-Start
+NOISE_RMS_FACTOR = 2.5   # Schwelle = Faktor × gemessener Grundpegel
+NOISE_RMS_FLOOR = 120.0  # Untergrenze in leisen Räumen (Grundpegel ~20 → 2.5× wäre
+                         # immer noch unter Rascheln/Klicken; Flüstern liegt deutlich höher)
+MIN_SPEECH_SEC = 0.35    # kürzere Takes werden als vermutliches Störgeräusch markiert
 
 # Geführte Varianten — werden zyklisch durchlaufen. Ziel: die Streuung des
 # Alltags abdecken (Distanz, Tempo, Lautstärke, Winkel), nicht Studioqualität.
@@ -60,7 +79,7 @@ VARIATIONS: list[tuple[str, str]] = [
 
 
 # ---------------------------------------------------------------------------
-# Service- und Audio-Hilfen
+# Service-, Audio- und LED-Hilfen
 # ---------------------------------------------------------------------------
 
 def _service_active() -> bool:
@@ -97,6 +116,19 @@ def _make_sink(profile: Profile):
     return AlsaSink(profile.local_audio.playback_device)
 
 
+def _make_leds(profile: Profile) -> LedDirector:
+    sinks = []
+    if profile.leds.wled_enabled and profile.mode == "local":
+        from voice_assistant.services.leds import WledLeds
+
+        sinks.append(WledLeds(profile.leds.wled_host, enabled=True))
+    if profile.leds.respeaker_ring_enabled and profile.mode == "respeaker":
+        from voice_assistant.services.leds import RespeakerRing
+
+        sinks.append(RespeakerRing(profile.respeaker, enabled=True))
+    return LedDirector(*sinks)
+
+
 def _kick_respeaker(source) -> None:
     """ReSpeaker: neue voice_assistant-Session anstoßen, falls der Stream steht."""
     client = getattr(source, "_client", None)
@@ -118,14 +150,27 @@ def _wait_for_stream(source, timeout: float = 25.0) -> bool:
     return False
 
 
+def _rms(chunk: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+
+
+def _measure_noise(source, seconds: float = CALIBRATE_SEC) -> float:
+    """Median-RMS des Raum-Grundpegels (Session-Start, niemand spricht)."""
+    values: list[float] = []
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        chunk = source.read_chunk()
+        if len(chunk) and np.any(chunk):
+            values.append(_rms(chunk))
+    return float(np.median(values)) if values else 0.0
+
+
 # Sprach-Erkennung pro Chunk — gleiche Logik wie assistant._is_speech_chunk
 # (bewusst kopiert statt importiert: assistant.py zieht den kompletten
 # Service-Stack mit herein).
 def _is_speech_chunk(vad: webrtcvad.Vad, audio_16: np.ndarray, min_rms: float) -> bool:
-    if min_rms > 0.0:
-        rms = float(np.sqrt(np.mean(audio_16.astype(np.float32) ** 2)))
-        if rms < min_rms:
-            return False
+    if min_rms > 0.0 and _rms(audio_16) < min_rms:
+        return False
     result = False
     for i in range(0, len(audio_16), VAD_FRAME_SIZE):
         frame = audio_16[i : i + VAD_FRAME_SIZE]
@@ -134,19 +179,30 @@ def _is_speech_chunk(vad: webrtcvad.Vad, audio_16: np.ndarray, min_rms: float) -
     return result
 
 
-def _record_take(source, vad: webrtcvad.Vad, min_rms: float) -> np.ndarray | None:
+def _record_take(source, vad: webrtcvad.Vad, min_rms: float) -> tuple[np.ndarray, float] | None:
     """Ein Take: auf Sprache warten, bis Stille aufnehmen, zuschneiden.
 
-    None wenn innerhalb WAIT_SPEECH_SEC keine Sprache kam.
+    Startet erst bei SPEECH_START_CHUNKS Sprach-Chunks in Folge — einzelne
+    Störgeräusch-Chunks (Klicken, Rascheln) lösen keinen Take aus.
+    Liefert (Samples, Sprachdauer in s) oder None (Timeout ohne Sprache).
     """
     source.flush()
     preroll: deque[np.ndarray] = deque()
     preroll_samples = 0
+    pending: list[np.ndarray] = []   # Sprach-Kandidaten vor dem Start-Gate
     speech_chunks: list[np.ndarray] = []
+    speech_chunk_count = 0
     silence_run = 0          # Chunks Stille seit dem letzten Sprach-Chunk
     speech_started = 0.0
     started = time.time()
     kicked = False
+
+    def _push_preroll(chunk: np.ndarray) -> None:
+        nonlocal preroll_samples
+        preroll.append(chunk)
+        preroll_samples += len(chunk)
+        while preroll_samples - len(preroll[0]) >= int(PREROLL_SEC * RATE_OW):
+            preroll_samples -= len(preroll.popleft())
 
     while True:
         chunk = source.read_chunk()
@@ -157,13 +213,17 @@ def _record_take(source, vad: webrtcvad.Vad, min_rms: float) -> np.ndarray | Non
 
         if not speech_chunks:
             if is_speech:
-                speech_chunks.append(chunk.copy())
-                speech_started = time.time()
+                pending.append(chunk.copy())
+                if len(pending) >= SPEECH_START_CHUNKS:
+                    speech_chunks = pending
+                    speech_chunk_count = len(pending)
+                    pending = []
+                    speech_started = time.time()
             else:
-                preroll.append(chunk.copy())
-                preroll_samples += len(chunk)
-                while preroll_samples - len(preroll[0]) >= int(PREROLL_SEC * RATE_OW):
-                    preroll_samples -= len(preroll.popleft())
+                for p in pending:
+                    _push_preroll(p)
+                pending = []
+                _push_preroll(chunk.copy())
                 waited = time.time() - started
                 if not kicked and waited > WAIT_SPEECH_SEC / 2 and not np.any(chunk):
                     _kick_respeaker(source)  # Stream steht (nur Nullen) → neu anstoßen
@@ -173,14 +233,19 @@ def _record_take(source, vad: webrtcvad.Vad, min_rms: float) -> np.ndarray | Non
             continue
 
         speech_chunks.append(chunk.copy())
-        silence_run = 0 if is_speech else silence_run + 1
+        if is_speech:
+            speech_chunk_count += 1
+            silence_run = 0
+        else:
+            silence_run += 1
 
+        speech_sec = speech_chunk_count * chunk_sec
         if silence_run * chunk_sec >= END_SILENCE_SEC:
             trim = int(max(0, silence_run * len(chunk) - TRAIL_KEEP_SEC * RATE_OW))
             samples = np.concatenate(list(preroll) + speech_chunks)
-            return samples[: len(samples) - trim] if trim else samples
+            return (samples[: len(samples) - trim] if trim else samples), speech_sec
         if time.time() - speech_started > MAX_SPEECH_SEC:
-            return np.concatenate(list(preroll) + speech_chunks)
+            return np.concatenate(list(preroll) + speech_chunks), speech_sec
 
 
 def _save_wav(path: str, samples: np.ndarray) -> None:
@@ -245,6 +310,7 @@ def run_record(args) -> int:
 
     source = None
     sink = None
+    leds = LedDirector()
     accepted: list[dict] = []
     try:
         source = _make_source(profile)
@@ -252,10 +318,23 @@ def run_record(args) -> int:
         if not _wait_for_stream(source):
             print("❌ Kein Audio vom Mikrofon — läuft der ReSpeaker / ist das Gerät frei?")
             return 1
-        print("✅ Audio läuft.\n")
+
+        leds = _make_leds(profile)
+        leds.set_phase(LED_IDLE)
+
+        if args.min_rms is not None:
+            min_rms = args.min_rms
+            print(f"✅ Audio läuft. RMS-Schwelle (manuell): {min_rms:.0f}\n")
+        else:
+            print("🤫 Bitte kurz still sein — messe den Grundpegel des Raums …")
+            noise = _measure_noise(source)
+            min_rms = max(profile.vad_voice_rms_min, noise * NOISE_RMS_FACTOR, NOISE_RMS_FLOOR)
+            print(
+                f"✅ Grundpegel RMS≈{noise:.0f} → Sprach-Schwelle {min_rms:.0f} "
+                f"(Override: --min-rms)\n"
+            )
 
         vad = webrtcvad.Vad(profile.vad_aggressiveness)
-        min_rms = profile.vad_voice_rms_min
 
         take = 0
         while take < args.takes:
@@ -267,22 +346,39 @@ def run_record(args) -> int:
                 print("\n⏹  Session beendet.")
                 break
 
-            samples = _record_take(source, vad, min_rms)
-            if samples is None:
+            # Totzeit: Tastenklick abklingen lassen, dann erst scharf schalten
+            time.sleep(ARM_DELAY_SEC)
+            leds.set_phase(LED_RECORDING)
+            print(f"   🔴 Jetzt: »{scorer.display}«")
+
+            result = _record_take(source, vad, min_rms)
+            leds.set_phase(LED_IDLE)
+            if result is None:
                 print("   ⚠️  Keine Sprache erkannt — Take wird wiederholt.\n")
                 continue
+            samples, speech_sec = result
 
             dur = len(samples) / RATE_OW
             verdict = scorer.score_pcm(samples)
-            print(f"   📼 {dur:.2f}s   {_score_line(verdict)}")
+            print(f"   📼 {dur:.2f}s (Sprache {speech_sec:.2f}s)   {_score_line(verdict)}")
+            suspect = speech_sec < MIN_SPEECH_SEC
+            if suspect:
+                print("   ⚠️  Sehr kurz — vermutlich Störgeräusch, im Zweifel wiederholen.")
 
             ts = datetime.now().strftime("%Y%m%d-%H%M%S")
             filename = f"{ts}_{slug}.wav"
             path = os.path.join(speaker_dir, filename)
             _save_wav(path, samples)
 
+            if not args.no_play:
+                if sink is None:
+                    sink = _make_sink(profile)
+                print("   🔊 Zur Kontrolle …")
+                sink.play_wav(path)
+                source.flush()
+
             try:
-                choice = input("   [Enter]=behalten  w=wiederholen  a=anhören  q=fertig: ").strip().lower()
+                choice = input("   [Enter]=behalten  w=wiederholen  a=nochmal anhören  q=fertig: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 choice = "q"
 
@@ -308,10 +404,12 @@ def run_record(args) -> int:
                 "style": slug,
                 "file": os.path.join(speaker, filename),
                 "dur_s": round(dur, 2),
+                "speech_s": round(speech_sec, 2),
                 "max_score": round(verdict["max_score"], 4),
                 "best_streak": verdict["best_streak"],
                 "triggered": verdict["triggered"],
                 "threshold": scorer.threshold,
+                "min_rms": round(min_rms, 1),
                 "profile": profile.name,
                 "mode": profile.mode,
                 "host": socket.gethostname(),
@@ -325,6 +423,10 @@ def run_record(args) -> int:
                 print("⏹  Session beendet.")
                 break
     finally:
+        try:
+            leds.set_phase(LED_IDLE)
+        except Exception:
+            pass
         if source is not None:
             source.close()
         if was_active and not args.keep_service:

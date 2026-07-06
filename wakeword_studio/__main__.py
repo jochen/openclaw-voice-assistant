@@ -37,6 +37,17 @@ def main() -> int:
         action="store_true",
         help="Assistant-Service nicht stoppen (nur sinnvoll im local-Modus)",
     )
+    rec.add_argument(
+        "--no-play",
+        action="store_true",
+        help="Takes nach der Aufnahme nicht automatisch vorspielen",
+    )
+    rec.add_argument(
+        "--min-rms",
+        type=float,
+        default=None,
+        help="RMS-Sprach-Schwelle fest vorgeben (Default: 2.5× gemessener Raum-Grundpegel)",
+    )
 
     sco = sub.add_parser("score", help="WAV-Samples gegen das Bundle-Modell scoren (Live-Trigger-Semantik)")
     sco.add_argument("--bundle", default="gaston", help="Bundle unter models/wakewords/ (Default: gaston)")
