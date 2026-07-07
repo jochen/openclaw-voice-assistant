@@ -200,27 +200,32 @@ def _log_endpoint(meta: dict) -> None:
 def _format_wake_scores(scores: deque, threshold: float) -> str:
     """Formatiert den Score-Verlauf eines Wakeword-Events als Einzeiler.
 
-    Das letzte Element ist der Trigger-Frame (erster Score unter Threshold)
-    und wird vom Rückwärts-Search ausgenommen — sonst liefert ein abrupter
-    Abfall auf 0.00 fälschlich '(leer)'.
+    Anker ist der letzte Frame >= Threshold; von dort läuft die
+    Rückwärts-Suche mit derselben 1-Frame-Gap-Toleranz wie der Live-Streak.
+    Trailing-Frames (tolerierter Gap + Trigger-Frame) dürfen daher beliebig
+    tief abfallen, ohne das Event auf '(leer)' zu schrumpfen.
     | markiert die Threshold-Kreuzungen (Anstieg und Abfall) — mit dem
     Threshold des Wakeword, das den Streak ausgelöst hat, sonst werden
     schwache Trigger (alle Frames unter 0.65) als '(leer)' unsichtbar.
     """
     seq = list(scores)
-    if len(seq) < 2:
+    last_hit = next(
+        (i for i in range(len(seq) - 1, -1, -1) if seq[i] >= threshold), None
+    )
+    if last_hit is None:
         return "(leer)"
-    trigger = seq[-1]   # letzter Frame: erster below-threshold Score
-    search = seq[:-1]   # alles davor für die Rückwärts-Suche
-    start = len(search)
-    for i in range(len(search) - 1, -1, -1):
-        if search[i] < 0.05:
-            start = i + 1
-            break
+    start = last_hit
+    gap_used = False
+    for i in range(last_hit - 1, -1, -1):
+        if seq[i] < 0.05:
+            if gap_used:
+                break
+            gap_used = True
         start = i
-    event = seq[start:]  # schließt trigger-Frame ein
-    if not event or all(s < threshold for s in event):
-        return "(leer)"
+    # führende Fast-Null-Frames (z.B. der Gap, an dem die Suche endete) kappen
+    while start < last_hit and seq[start] < 0.05:
+        start += 1
+    event = seq[start:]  # schließt Gap-/Trigger-Frames am Ende ein
     parts: list[str] = []
     prev_above = event[0] >= threshold
     for s in event:
