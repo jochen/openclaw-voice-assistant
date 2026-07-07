@@ -24,12 +24,17 @@ class WakewordHit:
         bis zum Trigger. Kurze Wakewords ("Gaston" ≈ 0.5 s ≈ 6 Frames)
         erreichen strukturell kürzere Streaks als lange ("hey Jarvis") und
         dürfen deshalb per manifest.yaml/Config auf 2 heruntergehen.
+    min_peak: zusätzlich zum Streak muss der beste Score im Streak diesen
+        Wert erreichen. Echte Rufe peaken deutlich über dem Threshold
+        (gaston: 0.92-0.99), False Positives aus Gesprächsfetzen bleiben
+        flach (FP 2026-07-07: Peak 0.68). 0.0 = Bedingung aus.
     """
 
     name: str
     score: float
     threshold: float
     min_hits: int = 3
+    min_peak: float = 0.0
 
 
 class WakewordEngine(Protocol):

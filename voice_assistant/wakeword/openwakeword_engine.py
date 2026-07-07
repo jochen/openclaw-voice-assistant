@@ -26,6 +26,9 @@ _DEFAULT_THRESHOLD = 0.65
 # Streak-Länge bis zum Trigger (siehe WakewordHit.min_hits) — kurze Wakewords
 # setzen im manifest.yaml einen kleineren Wert.
 _DEFAULT_MIN_HITS = 3
+# Peak-Bedingung (siehe WakewordHit.min_peak) — 0.0 = aus. Eigene Bundles
+# setzen ihren Wert im manifest.yaml.
+_DEFAULT_MIN_PEAK = 0.0
 
 
 def _resolve_bundle(bundle: str) -> tuple[str, dict]:
@@ -69,6 +72,11 @@ class OpenWakewordEngine:
                 if w.min_hits is not None
                 else int(manifest.get("min_hits", _DEFAULT_MIN_HITS))
             )
+            min_peak = (
+                w.min_peak
+                if w.min_peak is not None
+                else float(manifest.get("min_peak", _DEFAULT_MIN_PEAK))
+            )
             # Bundle-Pfad → Key ist der Dateiname ohne Endung (so vergibt
             # openwakeword.Model die Keys für predict()); eingebauter Name →
             # Key ist der Name selbst (unverändert durchgereicht).
@@ -76,7 +84,13 @@ class OpenWakewordEngine:
             key = os.path.splitext(os.path.basename(model_arg))[0] if is_path else model_arg
             model_args.append(model_arg)
             self._entries.append(
-                {"key": key, "name": w.bundle, "threshold": threshold, "min_hits": min_hits}
+                {
+                    "key": key,
+                    "name": w.bundle,
+                    "threshold": threshold,
+                    "min_hits": min_hits,
+                    "min_peak": min_peak,
+                }
             )
 
         from openwakeword import Model  # type: ignore[import-not-found]
@@ -105,6 +119,7 @@ class OpenWakewordEngine:
             score=best_score,
             threshold=best["threshold"] if best else _DEFAULT_THRESHOLD,
             min_hits=best["min_hits"] if best else _DEFAULT_MIN_HITS,
+            min_peak=best["min_peak"] if best else _DEFAULT_MIN_PEAK,
         )
 
     def reset(self) -> None:

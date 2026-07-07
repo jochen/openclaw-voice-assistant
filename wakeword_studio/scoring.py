@@ -1,9 +1,11 @@
 """Scoring von Aufnahmen gegen ein Wakeword-Bundle (openwakeword).
 
 Bildet die Live-Trigger-Semantik aus voice_assistant/assistant.py nach:
-ein Trigger ist ein Streak von >= 3 Frames über dem Threshold, wobei die
-erste 1-Frame-Lücke im Streak toleriert wird (Commit 384e76d). So sagt der
-Score einer Datei direkt voraus, ob der Assistant live auslösen würde.
+ein Trigger ist ein Streak von >= min_hits Frames über dem Threshold, wobei
+die erste 1-Frame-Lücke im Streak toleriert wird (Commit 384e76d) UND der
+beste Score im Streak >= min_peak liegt (Peak-Bedingung gegen flache FPs,
+2026-07-07). So sagt der Score einer Datei direkt voraus, ob der Assistant
+live auslösen würde.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import numpy as np
 
 from voice_assistant.config import RATE_OW
 from voice_assistant.wakeword.openwakeword_engine import (
+    _DEFAULT_MIN_PEAK,
     _DEFAULT_THRESHOLD,
     _OW_FRAME,
     _resolve_bundle,
@@ -70,6 +73,7 @@ class BundleScorer:
             else float(manifest.get("threshold", _DEFAULT_THRESHOLD))
         )
         self.min_hits = int(manifest.get("min_hits", DEFAULT_MIN_HITS))
+        self.min_peak = float(manifest.get("min_peak", _DEFAULT_MIN_PEAK))
         is_path = os.path.exists(model_arg)
         self._key = (
             os.path.splitext(os.path.basename(model_arg))[0] if is_path else model_arg
@@ -78,8 +82,13 @@ class BundleScorer:
 
         self._model = Model(wakeword_models=[model_arg])
 
-    def _score_offset(self, samples: np.ndarray, offset: int) -> tuple[float, int]:
-        """Ein Durchlauf mit fester Frame-Ausrichtung → (max_score, best_streak)."""
+    def _score_offset(self, samples: np.ndarray, offset: int) -> tuple[float, int, bool]:
+        """Ein Durchlauf mit fester Frame-Ausrichtung →
+        (max_score, best_streak, triggered).
+
+        triggered = irgendein Streak erfüllt BEIDE Live-Bedingungen:
+        Länge >= min_hits und Streak-Peak >= min_peak.
+        """
         self._model.reset()
         pad_front = np.zeros(_PAD_SAMPLES + offset, dtype=np.int16)
         pad_back = np.zeros(_PAD_SAMPLES, dtype=np.int16)
@@ -87,7 +96,9 @@ class BundleScorer:
 
         max_score = 0.0
         best_streak = 0
+        triggered = False
         streak = 0
+        streak_peak = 0.0
         gap_used = False
         for i in range(0, len(padded) - _OW_FRAME + 1, _OW_FRAME):
             result = self._model.predict(padded[i : i + _OW_FRAME])
@@ -95,13 +106,17 @@ class BundleScorer:
             max_score = max(max_score, s)
             if s > self.threshold:
                 streak += 1
+                streak_peak = max(streak_peak, s)
             elif streak > 0 and not gap_used:
                 gap_used = True
             else:
                 best_streak = max(best_streak, streak)
+                triggered = triggered or (streak >= self.min_hits and streak_peak >= self.min_peak)
                 streak = 0
+                streak_peak = 0.0
                 gap_used = False
-        return max_score, max(best_streak, streak)
+        triggered = triggered or (streak >= self.min_hits and streak_peak >= self.min_peak)
+        return max_score, max(best_streak, streak), triggered
 
     def score_pcm(self, samples: np.ndarray) -> dict:
         """16-kHz-mono-int16 → max_score, Streak, Live-Trigger-Urteil.
@@ -114,10 +129,10 @@ class BundleScorer:
         best_streak = 0
         hits = 0
         for offset in _OFFSETS:
-            score, streak = self._score_offset(samples, offset)
+            score, streak, triggered = self._score_offset(samples, offset)
             max_score = max(max_score, score)
             best_streak = max(best_streak, streak)
-            hits += streak >= self.min_hits
+            hits += triggered
 
         return {
             "max_score": max_score,

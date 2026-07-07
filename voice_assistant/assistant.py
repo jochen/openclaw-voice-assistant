@@ -197,13 +197,15 @@ def _log_endpoint(meta: dict) -> None:
         print(f"⚠️  endpoint-log: {exc}")
 
 
-def _format_wake_scores(scores: deque) -> str:
+def _format_wake_scores(scores: deque, threshold: float) -> str:
     """Formatiert den Score-Verlauf eines Wakeword-Events als Einzeiler.
 
     Das letzte Element ist der Trigger-Frame (erster Score unter Threshold)
     und wird vom Rückwärts-Search ausgenommen — sonst liefert ein abrupter
     Abfall auf 0.00 fälschlich '(leer)'.
-    | markiert die 0.65-Threshold-Kreuzungen (Anstieg und Abfall).
+    | markiert die Threshold-Kreuzungen (Anstieg und Abfall) — mit dem
+    Threshold des Wakeword, das den Streak ausgelöst hat, sonst werden
+    schwache Trigger (alle Frames unter 0.65) als '(leer)' unsichtbar.
     """
     seq = list(scores)
     if len(seq) < 2:
@@ -217,12 +219,12 @@ def _format_wake_scores(scores: deque) -> str:
             break
         start = i
     event = seq[start:]  # schließt trigger-Frame ein
-    if not event or all(s < 0.65 for s in event):
+    if not event or all(s < threshold for s in event):
         return "(leer)"
     parts: list[str] = []
-    prev_above = event[0] >= 0.65
+    prev_above = event[0] >= threshold
     for s in event:
-        above = s >= 0.65
+        above = s >= threshold
         if above != prev_above:
             parts.append("|")
             prev_above = above
@@ -370,9 +372,18 @@ def run() -> None:
     # 2 Hits mit 1-Frame-Lücke = 0.09 FP/h auf 10.7h Validierungs-Audio
     # (eval_gap.py, 2026-07-05/06).
     wake_gap_used = False
+    # Bester Score des aktuellen Streaks — echte Rufe peaken deutlich über
+    # dem Threshold (gaston: 0.92-0.99 auf Test-Set + Live-Logs), FPs aus
+    # Gesprächsfetzen bleiben flach (FP 2026-07-07: 0.41/0.68). min_peak 0.7
+    # eliminiert beide gemessenen FPs (eval_peak.py: 0.00 FP/h auf 10.7h)
+    # und kostet nur 1 von 11 triggernden Test-Takes (Peak 0.50).
+    wake_peak = 0.0
+    wake_announced = False                 # 🟢-Meldung/LED dieses Streaks schon raus?
     # Benötigte Streak-Länge des aktuellen Streaks — kommt pro Wakeword aus
     # manifest.yaml/Config (kurze Wörter erreichen kürzere Streaks).
     current_min_hits = 3
+    current_min_peak = 0.0
+    current_threshold = 0.65               # Threshold des aktiven Streaks (fürs Score-Log)
     near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
     followup_round = 0                     # aktuelle Follow-up-Runde (0 = kein Follow-up aktiv)
@@ -413,11 +424,19 @@ def run() -> None:
                     pass  # noch 1280 Samples sammeln bevor neue Prediction
                 elif hit.score > hit.threshold:
                     wake_hits += 1
+                    wake_peak = max(wake_peak, hit.score)
                     # Best-scorender Kandidat dieses Frames wird zum aktiven
                     # Wakeword — bleibt stehen, bis der Streak endet (unten).
                     current_wakeword = wakeword_by_name.get(hit.name, current_wakeword)
                     current_min_hits = hit.min_hits
-                    if wake_hits == current_min_hits:
+                    current_min_peak = hit.min_peak
+                    current_threshold = hit.threshold
+                    if (
+                        not wake_announced
+                        and wake_hits >= current_min_hits
+                        and wake_peak >= current_min_peak
+                    ):
+                        wake_announced = True
                         leds.set_phase(LED_WAKEWORD)
                         print(f"[{now:.1f}s] 🟢 Wakeword detected: {current_wakeword.bundle}")
                 elif wake_hits > 0 and not wake_gap_used:
@@ -426,8 +445,8 @@ def run() -> None:
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    if wake_hits >= current_min_hits:
-                        print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores)}{beam_str}")
+                    if wake_hits >= current_min_hits and wake_peak >= current_min_peak:
+                        print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
                         ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                         if os.path.exists(ack_path):
                             print("🔊 Playing acknowledgement...")
@@ -448,17 +467,25 @@ def run() -> None:
                         # Frames dieses Streaks gesetzt → erlaubt False-Positive-
                         # Zuordnung pro Modell.
                         last_scores = " ".join(f"{s:.2f}" for s in list(recent_scores)[-5:])
-                        print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] ({wake_hits} Frame{'s' if wake_hits > 1 else ''}: {last_scores}){beam_str}")
+                        peak_str = (
+                            f", Peak {wake_peak:.2f} < {current_min_peak:.2f}"
+                            if wake_hits >= current_min_hits
+                            else ""
+                        )
+                        print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] ({wake_hits} Frame{'s' if wake_hits > 1 else ''}: {last_scores}{peak_str}){beam_str}")
                         leds.set_phase(LED_NEAR_MISS)
                         near_miss_until = now + 0.6
                     wake_hits = 0
+                    wake_peak = 0.0
+                    wake_announced = False
                     wake_gap_used = False
 
                 # Sicherheits-Timeout: nicht länger als 1s auf Streak-Ende warten
-                if wake_hits >= 25:
+                # (Peak-Bedingung gilt auch hier — echte Rufe peaken früh)
+                if wake_hits >= 25 and wake_peak >= current_min_peak:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores)} (Timeout){beam_str}")
+                    print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)} (Timeout){beam_str}")
                     ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     if os.path.exists(ack_path):
                         print("🔊 Spiele Ja? ...")
@@ -475,6 +502,8 @@ def run() -> None:
                     max_internal_pause = 0
                     speech_detected = False
                     wake_hits = 0
+                    wake_peak = 0.0
+                    wake_announced = False
                     wake_gap_used = False
 
             # --- RECORDING ---

@@ -9,6 +9,12 @@ threshold: 0.35
 # 2er-Streaks (Test-Set 2026-07-06: +3 von 20 Takes gegenüber min_hits 3).
 # FP-geprüft: 2 Hits mit 1-Frame-Gap = 0.09 FP/h auf 10.7h Validierung.
 min_hits: 2
+# Peak-Bedingung (2026-07-07): bester Score im Streak muss >= 0.7 sein.
+# Echte Rufe peaken 0.92-0.99 (Test-Set + Live-Logs, schwächster echter
+# Take: 0.79); FPs aus Gesprächsfetzen bleiben flach (Live-FP 12:39 Uhr:
+# 0.41/0.68, Validierungs-FP: < 0.6). eval_peak.py: 0.00 FP/h ab min_peak
+# 0.6 auf 10.7h; Recall-Kosten: 1 von 11 triggernden Takes (Peak 0.50).
+min_peak: 0.7
 spellings:
   - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
   - "Gastong (40%)"

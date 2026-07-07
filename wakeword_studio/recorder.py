@@ -593,7 +593,9 @@ def run_score(args) -> int:
     scorer = BundleScorer(args.bundle, threshold=args.threshold)
     print(
         f"🔎 {len(wavs)} Datei(en) gegen '{args.bundle}' "
-        f"(Threshold {scorer.threshold:.2f}, Trigger = Streak ≥ {scorer.min_hits} mit 1-Gap):\n"
+        f"(Threshold {scorer.threshold:.2f}, Trigger = Streak ≥ {scorer.min_hits} mit 1-Gap"
+        + (f", Peak ≥ {scorer.min_peak:.2f}" if scorer.min_peak > 0 else "")
+        + "):\n"
     )
     from wakeword_studio.scoring import load_wav_16k
 
