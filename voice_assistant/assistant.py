@@ -444,8 +444,10 @@ def run() -> None:
                         wake_announced = True
                         leds.set_phase(LED_WAKEWORD)
                         print(f"[{now:.1f}s] 🟢 Wakeword detected: {current_wakeword.bundle}")
-                elif wake_hits > 0 and not wake_gap_used:
-                    # erste Lücke im Streak tolerieren (zählt nicht als Hit)
+                elif wake_hits >= current_min_hits and not wake_gap_used:
+                    # erste Lücke im Streak tolerieren (zählt nicht als Hit) —
+                    # aber erst ab min_hits echten Hits, sonst näht die Toleranz
+                    # zwei unabhängige Noise-Bursts zu einem Trigger zusammen
                     wake_gap_used = True
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
@@ -704,6 +706,10 @@ def run() -> None:
                         f"[{now:.1f}s] ⏹  Follow-up beendet ({reason}), "
                         f"{dur:.1f}s, RMS={avg_rms:.4f}, VAD={vad_str}"
                     )
+                    vad_ratio = (
+                        followup_vad_speech / followup_rms_count
+                        if followup_rms_count else 0.0
+                    )
                     endpoint_meta = {
                         "phase": "followup",
                         "reason": "silence" if stop else "timeout",
@@ -712,16 +718,24 @@ def run() -> None:
                         "silence_seconds": round(_silence_limit * _chunk_sec, 2),
                         "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
                         "avg_rms": round(avg_rms, 4),
+                        "vad_ratio": round(vad_ratio, 2),
                         "followup_round": followup_round,
                     }
-                    if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
+                    # VAD-Anteil-Gate: echte Äußerungen liegen bei >= 50 %
+                    # Sprachanteil, Halluzinations-Aufnahmen (Hintergrund-
+                    # geräusche) bei ~14 % — unter 20 % gar nicht erst zu STT
+                    if (
+                        speech_detected
+                        and len(recorded_chunks) >= MIN_SPEECH_CHUNKS
+                        and vad_ratio >= 0.20
+                    ):
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         workers.start_stt(recorded_chunks.copy())
                         workers.start_diarization(recorded_chunks.copy())
                         workers.start_mood(recorded_chunks.copy())
                     else:
-                        print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech")
+                        print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech (VAD {vad_ratio:.0%})")
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING

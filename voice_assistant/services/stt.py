@@ -69,7 +69,9 @@ class SpeachesStt:
                 sum(s.get("no_speech_prob", 0.0) for s in segments) / len(segments)
                 if segments else 0.0
             )
-            if avg_no_speech > 0.6:
+            # Schwelle 0.5: Halluzinationen auf Stille liegen bei >= 0.51,
+            # echte (auch geschriene Stop-Kommandos) bei <= 0.49
+            if avg_no_speech >= 0.5:
                 print(f"⚠️  STT discarded (no_speech_prob={avg_no_speech:.2f}) — likely hallucination")
                 self.state.mark_stt_ok()
                 return None
