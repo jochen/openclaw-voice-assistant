@@ -372,7 +372,7 @@ OPENCLAW_STREAM_TIMEOUT = 600
 # gesprochen (Worker-Thread läuft weiter, LED-Reset übernimmt der Worker).
 OPENCLAW_OVERALL_TIMEOUT = OPENCLAW_STREAM_TIMEOUT + 60
 
-VOICE_ANALYSIS_BASE = "http://<speaches-host>:8001"
+VOICE_ANALYSIS_BASE = "http://<test-host>:8001"
 
 SPEACHES_TIMEOUT = 15
 SPEACHES_RETRY_COOLDOWN = 60
