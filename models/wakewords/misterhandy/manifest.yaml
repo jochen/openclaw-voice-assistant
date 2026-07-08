@@ -1,0 +1,28 @@
+# Mister-Handy-Wakeword — trainiert 2026-07-08 auf ai-stack (Wakeword-Studio, analog gaston)
+name: misterhandy
+display: "Mister Handy"
+model: misterhandy.tflite
+# "Handy" ist ein häufiges deutsches Alltagswort -> strukturell mehr FP-Risiko
+# als "Gaston". Bei Standard-Trigger (min_hits=2) 0.56-1.78 FP/h je nach
+# min_peak (10.7h-Validierung). Mit dieser strengeren Config: 0.09 FP/h
+# (1 FP in 10.7h) — nah an gaston-Niveau. Kein Retraining nötig (Jochens
+# Entscheidung 2026-07-08).
+threshold: 0.35
+min_hits: 3
+min_peak: 0.95
+spellings:
+  - "mˈɪstɐ hˈɛndi (Phonem-Eingabe, 50%)"
+  - "Mister Handy (Klartext, Piper-Aussprache, 50%)"
+created: 2026-07-08
+# Quell-Modell der tflite (onnx2tf -kat x → float32): misterhandy.onnx braucht
+# die externen Gewichte misterhandy.onnx.data zwingend daneben.
+source_model: misterhandy.onnx
+training:
+  generator: piper-sample-generator (onnx-Voices, deutsch)
+  voices: thorsten-medium/-high/_emotional-medium, karlsson-low, pavoque-low, eva_k-x_low, ramona-low, kerstin-low (gedrosselt 1.2-1.4 length_scale)
+  positive_samples: 32992
+  adversarial_negatives: 33000
+  config: misterhandy.yaml (layer_size 64, max_negative_weight 500, fp_target 0.5/h, steps 50000)
+  validation:
+    raw_clip_recall: 0.97-1.00
+    false_per_hour_at_min_hits3_min_peak0.95: 0.09
