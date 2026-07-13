@@ -114,6 +114,9 @@ class WakewordConfig:
     # None = aus manifest.yaml (oder Default 0.0 = aus) ableiten.
     # Siehe WakewordHit.min_peak.
     min_peak: float | None = None
+    # None = aus manifest.yaml (oder Fallback auf min_peak) ableiten.
+    # Siehe WakewordHit.min_peak_short.
+    min_peak_short: float | None = None
 
 
 @dataclass
@@ -238,6 +241,7 @@ def _parse_wakewords(
         threshold_raw = entry.get("threshold")
         min_hits_raw = entry.get("min_hits")
         min_peak_raw = entry.get("min_peak")
+        min_peak_short_raw = entry.get("min_peak_short")
         result.append(
             WakewordConfig(
                 bundle=bundle,
@@ -247,6 +251,7 @@ def _parse_wakewords(
                 threshold=float(threshold_raw) if threshold_raw is not None else None,
                 min_hits=int(min_hits_raw) if min_hits_raw is not None else None,
                 min_peak=float(min_peak_raw) if min_peak_raw is not None else None,
+                min_peak_short=float(min_peak_short_raw) if min_peak_short_raw is not None else None,
             )
         )
     if not result:
@@ -372,7 +377,7 @@ OPENCLAW_STREAM_TIMEOUT = 600
 # gesprochen (Worker-Thread läuft weiter, LED-Reset übernimmt der Worker).
 OPENCLAW_OVERALL_TIMEOUT = OPENCLAW_STREAM_TIMEOUT + 60
 
-VOICE_ANALYSIS_BASE = "http://<test-host>:8001"
+VOICE_ANALYSIS_BASE = "http://<speaches-host>:8001"
 
 SPEACHES_TIMEOUT = 15
 SPEACHES_RETRY_COOLDOWN = 60
@@ -408,6 +413,13 @@ RECORDING_MAX_SEC = 30.0
 # Voice-Workspace: Live-Aufnahme + Sprecher-Referenzen
 VOICE_DIR = os.path.join(WORKSPACE, "voice")
 LAST_RECORDING_PATH = os.path.join(VOICE_DIR, "last_recording.wav")
+# Trigger-Audio-Archiv: pro Wakeword-Trigger der Mic-Mitschnitt rund ums
+# Wakeword (Ringpuffer, ~3 s vor Trigger) + die anschließende Aufnahme.
+# Zweck: False-Positive-Analyse und Retraining mit echten FP-Clips als
+# adversarial negatives (Wakeword-Studio auf ai-stack) — die starken FPs
+# (Peaks 0.94-0.98, Logs 2026-07-08..13) sind score-seitig nicht filterbar.
+TRIGGER_AUDIO_DIR = os.path.join(VOICE_DIR, "triggers")
+TRIGGER_AUDIO_MAX_AGE_DAYS = 30
 SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
 SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")

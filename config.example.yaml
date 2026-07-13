@@ -84,6 +84,9 @@ profiles:
     #     ack: "Ja?"                            # optional, Default: locale.wakeword_ack
     #     tts_voice: "de_DE-thorsten-medium"     # optional, Default: speaches_tts_voice
     #     threshold: 0.6                        # optional, Default: manifest.yaml oder 0.65
+    #     min_hits: 2                           # optional, Streak-Länge bis Trigger
+    #     min_peak: 0.7                         # optional, Peak-Bedingung im Streak
+    #     min_peak_short: 0.9                   # optional, strengerer Peak für Streaks < 3 Frames
     #   - bundle: hey_jarvis                    # eingebautes openwakeword-Modell
     #     session: "agent:zweiter:telegram:group:ANDERE_CHAT_ID"
 

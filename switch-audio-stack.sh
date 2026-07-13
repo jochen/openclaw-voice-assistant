@@ -1,6 +1,6 @@
 #!/bin/bash
 # Schaltet den Voice-Assist zwischen dem ai-stack-Server (126) und der
-# Testinstanz auf rouven (229) um: speaches (STT/TTS, Port 8000) und
+# Testinstanz auf rouven (127) um: speaches (STT/TTS, Port 8000) und
 # voice-analysis (Mood/SER, Port 8001). ser (8002) wird von voice-analysis
 # intern angesprochen, dafür ist kein separater Eintrag nötig.
 set -euo pipefail
@@ -13,12 +13,12 @@ case "${1:-}" in
     IP="<speaches-host>"
     ;;
   rouven)
-    IP="<test-host>"
+    IP="<speaches-host>"
     ;;
   *)
     echo "Usage: $0 {126|rouven}" >&2
     echo "  126    = ai-stack Fablab-Server (<speaches-host>, Original)" >&2
-    echo "  rouven = Testinstanz (<test-host>)" >&2
+    echo "  rouven = Testinstanz (<speaches-host>)" >&2
     exit 1
     ;;
 esac

@@ -15,6 +15,11 @@ min_hits: 2
 # 0.41/0.68, Validierungs-FP: < 0.6). eval_peak.py: 0.00 FP/h ab min_peak
 # 0.6 auf 10.7h; Recall-Kosten: 1 von 11 triggernden Takes (Peak 0.50).
 min_peak: 0.7
+# Gestufte Peak-Bedingung für Kurz-Streaks (2026-07-13): 2-Frame-Trigger
+# brauchen Peak >= 0.9. Live-Logs 08.-13.07.: alle vier 2-Frame-Trigger waren
+# False Positives (Peaks 0.70/0.77/0.83/0.92), der einzige echte 2-Frame-Ruf
+# (Test 08.07. 23:19) peakte 0.93. Ab 3 Frames gilt weiter min_peak 0.7.
+min_peak_short: 0.9
 spellings:
   - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
   - "Gastong (40%)"

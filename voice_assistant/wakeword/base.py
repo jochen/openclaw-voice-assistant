@@ -28,6 +28,11 @@ class WakewordHit:
         Wert erreichen. Echte Rufe peaken deutlich über dem Threshold
         (gaston: 0.92-0.99), False Positives aus Gesprächsfetzen bleiben
         flach (FP 2026-07-07: Peak 0.68). 0.0 = Bedingung aus.
+    min_peak_short: strengere Peak-Anforderung für Kurz-Streaks unter
+        3 Frames (greift nur bei min_hits 2). Live-Logs 2026-07-08..13:
+        alle vier 2-Frame-Trigger waren False Positives (Peaks 0.70-0.92),
+        der einzige echte 2-Frame-Ruf peakte 0.93. Fällt ohne Konfiguration
+        auf min_peak zurück (Engine löst das auf).
     """
 
     name: str
@@ -35,6 +40,7 @@ class WakewordHit:
     threshold: float
     min_hits: int = 3
     min_peak: float = 0.0
+    min_peak_short: float = 0.0
 
 
 class WakewordEngine(Protocol):

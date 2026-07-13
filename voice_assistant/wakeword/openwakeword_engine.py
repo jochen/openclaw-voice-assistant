@@ -77,6 +77,11 @@ class OpenWakewordEngine:
                 if w.min_peak is not None
                 else float(manifest.get("min_peak", _DEFAULT_MIN_PEAK))
             )
+            min_peak_short = (
+                w.min_peak_short
+                if w.min_peak_short is not None
+                else float(manifest.get("min_peak_short", min_peak))
+            )
             # Bundle-Pfad → Key ist der Dateiname ohne Endung (so vergibt
             # openwakeword.Model die Keys für predict()); eingebauter Name →
             # Key ist der Name selbst (unverändert durchgereicht).
@@ -90,6 +95,7 @@ class OpenWakewordEngine:
                     "threshold": threshold,
                     "min_hits": min_hits,
                     "min_peak": min_peak,
+                    "min_peak_short": min_peak_short,
                 }
             )
 
@@ -120,6 +126,7 @@ class OpenWakewordEngine:
             threshold=best["threshold"] if best else _DEFAULT_THRESHOLD,
             min_hits=best["min_hits"] if best else _DEFAULT_MIN_HITS,
             min_peak=best["min_peak"] if best else _DEFAULT_MIN_PEAK,
+            min_peak_short=best["min_peak_short"] if best else _DEFAULT_MIN_PEAK,
         )
 
     def reset(self) -> None:

@@ -27,6 +27,8 @@ from voice_assistant.config import (
     RATE_OW,
     RECORDING_MAX_SEC,
     SILENCE_CHUNKS_LIMIT,
+    TRIGGER_AUDIO_DIR,
+    TRIGGER_AUDIO_MAX_AGE_DAYS,
     VAD_FRAME_SIZE,
     VOICE_ANALYSIS_BASE,
     VOICE_DIR,
@@ -109,6 +111,41 @@ def _save_last_recording(audio_chunks: list) -> None:
             f.write(chunks_to_wav_bytes(audio_chunks))
     except Exception as e:
         print(f"⚠️  Failed to save last_recording.wav: {e}")
+
+
+def _save_trigger_audio(audio_chunks: list, bundle: str, kind: str, trigger_id: str) -> None:
+    """Archiviert Trigger-Audio unter TRIGGER_AUDIO_DIR (best-effort).
+
+    kind='wake': Ringpuffer-Mitschnitt rund ums Wakeword (Retraining-Clip),
+    kind='rec': die anschließende Aufnahme (Quell-Identifikation TV/Radio/…).
+    """
+    if not audio_chunks:
+        return
+    try:
+        os.makedirs(TRIGGER_AUDIO_DIR, exist_ok=True)
+        path = os.path.join(TRIGGER_AUDIO_DIR, f"{trigger_id}_{bundle}_{kind}.wav")
+        with open(path, "wb") as f:
+            f.write(chunks_to_wav_bytes(list(audio_chunks)))
+    except Exception as e:
+        print(f"⚠️  Trigger-Audio ({kind}) nicht gespeichert: {e}")
+
+
+def _cleanup_trigger_audio() -> None:
+    """Löscht Trigger-Archiv-Dateien älter als TRIGGER_AUDIO_MAX_AGE_DAYS."""
+    try:
+        if not os.path.isdir(TRIGGER_AUDIO_DIR):
+            return
+        cutoff = time.time() - TRIGGER_AUDIO_MAX_AGE_DAYS * 86400
+        removed = 0
+        for name in os.listdir(TRIGGER_AUDIO_DIR):
+            path = os.path.join(TRIGGER_AUDIO_DIR, name)
+            if name.endswith(".wav") and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                removed += 1
+        if removed:
+            print(f"🧹 Trigger-Archiv: {removed} Datei(en) > {TRIGGER_AUDIO_MAX_AGE_DAYS} Tage gelöscht")
+    except Exception as e:
+        print(f"⚠️  Trigger-Archiv-Cleanup: {e}")
 
 
 def _make_audio(profile: Profile):
@@ -195,6 +232,18 @@ def _log_endpoint(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:  # Logging darf den Loop nie crashen
         print(f"⚠️  endpoint-log: {exc}")
+
+
+def _required_peak(wake_hits: int, min_peak: float, min_peak_short: float) -> float:
+    """Peak-Anforderung abhängig von der Streak-Länge.
+
+    Kurz-Streaks (< 3 Frames, also der min_hits-2-Pfad) müssen min_peak_short
+    erreichen, längere Streaks min_peak. Datenbasis Live-Logs 2026-07-08..13:
+    alle vier 2-Frame-Trigger waren False Positives (Peaks 0.70/0.77/0.83/0.92),
+    der einzige echte 2-Frame-Ruf peakte 0.93 — ab 3 Frames tragen die
+    zusätzlichen Hits die Evidenz, dort bleibt min_peak ausreichend.
+    """
+    return min_peak_short if wake_hits < 3 else min_peak
 
 
 def _format_wake_scores(scores: deque, threshold: float) -> str:
@@ -388,13 +437,24 @@ def run() -> None:
     # manifest.yaml/Config (kurze Wörter erreichen kürzere Streaks).
     current_min_hits = 3
     current_min_peak = 0.0
+    current_min_peak_short = 0.0
     current_threshold = 0.65               # Threshold des aktiven Streaks (fürs Score-Log)
     near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
+    # Ringpuffer der letzten ~3s Mic-Audio im LISTENING — enthält beim Trigger
+    # das Wakeword selbst (der Trigger fällt 1-2 Frames nach Wortende) und
+    # wird als Retraining-/Analyse-Clip archiviert (siehe TRIGGER_AUDIO_DIR).
+    wake_ring: deque = deque()
+    wake_ring_samples = 0
+    _wake_ring_max = int(RATE_OW * 3.0)
+    trigger_audio_id: str | None = None    # verbindet wake- und rec-Clip eines Triggers
+    trigger_audio_bundle = ""
     followup_round = 0                     # aktuelle Follow-up-Runde (0 = kein Follow-up aktiv)
     followup_rms_sum = 0.0
     followup_rms_count = 0
     followup_vad_speech = 0
+
+    _cleanup_trigger_audio()
 
     leds.set_phase(LED_IDLE)
     print("\n🎤 Ready – waiting for wakeword...\n")
@@ -418,6 +478,12 @@ def run() -> None:
 
             # --- LISTENING ---
             if state == STATE_LISTENING:
+                if len(audio_16) > 0:
+                    wake_ring.append(audio_16.copy())
+                    wake_ring_samples += len(audio_16)
+                    while wake_ring_samples > _wake_ring_max and len(wake_ring) > 1:
+                        wake_ring_samples -= len(wake_ring.popleft())
+
                 if near_miss_until > 0.0 and now >= near_miss_until:
                     leds.set_phase(LED_IDLE)
                     near_miss_until = 0.0
@@ -435,11 +501,12 @@ def run() -> None:
                     current_wakeword = wakeword_by_name.get(hit.name, current_wakeword)
                     current_min_hits = hit.min_hits
                     current_min_peak = hit.min_peak
+                    current_min_peak_short = hit.min_peak_short
                     current_threshold = hit.threshold
                     if (
                         not wake_announced
                         and wake_hits >= current_min_hits
-                        and wake_peak >= current_min_peak
+                        and wake_peak >= _required_peak(wake_hits, current_min_peak, current_min_peak_short)
                     ):
                         wake_announced = True
                         leds.set_phase(LED_WAKEWORD)
@@ -452,8 +519,13 @@ def run() -> None:
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    if wake_hits >= current_min_hits and wake_peak >= current_min_peak:
+                    if wake_hits >= current_min_hits and wake_peak >= _required_peak(wake_hits, current_min_peak, current_min_peak_short):
                         print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
+                        trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        trigger_audio_bundle = current_wakeword.bundle
+                        _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                        wake_ring.clear()
+                        wake_ring_samples = 0
                         ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                         if os.path.exists(ack_path):
                             print("🔊 Playing acknowledgement...")
@@ -475,7 +547,7 @@ def run() -> None:
                         # Zuordnung pro Modell.
                         last_scores = " ".join(f"{s:.2f}" for s in list(recent_scores)[-5:])
                         peak_str = (
-                            f", Peak {wake_peak:.2f} < {current_min_peak:.2f}"
+                            f", Peak {wake_peak:.2f} < {_required_peak(wake_hits, current_min_peak, current_min_peak_short):.2f}"
                             if wake_hits >= current_min_hits
                             else ""
                         )
@@ -493,6 +565,11 @@ def run() -> None:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
                     print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)} (Timeout){beam_str}")
+                    trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    trigger_audio_bundle = current_wakeword.bundle
+                    _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                    wake_ring.clear()
+                    wake_ring_samples = 0
                     ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     if os.path.exists(ack_path):
                         print("🔊 Spiele Ja? ...")
@@ -543,6 +620,9 @@ def run() -> None:
                         "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
                         "followup_round": followup_round,
                     }
+                    if trigger_audio_id is not None:
+                        _save_trigger_audio(recorded_chunks, trigger_audio_bundle, "rec", trigger_audio_id)
+                        trigger_audio_id = None
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
