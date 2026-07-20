@@ -19,8 +19,36 @@ from voice_assistant.config import (
 from voice_assistant.services.speaches import SpeachesState
 
 
-def chunks_to_wav_bytes(audio_chunks: list[np.ndarray]) -> bytes:
+def normalize_peak(
+    audio: np.ndarray, target: float = 0.7, max_gain: float = 20.0
+) -> np.ndarray:
+    """Hebt leise Aufnahmen vor der STT an — nur verstärkend, nie leiser.
+
+    Der ReSpeaker liefert konstant niedrigen Pegel (~-19 dBFS gemessen); auf so
+    schwachem Signal halluziniert Whisper (kleines Modell driftet sogar ins
+    Englische, größeres ins falsche Deutsch). Peak-Normalisierung auf `target`
+    (Anteil von Full-Scale ≈ -3 dBFS) behebt genau diese Fehlerklasse und ist
+    modell-agnostisch. Der Gain ist gedeckelt, damit reine Rausch-Böden (kein
+    Sprach-Peak) nicht auf Vollaussteuerung aufgeblasen werden.
+    """
+    if audio.size == 0:
+        return audio
+    peak = float(np.abs(audio).max())
+    if peak < 1.0:
+        return audio
+    gain = min(max_gain, (target * 32767.0) / peak)
+    if gain <= 1.0:
+        return audio
+    print(f"🔊 STT-Normalisierung: Peak {peak:.0f} → Gain {gain:.1f}×")
+    return np.clip(audio.astype(np.float32) * gain, -32768.0, 32767.0).astype(np.int16)
+
+
+def chunks_to_wav_bytes(
+    audio_chunks: list[np.ndarray], normalize: bool = False
+) -> bytes:
     audio = np.concatenate(audio_chunks)
+    if normalize:
+        audio = normalize_peak(audio)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
@@ -104,7 +132,7 @@ class LocalWhisperStt:
         print(f"✅ faster-whisper '{WHISPER_MODEL}' ready")
 
     def transcribe(self, audio_chunks: list[np.ndarray]) -> str:
-        audio = np.concatenate(audio_chunks)
+        audio = normalize_peak(np.concatenate(audio_chunks))
         audio_float = audio.astype(np.float32) / 32768.0
         segments, info = self.model.transcribe(
             audio_float,
@@ -130,7 +158,7 @@ class SttPipeline:
     def run(self, audio_chunks: list[np.ndarray], out: queue.Queue) -> None:
         if self.speaches.state.stt_ok():
             print("🔄 STT: trying Speaches...")
-            wav_bytes = chunks_to_wav_bytes(audio_chunks)
+            wav_bytes = chunks_to_wav_bytes(audio_chunks, normalize=True)
             text = self.speaches.transcribe(wav_bytes)
             if text is not None:
                 out.put(text)
