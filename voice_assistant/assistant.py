@@ -66,11 +66,8 @@ from voice_assistant.state import (
     STATE_RECORDING,
     STATE_WAITING,
     current_state,
-    mood_queue,
     pending_reply_text,
     reply_done_event,
-    speaker_queue,
-    stt_queue,
     voice_state,
 )
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
@@ -415,6 +412,15 @@ def run() -> None:
     state = STATE_LISTENING
     state_start = time.time()
     recorded_chunks: list = []
+    # Turn-eigene Ergebnis-Queues: pro Aufnahme frisch erzeugt und an die
+    # Worker übergeben. Bricht die State-Machine einen Turn ab (STT-Timeout,
+    # Diarization-Join-Timeout), schreiben die verwaisten Worker in diese –
+    # dann nicht mehr referenzierten – Objekte, statt ein Ergebnis in einen
+    # späteren Turn durchsickern zu lassen (früher: prozessweite FIFOs, die
+    # sich nach einem einzigen verpassten Ergebnis dauerhaft um eins versetzten).
+    turn_stt_q: queue.Queue | None = None
+    turn_spk_q: queue.Queue | None = None
+    turn_mood_q: queue.Queue | None = None
     silence_counter = 0
     max_internal_pause = 0                  # längste Pause, die durch Sprache wieder aufging
     speech_detected = False
@@ -626,9 +632,12 @@ def run() -> None:
                     if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
-                        workers.start_stt(recorded_chunks.copy())
-                        workers.start_diarization(recorded_chunks.copy())
-                        workers.start_mood(recorded_chunks.copy())
+                        turn_stt_q = queue.Queue()
+                        turn_spk_q = queue.Queue()
+                        turn_mood_q = queue.Queue()
+                        workers.start_stt(recorded_chunks.copy(), turn_stt_q)
+                        workers.start_diarization(recorded_chunks.copy(), turn_spk_q)
+                        workers.start_mood(recorded_chunks.copy(), turn_mood_q)
                     else:
                         print(f"[{now:.1f}s] ⚠️  No speech detected")
                         leds.set_phase(LED_IDLE)
@@ -638,16 +647,16 @@ def run() -> None:
             # --- PROCESSING (STT running) ---
             elif state == STATE_PROCESSING:
                 try:
-                    text = stt_queue.get_nowait()
+                    text = turn_stt_q.get_nowait()
                     if _is_stop_command(text, followup_round):
                         print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
                         # Diarization- und Mood-Resultat verwerfen damit Queues nicht überlaufen
                         try:
-                            speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
                         try:
-                            mood_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
                         leds.set_phase(LED_IDLE)
@@ -656,12 +665,12 @@ def run() -> None:
                     elif text:
                         _save_last_recording(recorded_chunks)
                         try:
-                            spk = speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             print(f"[{now:.1f}s] ⚠️  Diarization timeout — Sprecher unbekannt")
                             spk = None
                         try:
-                            mood = mood_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            mood = turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             print(f"[{now:.1f}s] ⚠️  Mood timeout — Stimmung unbekannt")
                             mood = None
@@ -703,11 +712,11 @@ def run() -> None:
                     else:
                         print(f"[{now:.1f}s] ⚠️  Empty transcription")
                         try:
-                            speaker_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
                         try:
-                            mood_queue.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
                         leds.set_phase(LED_IDLE)
@@ -717,6 +726,10 @@ def run() -> None:
                     if now - state_start > 60.0:
                         print("⚠️  STT timeout!")
                         leds.set_phase(LED_ERROR)
+                        # Turn abgebrochen: verwaiste Worker schreiben in diese
+                        # (nun dereferenzierten) Queues — nichts sickert durch.
+                        turn_stt_q = turn_spk_q = turn_mood_q = None
+                        followup_round = 0
                         state = STATE_LISTENING
 
             # --- WAITING (for OpenClaw reply + TTS) ---
@@ -811,9 +824,12 @@ def run() -> None:
                     ):
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
-                        workers.start_stt(recorded_chunks.copy())
-                        workers.start_diarization(recorded_chunks.copy())
-                        workers.start_mood(recorded_chunks.copy())
+                        turn_stt_q = queue.Queue()
+                        turn_spk_q = queue.Queue()
+                        turn_mood_q = queue.Queue()
+                        workers.start_stt(recorded_chunks.copy(), turn_stt_q)
+                        workers.start_diarization(recorded_chunks.copy(), turn_spk_q)
+                        workers.start_mood(recorded_chunks.copy(), turn_mood_q)
                     else:
                         print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech (VAD {vad_ratio:.0%})")
                         leds.set_phase(LED_IDLE)

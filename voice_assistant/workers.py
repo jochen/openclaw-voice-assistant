@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import queue
 import threading
 
 from voice_assistant.services import openclaw, telegram
@@ -13,11 +14,8 @@ from voice_assistant.services.tts import ReplySpeaker, ThinkingWorker
 from voice_assistant.state import (
     STATE_WAITING,
     current_state,
-    mood_queue,
     pending_reply_text,
     reply_done_event,
-    speaker_queue,
-    stt_queue,
 )
 
 
@@ -57,58 +55,69 @@ class Workers:
         # für späteren Zugriff durch OpenClaw-Tools (HTTP-Endpoint), falls nötig.
         self.voice_controller = voice_controller
 
-    def start_stt(self, audio_chunks: list) -> threading.Thread:
+    def start_stt(self, audio_chunks: list, out_q: queue.Queue) -> threading.Thread:
+        """STT im Hintergrund; Ergebnis landet in out_q.
+
+        out_q ist eine turn-eigene Queue (assistant.py erzeugt sie pro Aufnahme).
+        So kann das Ergebnis eines abgebrochenen Turns (z.B. STT-Timeout in der
+        State-Machine) nie in einen späteren Turn durchsickern — der verwaiste
+        Worker schreibt in eine nicht mehr referenzierte Queue.
+        """
         t = threading.Thread(
             target=self.stt.run,
-            args=(audio_chunks, stt_queue),
+            args=(audio_chunks, out_q),
             daemon=True,
         )
         t.start()
         return t
 
-    def start_diarization(self, audio_chunks: list) -> threading.Thread | None:
-        """Diarization parallel zur STT. Ergebnis landet in speaker_queue.
+    def start_diarization(
+        self, audio_chunks: list, out_q: queue.Queue
+    ) -> threading.Thread | None:
+        """Diarization parallel zur STT. Ergebnis landet in out_q (turn-eigen).
 
         Wenn kein Diarizer konfiguriert ist, wird sofort None in die Queue
         geschoben — die State-Machine kann sich darauf verlassen, immer ein
         Element abzuholen.
         """
         if self.diarizer is None:
-            speaker_queue.put(None)
+            out_q.put(None)
             return None
         t = threading.Thread(
             target=self._diarize_worker,
-            args=(audio_chunks,),
+            args=(audio_chunks, out_q),
             daemon=True,
         )
         t.start()
         return t
 
-    def _diarize_worker(self, audio_chunks: list) -> None:
+    def _diarize_worker(self, audio_chunks: list, out_q: queue.Queue) -> None:
         wav_bytes = chunks_to_wav_bytes(audio_chunks)
-        run_diarization(self.diarizer, wav_bytes, speaker_queue)
+        run_diarization(self.diarizer, wav_bytes, out_q)
 
-    def start_mood(self, audio_chunks: list) -> threading.Thread | None:
-        """Stimmungsanalyse parallel zur STT. Ergebnis landet in mood_queue.
+    def start_mood(
+        self, audio_chunks: list, out_q: queue.Queue
+    ) -> threading.Thread | None:
+        """Stimmungsanalyse parallel zur STT. Ergebnis landet in out_q (turn-eigen).
 
         Wenn kein MoodAnalyzer konfiguriert ist, wird sofort None in die Queue
         geschoben — die State-Machine kann sich darauf verlassen, immer ein
         Element abzuholen.
         """
         if self.mood_analyzer is None:
-            mood_queue.put(None)
+            out_q.put(None)
             return None
         t = threading.Thread(
             target=self._mood_worker,
-            args=(audio_chunks,),
+            args=(audio_chunks, out_q),
             daemon=True,
         )
         t.start()
         return t
 
-    def _mood_worker(self, audio_chunks: list) -> None:
+    def _mood_worker(self, audio_chunks: list, out_q: queue.Queue) -> None:
         wav_bytes = chunks_to_wav_bytes(audio_chunks)
-        run_mood(self.mood_analyzer, wav_bytes, mood_queue)
+        run_mood(self.mood_analyzer, wav_bytes, out_q)
 
     def start_confirmation(self, recognized_text: str) -> threading.Thread:
         t = threading.Thread(

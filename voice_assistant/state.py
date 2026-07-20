@@ -99,9 +99,11 @@ reply_done_event = threading.Event()
 pending_reply = threading.Event()
 pending_reply_text: list[str | None] = [None]
 
-stt_queue: "queue.Queue[str | None]" = queue.Queue()
-speaker_queue: "queue.Queue[str | None]" = queue.Queue()
-mood_queue: "queue.Queue[str | None]" = queue.Queue()
+# STT/Diarization/Mood laufen über turn-eigene Queues (assistant.py erzeugt sie
+# pro Aufnahme frisch und übergibt sie an die Worker). Bewusst KEINE
+# prozessweiten FIFOs mehr: ein einziges nicht abgeholtes Ergebnis (z.B. nach
+# STT- oder Diarization-Join-Timeout) hätte eine geteilte Queue dauerhaft um
+# eins versetzt, sodass jeder Turn das Transkript des vorherigen verarbeitet.
 
 # Extern angefragte Ansagen (speak_server → announce_worker)
 announce_queue: "queue.Queue[str]" = queue.Queue()
