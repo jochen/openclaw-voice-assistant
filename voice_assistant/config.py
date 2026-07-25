@@ -95,6 +95,24 @@ class LedsConfig:
 
 
 @dataclass
+class ActuatorConfig:
+    """Voice-Aktuator v1 — schneller lokaler Schalt-Pfad (siehe ACTUATOR_V1_PLAN.md
+    und voice_assistant/services/actuator.py). Default enabled=False: Profile ohne
+    den `actuator:`-Block verhalten sich exakt wie vor diesem Umbau."""
+    enabled: bool = False
+    base_url: str = "http://<hausautomation>:1880/voiceact"
+    # leer -> Default <repo-root>/voiceact-token.txt (siehe _parse_profile,
+    # aus PROJECT_DIR abgeleitet statt hart kodiert)
+    token_file: str = ""
+    llm_url: str = "http://localhost:8090/v1/chat/completions"
+    llm_timeout: float = 5.0
+    intent_timeout: float = 1.5
+    mqtt_host: str = "<hausautomation>"
+    mqtt_port: int = 1883
+    refresh_poll_sec: int = 600
+
+
+@dataclass
 class WakewordConfig:
     """Ein aktives Wakeword + sein Routing-Ziel (Multi-Wakeword, Meilenstein 1
     der Wakeword-Studio-Spec, siehe Wakeword_Studio_Spec.md Teil 2).
@@ -174,6 +192,10 @@ class Profile:
     # Wakewords — fehlt der Block in config.yaml: ein Eintrag 'hey_jarvis'
     # mit Profil-Defaults (Rückwärtskompatibilität, siehe _parse_wakewords).
     wakewords: list = field(default_factory=list)
+
+    # Voice-Aktuator v1 — fehlt der Block: enabled=False, Profil verhält sich
+    # wie bisher (siehe ActuatorConfig).
+    actuator: ActuatorConfig = field(default_factory=ActuatorConfig)
 
 
 def _load_yaml() -> dict[str, Any]:
@@ -309,6 +331,21 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         respeaker_ring_enabled=bool(ring_raw.get("enabled", False)),
     )
 
+    # --- Aktuator: neues Schema, analog zum leds-Block ---
+    actuator_raw = raw.get("actuator") or {}
+    _dact = ActuatorConfig()
+    actuator = ActuatorConfig(
+        enabled=bool(actuator_raw.get("enabled", _dact.enabled)),
+        base_url=str(actuator_raw.get("base_url", _dact.base_url)),
+        token_file=str(actuator_raw.get("token_file") or os.path.join(PROJECT_DIR, "voiceact-token.txt")),
+        llm_url=str(actuator_raw.get("llm_url", _dact.llm_url)),
+        llm_timeout=float(actuator_raw.get("llm_timeout", _dact.llm_timeout)),
+        intent_timeout=float(actuator_raw.get("intent_timeout", _dact.intent_timeout)),
+        mqtt_host=str(actuator_raw.get("mqtt_host", _dact.mqtt_host)),
+        mqtt_port=int(actuator_raw.get("mqtt_port", _dact.mqtt_port)),
+        refresh_poll_sec=int(actuator_raw.get("refresh_poll_sec", _dact.refresh_poll_sec)),
+    )
+
     locale_raw = raw.get("locale") or {}
     _dloc = LocaleConfig()
     locale = LocaleConfig(
@@ -340,6 +377,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         silence_seconds=float(raw.get("silence_seconds", 2.0)),
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
         locale=locale,
+        actuator=actuator,
         wakewords=_parse_wakewords(
             raw,
             openclaw_session=str(raw.get("openclaw_session", "")),

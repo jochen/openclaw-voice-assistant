@@ -7,6 +7,7 @@ import os
 import queue
 import re
 import time
+import uuid
 from collections import deque
 from datetime import datetime
 
@@ -38,6 +39,7 @@ from voice_assistant.config import (
     load_profile,
 )
 from voice_assistant.services import speaches as speaches_mod
+from voice_assistant.services.actuator import Actuator
 from voice_assistant.services.diarization import SpeachesDiarizer
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
@@ -94,6 +96,21 @@ def _is_stop_command(text: str, followup_round: int) -> bool:
     if followup_round > 0:
         return bool(_STOP_PATTERN_FOLLOWUP.search(text))
     return bool(_STOP_PATTERN_FIRST.search(text))
+
+
+# Aktuator-Handshake: Ja/Nein-Antwort auf eine Rückfrage (z.B. "alle Rollos"
+# bei kosten=hoch). Nein zuerst prüfen — bei Mehrdeutigkeit lieber sicher
+# abbrechen als versehentlich schalten.
+_YES_PATTERN = re.compile(r'\b(ja|jawohl|jo|joa|okay|ok|klar|genau|richtig|bestätige|bestätigt|sicher)\b', re.IGNORECASE)
+_NO_PATTERN = re.compile(r'\b(nein|nee|ne|nicht|abbrechen|stopp?|halt|lass)\b', re.IGNORECASE)
+
+
+def _is_no(text: str) -> bool:
+    return bool(text) and bool(_NO_PATTERN.search(text))
+
+
+def _is_yes(text: str) -> bool:
+    return bool(text) and bool(_YES_PATTERN.search(text))
 
 
 def _save_last_recording(audio_chunks: list) -> None:
@@ -408,6 +425,24 @@ def run() -> None:
         telegram_chat_id=profile.telegram_chat_id,
     )
 
+    # --- Voice-Aktuator v1 (schneller lokaler Schalt-Pfad, siehe
+    # ACTUATOR_V1_PLAN.md) — fehlt/schlägt fehl: Assistant läuft unverändert
+    # weiter (Brain-Pfad wie vor diesem Umbau), Fehler dürfen den Start nie
+    # verhindern.
+    actuator: Actuator | None = None
+    if profile.actuator.enabled:
+        try:
+            actuator = Actuator(profile.actuator)
+            actuator.start()
+            if actuator.ready:
+                n_ziele = len(actuator.digest or {})
+                print(f"🔌 Aktuator aktiv — {n_ziele} Ziele, Version {actuator.version}")
+            else:
+                print("⚠️  Aktuator aktiviert, aber initialer refresh() fehlgeschlagen — startet ohne Ziel-Vokabular, Poll/MQTT versuchen es weiter")
+        except Exception as e:
+            print(f"⚠️  Aktuator-Start fehlgeschlagen: {e}")
+            actuator = None
+
     # --- State-Machine ---
     state = STATE_LISTENING
     state_start = time.time()
@@ -459,6 +494,11 @@ def run() -> None:
     followup_rms_sum = 0.0
     followup_rms_count = 0
     followup_vad_speech = 0
+    # Hält beim Aktuator-Handshake {"intent":..., "request_id":...} zwischen
+    # Rückfrage und der ja/nein-Antwort im nächsten Turn. Muss überall, wo ein
+    # Handshake ins Leere läuft, wieder auf None zurückgesetzt werden — sonst
+    # sickert er in einen späteren Turn durch.
+    pending_confirm: dict | None = None
 
     _cleanup_trigger_audio()
 
@@ -648,7 +688,46 @@ def run() -> None:
             elif state == STATE_PROCESSING:
                 try:
                     text = turn_stt_q.get_nowait()
-                    if _is_stop_command(text, followup_round):
+                    if pending_confirm is not None:
+                        # Ja/Nein-Antwort auf eine Aktuator-Rückfrage (Handshake).
+                        try:
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        confirm_intent = pending_confirm["intent"]
+                        confirm_request_id = pending_confirm["request_id"]
+                        if _is_no(text):
+                            print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage verneint ('{text}') → abgebrochen")
+                            speaker.speak("Okay, dann nicht.")
+                        elif _is_yes(text):
+                            resp = actuator.execute(confirm_intent, confirm_request_id, bestaetigt=True)
+                            if resp is None:
+                                print(f"[{now:.1f}s] 🔌 Aktuator: Bestätigung — Haussteuerung antwortet nicht")
+                                speaker.speak("Die Haussteuerung antwortet nicht.")
+                            else:
+                                status = resp.get("status")
+                                print(f"[{now:.1f}s] 🔌 Aktuator: Bestätigung ('{text}') → {status}")
+                                speaker.speak(resp.get("gesprochen") or "Erledigt.")
+                        else:
+                            print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage-Antwort unverständlich ('{text}') → abgebrochen")
+                            speaker.speak("Ich habe das nicht verstanden. Abgebrochen.")
+                        pending_confirm = None
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        # Über PAUSE zurück: speaker.speak() blockiert die
+                        # Hauptschleife, das Mikro puffert derweil die eigene
+                        # Ansage mit. PAUSE macht audio_source.flush() +
+                        # wakeword.reset(), sonst läuft der TTS-Nachhall in die
+                        # Wakeword-Erkennung. pending_reply_text leeren, damit
+                        # PAUSE keine Follow-up-Runde startet.
+                        pending_reply_text[0] = None
+                        state = STATE_PAUSE
+                        state_start = time.time()
+                    elif _is_stop_command(text, followup_round):
                         print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
                         # Diarization- und Mood-Resultat verwerfen damit Queues nicht überlaufen
                         try:
@@ -663,52 +742,130 @@ def run() -> None:
                         followup_round = 0
                         state = STATE_LISTENING
                     elif text:
-                        _save_last_recording(recorded_chunks)
-                        try:
-                            spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
-                        except queue.Empty:
-                            print(f"[{now:.1f}s] ⚠️  Diarization timeout — Sprecher unbekannt")
-                            spk = None
-                        try:
-                            mood = turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
-                        except queue.Empty:
-                            print(f"[{now:.1f}s] ⚠️  Mood timeout — Stimmung unbekannt")
-                            mood = None
-                        spk_label = spk if spk else "unbekannt"
-                        if isinstance(mood, dict):
-                            mood_label = f"a{mood.get('arousal', 0):.2f} v{mood.get('valence', 0):.2f} d{mood.get('dominance', 0):.2f}"
+                        # --- Aktuator-Vorlauf: Schaltkommando? Dann Brain überspringen. ---
+                        intent = None
+                        if actuator is not None and actuator.ready:
+                            intent = actuator.classify(text)
+                        if intent is not None and actuator.is_actionable(intent):
+                            try:
+                                turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                pass
+                            try:
+                                turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                pass
+                            _save_last_recording(recorded_chunks)
+                            if endpoint_meta:
+                                endpoint_meta.update({
+                                    "transcript": text,
+                                    "ends_clean": _ends_clean(text),
+                                })
+                                _log_endpoint(endpoint_meta)
+                                endpoint_meta = {}
+                            request_id = str(uuid.uuid4())
+                            resp = actuator.execute(intent, request_id)
+                            ziel = intent.get("ziel")
+                            aktion = intent.get("aktion")
+                            if resp is None:
+                                print(
+                                    f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
+                                    f"({actuator.last_latency_ms:.0f} ms) → keine Antwort"
+                                )
+                                speaker.speak("Die Haussteuerung antwortet nicht.")
+                                leds.set_phase(LED_ERROR)
+                                followup_round = 0
+                                pending_reply_text[0] = None
+                                state = STATE_PAUSE
+                                state_start = time.time()
+                            else:
+                                status = resp.get("status")
+                                print(
+                                    f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
+                                    f"({actuator.last_latency_ms:.0f} ms) → {status}"
+                                )
+                                if status == "zurueckgestellt":
+                                    # Handshake: Rückfrage sprechen, direkt in
+                                    # FOLLOWUP wechseln (nicht über PAUSE).
+                                    speaker.speak(resp.get("gesprochen") or "Bist du sicher?")
+                                    pending_confirm = {"intent": intent, "request_id": request_id}
+                                    audio_source.flush()
+                                    wakeword.reset()
+                                    if os.path.exists(FOLLOWUP_BEEP_PATH):
+                                        audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
+                                    audio_source.flush()
+                                    leds.set_phase(LED_FOLLOWUP)
+                                    state = STATE_FOLLOWUP
+                                    state_start = time.time()
+                                    recorded_chunks = []
+                                    silence_counter = 0
+                                    max_internal_pause = 0
+                                    speech_detected = False
+                                    followup_rms_sum = 0.0
+                                    followup_rms_count = 0
+                                    followup_vad_speech = 0
+                                else:
+                                    # ausgefuehrt | abgelehnt | unbekanntes_ziel:
+                                    # Node-RED liefert 'gesprochen' fertig formuliert.
+                                    speaker.speak(resp.get("gesprochen") or "")
+                                    leds.set_phase(LED_IDLE)
+                                    followup_round = 0
+                                    pending_reply_text[0] = None
+                                    state = STATE_PAUSE
+                                    state_start = time.time()
                         else:
-                            mood_label = ""
-                        if endpoint_meta:
-                            endpoint_meta.update({
-                                "speaker": spk_label,
-                                "transcript": text,
-                                "ends_clean": _ends_clean(text),
-                            })
-                            _log_endpoint(endpoint_meta)
-                            endpoint_meta = {}
-                        print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
-                        # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
-                        # last_speaker nur bei positiver ID überschreiben — ein
-                        # nicht zuordenbarer Kurz-Follow-up (spk=None) soll den
-                        # zuletzt erkannten Sprecher (= Besitzer einer manuell
-                        # gesetzten Stimme) nicht verlieren.
-                        if spk:
-                            voice_state.set_last_speaker(spk)
-                        voice_controller.apply_speaker_default(spk)
-                        leds.set_phase(LED_CONFIRMATION)
-                        workers.start_confirmation(text)
-                        reply_done_event.clear()
-                        pending_reply_text[0] = None
-                        thinking.start()
-                        workers.start_openclaw_turn(
-                            text, speaker=spk, mood=mood, session=current_wakeword.session
-                        )
-                        state = STATE_WAITING
-                        state_start = now
-                        print(
-                            f"[{now:.1f}s] ⏳ Waiting for reply (max {OPENCLAW_OVERALL_TIMEOUT}s)..."
-                        )
+                            if actuator is not None and actuator.ready:
+                                print(
+                                    f"[{now:.1f}s] 🔌 Aktuator: kein Kommando "
+                                    f"({actuator.last_latency_ms:.0f} ms) → Brain"
+                                )
+                            # --- Brain-Pfad wie bisher (unverändert) ---
+                            _save_last_recording(recorded_chunks)
+                            try:
+                                spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                print(f"[{now:.1f}s] ⚠️  Diarization timeout — Sprecher unbekannt")
+                                spk = None
+                            try:
+                                mood = turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                print(f"[{now:.1f}s] ⚠️  Mood timeout — Stimmung unbekannt")
+                                mood = None
+                            spk_label = spk if spk else "unbekannt"
+                            if isinstance(mood, dict):
+                                mood_label = f"a{mood.get('arousal', 0):.2f} v{mood.get('valence', 0):.2f} d{mood.get('dominance', 0):.2f}"
+                            else:
+                                mood_label = ""
+                            if endpoint_meta:
+                                endpoint_meta.update({
+                                    "speaker": spk_label,
+                                    "transcript": text,
+                                    "ends_clean": _ends_clean(text),
+                                })
+                                _log_endpoint(endpoint_meta)
+                                endpoint_meta = {}
+                            print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
+                            # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
+                            # last_speaker nur bei positiver ID überschreiben — ein
+                            # nicht zuordenbarer Kurz-Follow-up (spk=None) soll den
+                            # zuletzt erkannten Sprecher (= Besitzer einer manuell
+                            # gesetzten Stimme) nicht verlieren.
+                            if spk:
+                                voice_state.set_last_speaker(spk)
+                            voice_controller.apply_speaker_default(spk)
+                            leds.set_phase(LED_CONFIRMATION)
+                            workers.start_confirmation(text)
+                            reply_done_event.clear()
+                            pending_reply_text[0] = None
+                            thinking.start()
+                            workers.start_openclaw_turn(
+                                text, speaker=spk, mood=mood, session=current_wakeword.session
+                            )
+                            state = STATE_WAITING
+                            state_start = now
+                            print(
+                                f"[{now:.1f}s] ⏳ Waiting for reply (max {OPENCLAW_OVERALL_TIMEOUT}s)..."
+                            )
                     else:
                         print(f"[{now:.1f}s] ⚠️  Empty transcription")
                         try:
@@ -729,6 +886,7 @@ def run() -> None:
                         # Turn abgebrochen: verwaiste Worker schreiben in diese
                         # (nun dereferenzierten) Queues — nichts sickert durch.
                         turn_stt_q = turn_spk_q = turn_mood_q = None
+                        pending_confirm = None
                         followup_round = 0
                         state = STATE_LISTENING
 
@@ -833,6 +991,7 @@ def run() -> None:
                     else:
                         print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech (VAD {vad_ratio:.0%})")
                         leds.set_phase(LED_IDLE)
+                        pending_confirm = None
                         followup_round = 0
                         state = STATE_LISTENING
 

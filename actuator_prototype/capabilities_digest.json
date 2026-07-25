@@ -1,0 +1,893 @@
+{
+  "version": "e3d6af78",
+  "ziele": [
+    {
+      "id": "kuechenlicht",
+      "namen": [
+        "Küchenlicht",
+        "Licht in der Küche"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "wohnzimmerrollo",
+      "namen": [
+        "Wohnzimmerrollo",
+        "Rollo im Wohnzimmer"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "felixheizung",
+      "namen": [
+        "Felixheizung",
+        "Felix seine Heizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "alle_rollos",
+      "namen": [
+        "alle Rollos"
+      ],
+      "typ": "gruppe",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "rosazimmerrollo",
+      "namen": [
+        "Rosazimmerrollo",
+        "Rollo im Rosazimmer"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "felixrollo",
+      "namen": [
+        "Felixrollo",
+        "Rollo bei Felix"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "balkonrollo",
+      "namen": [
+        "Balkonrollo",
+        "Rollo am Balkon"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "majarollo",
+      "namen": [
+        "Majarollo",
+        "Rollo bei Maja"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "buerorollo",
+      "namen": [
+        "Bürorollo",
+        "Rollo im Büro"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "badrollo",
+      "namen": [
+        "Badrollo",
+        "Rollo im Bad"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "klorollo",
+      "namen": [
+        "Klorollo",
+        "Rollo im Klo"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "esstischrollo_links",
+      "namen": [
+        "Esstischrollo links",
+        "Esszimmerrollo links"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "esstischrollo_rechts",
+      "namen": [
+        "Esstischrollo rechts",
+        "Esszimmerrollo rechts"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "kuechenrollo_links",
+      "namen": [
+        "Küchenrollo links"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "kuechenrollo_rechts",
+      "namen": [
+        "Küchenrollo rechts"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "tuerrollo",
+      "namen": [
+        "Türrollo"
+      ],
+      "typ": "rollo",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "esstischrollos",
+      "namen": [
+        "Esstischrollos"
+      ],
+      "typ": "gruppe",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "kuechenrollos",
+      "namen": [
+        "Küchenrollos"
+      ],
+      "typ": "gruppe",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "rollos_im_sueden",
+      "namen": [
+        "Rollos im Süden"
+      ],
+      "typ": "gruppe",
+      "aktionen": [
+        "auf",
+        "zu",
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "prozent",
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "id": "nachtruhe",
+      "namen": [
+        "Nachtruhe"
+      ],
+      "typ": "szene",
+      "aktionen": [
+        "aktivieren"
+      ],
+      "wert": null
+    },
+    {
+      "id": "rollostop",
+      "namen": [
+        "Rollostop",
+        "Stop alle Rollos"
+      ],
+      "typ": "routine",
+      "aktionen": [
+        "starten"
+      ],
+      "wert": null
+    },
+    {
+      "id": "spuelenlicht",
+      "namen": [
+        "Spülenlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "kuechenarbeitsplattenlicht",
+      "namen": [
+        "Küchenarbeitsplattenlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "arbeitslicht",
+      "namen": [
+        "Arbeitslicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "kellereckraumlicht",
+      "namen": [
+        "Kellereckraumlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "flurlicht",
+      "namen": [
+        "Flurlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "flurlichtoben",
+      "namen": [
+        "Flurlichtoben",
+        "Flurlicht oben"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "buerolicht",
+      "namen": [
+        "Bürolicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "rosazimmerlicht",
+      "namen": [
+        "Rosazimmerlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "majalicht",
+      "namen": [
+        "Majalicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "felixlicht",
+      "namen": [
+        "Felixlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "badlicht",
+      "namen": [
+        "Badlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "badlichtoben",
+      "namen": [
+        "Badlichtoben",
+        "Badlicht oben"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "badspiegel_licht",
+      "namen": [
+        "Badspiegel Licht",
+        "Badspiegellicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "wohnzimmerlicht",
+      "namen": [
+        "Wohnzimmerlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "tischlicht",
+      "namen": [
+        "Tischlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "grosseszimmerlicht",
+      "namen": [
+        "Großeszimmerlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "kleineszimmerlicht",
+      "namen": [
+        "Kleineszimmerlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "maja_tischlicht",
+      "namen": [
+        "Maja Tischlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "maja_stehlampe",
+      "namen": [
+        "Maja Stehlampe"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "kuechenleiste",
+      "namen": [
+        "Küchenleiste"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "kugellicht",
+      "namen": [
+        "Kugellicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "sofalicht",
+      "namen": [
+        "Sofalicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "basteltischlicht",
+      "namen": [
+        "Basteltischlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "sessellicht",
+      "namen": [
+        "Sessellicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "fernsehlicht",
+      "namen": [
+        "Fernsehlicht"
+      ],
+      "typ": "licht",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "spiegelheizung",
+      "namen": [
+        "Spiegelheizung"
+      ],
+      "typ": "schalter",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "bueroheizung",
+      "namen": [
+        "Büroheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "rosazimmerheizung",
+      "namen": [
+        "Rosazimmerheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "esstischheizung",
+      "namen": [
+        "Esstischheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "badobenheizung",
+      "namen": [
+        "Badobenheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "wohnzimmerheizung",
+      "namen": [
+        "Wohnzimmerheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "schlafzimmerheizung",
+      "namen": [
+        "Schlafzimmerheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "kleineszimmerheizung",
+      "namen": [
+        "Kleineszimmerheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "grosseszimmerheizung",
+      "namen": [
+        "Großeszimmerheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "kloheizung",
+      "namen": [
+        "Kloheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "flurheizung",
+      "namen": [
+        "Flurheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "badheizung",
+      "namen": [
+        "Badheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "majaheizung",
+      "namen": [
+        "Majaheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "kellerheizung",
+      "namen": [
+        "Kellerheizung"
+      ],
+      "typ": "heizung",
+      "aktionen": [
+        "setzen"
+      ],
+      "wert": {
+        "einheit": "grad",
+        "min": 5,
+        "max": 28
+      }
+    },
+    {
+      "id": "regenwasser_weiche",
+      "namen": [
+        "Regenwasser Weiche",
+        "Regenwasserweiche",
+        "Regenwasser"
+      ],
+      "typ": "schalter",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    },
+    {
+      "id": "fussbodenheizung_badoben",
+      "namen": [
+        "Fussbodenheizung Bad oben",
+        "Fussbodenheizung"
+      ],
+      "typ": "schalter",
+      "aktionen": [
+        "ein",
+        "aus"
+      ],
+      "wert": null
+    }
+  ]
+}

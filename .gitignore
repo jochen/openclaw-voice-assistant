@@ -1,4 +1,7 @@
 config.yaml
+config.yaml.bak-*
+# Shared Secret für die Node-RED-Aktuator-Endpunkte (X-Actuator-Token)
+voiceact-token.txt
 esphome/secrets.yaml
 esphome/.esphome/
 esphome-venv/
