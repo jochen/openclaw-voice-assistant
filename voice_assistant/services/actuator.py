@@ -192,11 +192,18 @@ class Actuator:
         t.start()
 
     def _background_loop(self) -> None:
-        try:
-            import paho.mqtt.client as mqtt_mod
-        except ImportError:
-            print("⚠️  Aktuator: paho-mqtt nicht installiert — nur Poll-Fallback aktiv")
-            mqtt_mod = None
+        mqtt_mod = None
+        if not self.cfg.mqtt_host:
+            # Leerer Host = bewusst kein MQTT. Wichtig für Installationen ohne
+            # Broker: sonst liefe der Client endlos gegen einen Default-Host,
+            # den es dort gar nicht gibt. Der Poll deckt denselben Zweck ab,
+            # nur träger. Siehe ACTUATOR_INTERFACE.md.
+            print("🔌 Aktuator: kein mqtt_host konfiguriert — nur Poll-Fallback")
+        else:
+            try:
+                import paho.mqtt.client as mqtt_mod
+            except ImportError:
+                print("⚠️  Aktuator: paho-mqtt nicht installiert — nur Poll-Fallback aktiv")
 
         if mqtt_mod is not None:
             self._start_mqtt(mqtt_mod)

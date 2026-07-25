@@ -28,6 +28,7 @@ alten Skript:
 AudioSource (ALSA | ReSpeaker via ESPHome) → WakewordEngine
   → WebRTC VAD + recording
   → STT (Speaches, fallback: faster-whisper local)
+  → Voice-Aktuator: Schaltbefehl? → lokal ausführen (~0,5 s), Rest der Kette entfällt
   → Confirmation TTS in parallel thread ("Ich habe verstanden: ...")
   → POST /v1/responses to OpenClaw (vollständiger Agentic Loop, SSE-Streaming;
     non-streaming Fallback)
@@ -53,6 +54,7 @@ voice_assistant/
     openwakeword_engine.py
     respeaker.py         micro_wakeword vom ESP (Stub — Schritt 2)
   services/
+    actuator.py          Voice-Aktuator: Schaltbefehle lokal statt via Brain
     leds.py              WledLeds + RespeakerRing + LedDirector
     telegram.py
     speaches.py          SpeachesState + Start-Check
@@ -76,6 +78,28 @@ sofort mit Live-Trigger-Semantik (Streak ≥ 3 über Threshold, 1-Frame-Gap) und
 startet den Service danach wieder. Ablage in
 `models/wakewords/<bundle>/samples/<sprecher>/` — das ist ein eigenes privates
 Git-Repo (Familienstimmen, nie auf GitHub; siehe `samples/README.md` dort).
+
+## Voice-Aktuator (optional, pro Profil)
+
+Schaltbefehle („Mach das Küchenlicht an") werden direkt nach der STT von einem
+kleinen lokalen LLM zu einem JSON-Intent geformt und über zwei HTTP-Endpunkte
+ausgeführt — der Brain wird dabei übersprungen (~0,5 s statt mehrerer Sekunden).
+Ist der Satz kein Schaltbefehl, läuft alles unverändert weiter zum Brain.
+
+Aktiviert wird er per Profil-Block `actuator:` (Default `enabled: false` — ohne
+den Block verhält sich ein Profil wie vor dem Einbau). In dieser Installation
+liegt die ausführende Seite auf Node-RED (noderedpi4), **das ist aber keine
+Voraussetzung**.
+
+**Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
+implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige
+Vertrag beider Endpunkte samt Begründung jeder Design-Entscheidung, eine
+Mindest-Implementierung und eine Abnahme-Prüfung. Entstehungsgeschichte und
+Messungen: `ACTUATOR_V1_PLAN.md`.
+
+Turns, die der Aktuator selbst erledigt, sieht der Brain nicht — sie landen
+deshalb in `~/.openclaw/workspace/actuator_turns.log` (Rohmaterial für den
+geplanten Überwacher). Bewusst nicht in Telegram und nicht in der Haus-Session.
 
 ## Profile System
 
