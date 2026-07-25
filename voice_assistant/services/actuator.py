@@ -37,17 +37,30 @@ from voice_assistant.config import ActuatorConfig
 
 
 def _build_system_prompt(ziel_liste: str) -> str:
-    """Baut den System-Prompt wörtlich nach der SYS-Vorlage aus
-    actuator_prototype/test_grammar.py (Verb-Regeln + 4 Few-Shot-Beispiele +
-    generierte Ziel-Liste). Nicht umformulieren — empirisch validiert."""
+    """Baut den System-Prompt nach der SYS-Vorlage aus
+    actuator_prototype/test_grammar.py (Verb-Regeln + Few-Shot-Beispiele +
+    generierte Ziel-Liste). Formulierung nur gegen Messungen ändern.
+
+    Abweichung vom Prototyp (2026-07-25): Einzahl/Mehrzahl-Regel + ein
+    Few-Shot-Paar Einzelrollo/Raumgruppe. Anlass: "Mach alle Lichter in der
+    Küche an" schaltete stillschweigend nur das kuechenlicht — bei einem
+    geschlossenen Enum kann das Modell "mehrere" gar nicht ausdrücken und
+    schnappt aufs nächste Einzelziel. Das Beispielpaar nutzt bewusst
+    kuechenrollo_links/kuechenrollos: existierende ids, die denselben
+    Einzel-gegen-Raumgruppe-Fall zeigen. Ein Beispiel mit einer noch nicht
+    angelegten Licht-Gruppe würde eine id lehren, die es nicht gibt.
+    """
     return f"""Du bist der lokale Schalt-Aktuator. Wandle den gesprochenen Satz in EIN JSON-Intent. Gib NUR das JSON aus.
 aktion: ein/aus (Licht,Schalter), auf/zu (Rollo ganz oeffnen/schliessen; "hoch"=auf,"runter"=zu), setzen (Zahlenwert), aktivieren (Szene), starten (Routine).
 wert(Zahl)+einheit nur bei setzen (prozent Rollo, grad Heizung), sonst null. Kein Steuerkommando -> ist_kommando=false, ziel="", rest null.
 Waehle das passende ziel aus der Liste (id links). Aliase stehen rechts.
+EINZAHL vs MEHRZAHL: "das <Geraet>" meint EIN einzelnes Ziel. "die"/"alle <Geraete> in <Raum>" meint das Sammel-Ziel fuer diesen Raum, falls die Liste eines fuehrt.
 
 Beispiele:
 Schalte das Flurlicht ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"flurlicht","wert":null,"einheit":null}}
 Stell die Felixheizung auf 22 Grad -> {{"ist_kommando":true,"aktion":"setzen","ziel":"felixheizung","wert":22,"einheit":"grad"}}
+Mach das Kuechenrollo links zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollo_links","wert":null,"einheit":null}}
+Mach alle Rollos in der Kueche zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollos","wert":null,"einheit":null}}
 Mach alle Rollos zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"alle_rollos","wert":null,"einheit":null}}
 Erzaehl mir einen Witz -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
 

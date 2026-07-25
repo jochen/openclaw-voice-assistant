@@ -17,6 +17,7 @@ import webrtcvad
 from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
 from voice_assistant.config import (
+    ACTUATOR_LOG_PATH,
     DIARIZATION_JOIN_TIMEOUT,
     ENDPOINT_LOG_PATH,
     FOLLOWUP_BEEP_PATH,
@@ -170,6 +171,29 @@ def _log_wake_event(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:  # Logging darf den Loop nie crashen
         print(f"⚠️  wake-log: {exc}")
+
+
+def _log_actuator_turn(meta: dict) -> None:
+    """Spiegel-Kanal: eine JSONL-Zeile je Turn, den der Aktuator selbst erledigt hat.
+
+    Diese Turns überspringen den Brain — ohne diesen Log gäbe es sie nirgends,
+    und der geplante Überwacher könnte den einzigen Fall nicht sehen, der ihn
+    interessiert: Transkript gegen tatsächlich Ausgeführtes. Das MQTT-Echo
+    voiceact/executed allein reicht dafür nicht, es kennt den gesprochenen
+    Satz nicht ("alle Lichter" steht nirgends drin).
+
+    Bewusst NICHT in die Haus-Session und NICHT nach Telegram (Entscheidung
+    Jochen, 2026-07-25): Schaltvorgänge sollen weder die Gesprächs-Session
+    zumüllen noch im Chat auftauchen. Wer den Log konsumiert — Überwacher-Agent,
+    Auswertung, etwas anderes — ist offen; deshalb erst mal nur schreiben.
+    Best-effort.
+    """
+    try:
+        meta = {"ts": datetime.now().isoformat(timespec="seconds"), **meta}
+        with open(ACTUATOR_LOG_PATH, "a") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    except Exception as exc:  # Logging darf den Loop nie crashen
+        print(f"⚠️  aktuator-log: {exc}")
 
 
 def _cleanup_trigger_audio() -> None:
@@ -782,21 +806,42 @@ def run() -> None:
                             pass
                         confirm_intent = pending_confirm["intent"]
                         confirm_request_id = pending_confirm["request_id"]
+                        confirm_resp = None
                         if _is_no(text):
                             print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage verneint ('{text}') → abgebrochen")
                             speaker.speak("Okay, dann nicht.")
+                            antwort = "nein"
                         elif _is_yes(text):
-                            resp = actuator.execute(confirm_intent, confirm_request_id, bestaetigt=True)
-                            if resp is None:
+                            antwort = "ja"
+                            confirm_resp = actuator.execute(confirm_intent, confirm_request_id, bestaetigt=True)
+                            if confirm_resp is None:
                                 print(f"[{now:.1f}s] 🔌 Aktuator: Bestätigung — Haussteuerung antwortet nicht")
                                 speaker.speak("Die Haussteuerung antwortet nicht.")
                             else:
-                                status = resp.get("status")
+                                status = confirm_resp.get("status")
                                 print(f"[{now:.1f}s] 🔌 Aktuator: Bestätigung ('{text}') → {status}")
-                                speaker.speak(resp.get("gesprochen") or "Erledigt.")
+                                speaker.speak(confirm_resp.get("gesprochen") or "Erledigt.")
                         else:
                             print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage-Antwort unverständlich ('{text}') → abgebrochen")
                             speaker.speak("Ich habe das nicht verstanden. Abgebrochen.")
+                            antwort = "unverstanden"
+                        # Zweite Zeile zum selben request_id: der Überwacher
+                        # sieht so, ob eine Rückfrage bestätigt oder verworfen
+                        # wurde — sonst endete die Spur bei "zurueckgestellt".
+                        _log_actuator_turn({
+                            "phase": "handshake",
+                            "request_id": confirm_request_id,
+                            "transcript": pending_confirm.get("transcript"),
+                            "speaker": pending_confirm.get("speaker"),
+                            "antwort_transcript": text,
+                            "antwort": antwort,
+                            "intent": confirm_intent,
+                            "status": (confirm_resp or {}).get(
+                                "status", "abgebrochen" if antwort != "ja" else "keine_antwort"
+                            ),
+                            "ausgefuehrt": (confirm_resp or {}).get("ausgefuehrt"),
+                            "gesprochen": (confirm_resp or {}).get("gesprochen"),
+                        })
                         pending_confirm = None
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
@@ -829,10 +874,16 @@ def run() -> None:
                         if actuator is not None and actuator.ready:
                             intent = actuator.classify(text)
                         if intent is not None and actuator.is_actionable(intent):
+                            # Sprecher wird hier nur MITGESCHRIEBEN, nicht
+                            # angewandt: der Aktuator antwortet mit Node-REDs
+                            # fertigem Satz, eine Sprecher-Stimme braucht er
+                            # nicht. Für den Überwacher ist "wer hat das
+                            # gesagt" aber Teil des Bildes (späteres
+                            # Sprecher-Gate), also wegwerfen wäre schade.
                             try:
-                                turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                                act_spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
-                                pass
+                                act_spk = None
                             try:
                                 turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
@@ -849,6 +900,19 @@ def run() -> None:
                             resp = actuator.execute(intent, request_id)
                             ziel = intent.get("ziel")
                             aktion = intent.get("aktion")
+                            _log_actuator_turn({
+                                "phase": "intent",
+                                "request_id": request_id,
+                                "transcript": text,
+                                "speaker": act_spk,
+                                "wakeword": current_wakeword.bundle,
+                                "intent": intent,
+                                "latency_ms": round(actuator.last_latency_ms),
+                                "status": (resp or {}).get("status", "keine_antwort"),
+                                "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
+                                "grund": (resp or {}).get("grund"),
+                                "gesprochen": (resp or {}).get("gesprochen"),
+                            })
                             if resp is None:
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
@@ -870,7 +934,12 @@ def run() -> None:
                                     # Handshake: Rückfrage sprechen, direkt in
                                     # FOLLOWUP wechseln (nicht über PAUSE).
                                     speaker.speak(resp.get("gesprochen") or "Bist du sicher?")
-                                    pending_confirm = {"intent": intent, "request_id": request_id}
+                                    pending_confirm = {
+                                        "intent": intent,
+                                        "request_id": request_id,
+                                        "transcript": text,
+                                        "speaker": act_spk,
+                                    }
                                     audio_source.flush()
                                     wakeword.reset()
                                     if os.path.exists(FOLLOWUP_BEEP_PATH):

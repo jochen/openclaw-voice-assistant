@@ -445,6 +445,12 @@ ENDPOINT_LOG_PATH = os.path.join(WORKSPACE, "endpoint.log")
 # Eine JSONL-Zeile je Wakeword-Entscheidung (Trigger + Near-Miss) — Datenbasis
 # fürs Sweepen der Gate-Parameter und fürs Wakeword-Nachtraining.
 WAKE_LOG_PATH = os.path.join(WORKSPACE, "wake_events.log")
+# Spiegel-Kanal des Aktuators: eine JSONL-Zeile je Schalt-Turn, den der
+# Aktuator selbst erledigt hat (der Brain sieht diese Turns nicht). Bewusst
+# ein EIGENER lokaler Log statt Haus-Session oder Telegram — Schaltvorgänge
+# sollen weder die Gesprächs-Session zumüllen noch im Chat auftauchen.
+# Das ist das Rohmaterial für den späteren Aktuator-Überwacher.
+ACTUATOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_turns.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,
