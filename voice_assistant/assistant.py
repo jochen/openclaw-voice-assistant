@@ -79,7 +79,12 @@ from voice_assistant.workers import Workers
 
 
 _STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
-_STOP_ANY = r'(stopp?|halt|aus|abbrechen|nein|bitte)'
+# 'bitte' war hier drin und hat jedes höfliche Schaltkommando verschluckt:
+# "Schalt das Küchenlicht bitte aus" matchte über ANY(bitte)+CORE(aus) als
+# Abbruch, die Anfrage starb wortlos (live beobachtet 2026-07-25 22:46).
+# Eine Höflichkeitsfloskel steht in Abbrüchen wie in normalen Befehlen —
+# sie trägt kein Signal und gehört deshalb nicht ins Muster.
+_STOP_ANY = r'(stopp?|halt|aus|abbrechen|nein)'
 # Im Follow-up reicht ein einzelnes "stop"/"stopp" — TV/Hintergrund-Wörter sollen nicht blockieren
 _STOP_PATTERN_FOLLOWUP = re.compile(r'\bstopp?\b', re.IGNORECASE)
 # Bei Erstanfrage muss eine 2-Wort-Kombi vorliegen, davon mind. eines ein Kern-Abbruchwort.
