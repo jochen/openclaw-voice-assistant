@@ -33,6 +33,7 @@ from voice_assistant.config import (
     VAD_FRAME_SIZE,
     VOICE_ANALYSIS_BASE,
     VOICE_DIR,
+    WAKE_LOG_PATH,
     WORKSPACE,
     Profile,
     WakewordConfig,
@@ -131,7 +132,11 @@ def _save_trigger_audio(audio_chunks: list, bundle: str, kind: str, trigger_id: 
     """Archiviert Trigger-Audio unter TRIGGER_AUDIO_DIR (best-effort).
 
     kind='wake': Ringpuffer-Mitschnitt rund ums Wakeword (Retraining-Clip),
-    kind='rec': die anschließende Aufnahme (Quell-Identifikation TV/Radio/…).
+    kind='rec': die anschließende Aufnahme (Quell-Identifikation TV/Radio/…),
+    kind='nearmiss': Streak, der das Gate NICHT passiert hat — der eigentlich
+      interessante Fall fürs Nachtraining (echter Ruf, der nicht ankam) bzw.
+      für die FP-Bewertung eines gelockerten Gates (Gerede, das fast durchkam).
+      Nur mit diesen Clips lässt sich min_hits/min_peak messen statt raten.
     """
     if not audio_chunks:
         return
@@ -142,6 +147,24 @@ def _save_trigger_audio(audio_chunks: list, bundle: str, kind: str, trigger_id: 
             f.write(chunks_to_wav_bytes(list(audio_chunks)))
     except Exception as e:
         print(f"⚠️  Trigger-Audio ({kind}) nicht gespeichert: {e}")
+
+
+def _log_wake_event(meta: dict) -> None:
+    """Hängt eine JSONL-Zeile pro Wakeword-Entscheidung an (Trigger UND Near-Miss).
+
+    Zweck: die Gate-Parameter (min_hits/min_peak/min_peak_short/threshold)
+    offline gegen echte Daten sweepen zu können, statt sie live zu raten —
+    und zusammen mit der `audio`-Datei einen beschrifteten Datensatz fürs
+    Nachtraining aufzubauen. Der volle Score-Verlauf steht mit drin, damit
+    sich ein alternatives Gate rein rechnerisch nachspielen lässt, ohne die
+    WAVs erneut durchs Modell zu schicken. Best-effort.
+    """
+    try:
+        meta = {"ts": datetime.now().isoformat(timespec="seconds"), **meta}
+        with open(WAKE_LOG_PATH, "a") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    except Exception as exc:  # Logging darf den Loop nie crashen
+        print(f"⚠️  wake-log: {exc}")
 
 
 def _cleanup_trigger_audio() -> None:
@@ -570,6 +593,22 @@ def run() -> None:
                         trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                         trigger_audio_bundle = current_wakeword.bundle
                         _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                        # Trigger genauso protokollieren wie den Near-Miss —
+                        # ein Sweep braucht beide Klassen im selben Log.
+                        _log_wake_event({
+                            "result": "trigger",
+                            "bundle": trigger_audio_bundle,
+                            "hits": wake_hits,
+                            "peak": round(wake_peak, 3),
+                            "required_peak": round(
+                                _required_peak(wake_hits, current_min_peak, current_min_peak_short), 3
+                            ),
+                            "min_hits": current_min_hits,
+                            "threshold": current_threshold,
+                            "scores": [round(s, 3) for s in recent_scores],
+                            "beam": float(beam) if beam is not None else None,
+                            "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
+                        })
                         wake_ring.clear()
                         wake_ring_samples = 0
                         ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
@@ -598,6 +637,31 @@ def run() -> None:
                             else ""
                         )
                         print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] ({wake_hits} Frame{'s' if wake_hits > 1 else ''}: {last_scores}{peak_str}){beam_str}")
+                        # Near-Miss-Clip + Event archivieren: das ist der Fall,
+                        # den wir zum Nachjustieren von min_hits/min_peak (und
+                        # fürs Nachtraining) brauchen — bislang fiel er weg.
+                        # wake_ring wird bewusst NICHT geleert: folgt kurz
+                        # darauf der echte Ruf, behält der seinen vollen
+                        # 3-Sekunden-Kontext.
+                        nm_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        _save_trigger_audio(
+                            list(wake_ring), current_wakeword.bundle, "nearmiss", nm_id
+                        )
+                        _log_wake_event({
+                            "result": "nearmiss",
+                            "bundle": current_wakeword.bundle,
+                            "hits": wake_hits,
+                            "peak": round(wake_peak, 3),
+                            "required_peak": round(
+                                _required_peak(wake_hits, current_min_peak, current_min_peak_short), 3
+                            ),
+                            "min_hits": current_min_hits,
+                            "threshold": current_threshold,
+                            "failed_on": "min_hits" if wake_hits < current_min_hits else "min_peak",
+                            "scores": [round(s, 3) for s in recent_scores],
+                            "beam": float(beam) if beam is not None else None,
+                            "audio": f"{nm_id}_{current_wakeword.bundle}_nearmiss.wav",
+                        })
                         leds.set_phase(LED_NEAR_MISS)
                         near_miss_until = now + 0.6
                     wake_hits = 0
@@ -614,6 +678,19 @@ def run() -> None:
                     trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                     trigger_audio_bundle = current_wakeword.bundle
                     _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                    _log_wake_event({
+                        "result": "trigger",
+                        "via": "timeout",
+                        "bundle": trigger_audio_bundle,
+                        "hits": wake_hits,
+                        "peak": round(wake_peak, 3),
+                        "required_peak": round(current_min_peak, 3),
+                        "min_hits": current_min_hits,
+                        "threshold": current_threshold,
+                        "scores": [round(s, 3) for s in recent_scores],
+                        "beam": float(beam) if beam is not None else None,
+                        "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
+                    })
                     wake_ring.clear()
                     wake_ring_samples = 0
                     ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)

@@ -442,6 +442,9 @@ LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
 # Endpointing-Telemetrie: eine JSONL-Zeile pro Aufnahme/Follow-up zum
 # empirischen Tunen von silence_seconds (Pausen-Verhalten je Sprecher).
 ENDPOINT_LOG_PATH = os.path.join(WORKSPACE, "endpoint.log")
+# Eine JSONL-Zeile je Wakeword-Entscheidung (Trigger + Near-Miss) — Datenbasis
+# fürs Sweepen der Gate-Parameter und fürs Wakeword-Nachtraining.
+WAKE_LOG_PATH = os.path.join(WORKSPACE, "wake_events.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,
