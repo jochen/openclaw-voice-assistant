@@ -116,6 +116,26 @@ class ActuatorConfig:
 
 
 @dataclass
+class WatcherConfig:
+    """Überwacher Stufe 1 (nur LESEN + MELDEN, siehe services/watcher.py und
+    tools/actuator_watch.py). Default enabled=False: ohne den `watcher:`-Block
+    läuft kein Überwacher-Thread."""
+    enabled: bool = False
+    # Telegram-Ziel für Befund-Meldungen. Leer = kein Melden (nur sammeln).
+    # Separater Chat, NICHT der Family-Voice-Chat — bewusst getrennt.
+    chat_id: str = ""
+    # Bot-Token, leer = profil-telegram_bot_token wird genutzt (gleicher Bot,
+    # anderer Chat).
+    bot_token: str = ""
+    # Prüintervall in Sekunden (min 60, default 5 Min).
+    poll_interval: int = 300
+    # Stille Stunden (volle Stunden 0–23). In dieser Zeit wird nichts gesendet,
+    # Befunde gesammelt. Default 01:00–07:00. Bereich über Mitternacht möglich.
+    quiet_start: int = 1
+    quiet_end: int = 7
+
+
+@dataclass
 class WakewordConfig:
     """Ein aktives Wakeword + sein Routing-Ziel (Multi-Wakeword, Meilenstein 1
     der Wakeword-Studio-Spec, siehe Wakeword_Studio_Spec.md Teil 2).
@@ -202,6 +222,9 @@ class Profile:
     # Voice-Aktuator v1 — fehlt der Block: enabled=False, Profil verhält sich
     # wie bisher (siehe ActuatorConfig).
     actuator: ActuatorConfig = field(default_factory=ActuatorConfig)
+
+    # Überwacher Stufe 1 — fehlt der Block: kein Watcher-Thread.
+    watcher: WatcherConfig = field(default_factory=WatcherConfig)
 
 
 def _load_yaml() -> dict[str, Any]:
@@ -354,6 +377,19 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         refresh_poll_sec=int(actuator_raw.get("refresh_poll_sec", _dact.refresh_poll_sec)),
     )
 
+    # --- Überwacher: separater Block, analog zu actuator ---
+    watcher_raw = raw.get("watcher") or {}
+    _dw = WatcherConfig()
+    watcher = WatcherConfig(
+        enabled=bool(watcher_raw.get("enabled", _dw.enabled)),
+        chat_id=str(watcher_raw.get("chat_id", _dw.chat_id)),
+        # bot_token leer = Profil-Telegram-Token wird genutzt
+        bot_token=str(watcher_raw.get("bot_token", _dw.bot_token)),
+        poll_interval=int(watcher_raw.get("poll_interval", _dw.poll_interval)),
+        quiet_start=int(watcher_raw.get("quiet_start", _dw.quiet_start)),
+        quiet_end=int(watcher_raw.get("quiet_end", _dw.quiet_end)),
+    )
+
     locale_raw = raw.get("locale") or {}
     _dloc = LocaleConfig()
     locale = LocaleConfig(
@@ -386,6 +422,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
         locale=locale,
         actuator=actuator,
+        watcher=watcher,
         wakewords=_parse_wakewords(
             raw,
             openclaw_session=str(raw.get("openclaw_session", "")),

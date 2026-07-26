@@ -538,6 +538,31 @@ def run() -> None:
             print(f"⚠️  Aktuator-Start fehlgeschlagen: {e}")
             actuator = None
 
+    # --- Überwacher Stufe 1 (periodisch actuator_turns.log prüfen + melden) ---
+    # Fehlt der `watcher:`-Block oder enabled=false: kein Thread. Der Watcher
+    # braucht den Aktuator nicht zwingend (er liest nur das Log), aber ohne
+    # Aktuator ist das Log leer — dann läuft er sinnlos. Also nur starten wenn
+    # auch der Aktuator aktiv ist.
+    if profile.watcher.enabled and profile.watcher.chat_id and actuator is not None:
+        try:
+            from voice_assistant.services.watcher import Watcher
+            wt = profile.watcher
+            # bot_token leer = Profil-Telegram-Token nutzen (gleicher Bot, anderer Chat)
+            bot_tok = wt.bot_token or profile.telegram_bot_token
+            watcher = Watcher(
+                chat_id=wt.chat_id,
+                bot_token=bot_tok,
+                poll_interval=wt.poll_interval,
+                quiet_start=wt.quiet_start,
+                quiet_end=wt.quiet_end,
+            )
+            watcher.start()
+        except Exception as e:
+            print(f"⚠️  Überwacher-Start fehlgeschlagen: {e}")
+    elif profile.watcher.enabled and not profile.watcher.chat_id:
+        print("⚠️  Überwacher aktiviert, aber watcher.chat_id ist leer — "
+              "kein Ziel für Meldungen. Überwacher bleibt aus.")
+
     # --- State-Machine ---
     state = STATE_LISTENING
     state_start = time.time()
