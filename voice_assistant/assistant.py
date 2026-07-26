@@ -483,6 +483,10 @@ def run() -> None:
         audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts
     )
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
+    if not VOICE_ANALYSIS_BASE:
+        # Bis 2026-07 war das eine Konstante im Code. Wer von einer älteren
+        # Fassung aktualisiert, verliert die Analyse sonst wortlos.
+        print("ℹ️  Stimmungsanalyse aus (voice_analysis_base nicht in config.yaml gesetzt)")
     mood_analyzer = MoodAnalyzer(VOICE_ANALYSIS_BASE) if VOICE_ANALYSIS_BASE else None
     workers = Workers(
         stt=stt_pipeline,
@@ -515,7 +519,13 @@ def run() -> None:
     # weiter (Brain-Pfad wie vor diesem Umbau), Fehler dürfen den Start nie
     # verhindern.
     actuator: Actuator | None = None
-    if profile.actuator.enabled:
+    if profile.actuator.enabled and not profile.actuator.base_url:
+        # Früher stand hier ein echter Host als Default; seit das Repo
+        # öffentlich ist, ist er leer. Ohne diese Meldung liefe der Aktuator
+        # gegen "/capabilities" und schwiege sich über den Grund aus.
+        print("⚠️  Aktuator aktiviert, aber actuator.base_url ist leer — "
+              "bitte im Profil setzen (siehe ACTUATOR_INTERFACE.md). Aktuator bleibt aus.")
+    elif profile.actuator.enabled:
         try:
             actuator = Actuator(profile.actuator)
             actuator.start()

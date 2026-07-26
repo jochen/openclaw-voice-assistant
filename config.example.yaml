@@ -10,7 +10,30 @@
 # Das alte flache Schema (ohne mode/local_audio/respeaker/leds-Blöcke) wird
 # weiterhin akzeptiert und als mode: local interpretiert.
 
+# Optionaler voice-analysis-Container (akustisches Stimmungssignal).
+# Leer oder weggelassen = Stimmungsanalyse aus, der Assistent läuft normal.
+# Stand bis 2026-07: dieser Wert war eine Konstante im Code — wer von einer
+# älteren Fassung aktualisiert und die Analyse weiter nutzen will, muss ihn
+# hier eintragen, sonst ist sie stillschweigend aus.
+voice_analysis_base: ""
+
 profiles:
+
+  # Voice-Aktuator (optional, standardmäßig AUS).
+  # Ohne den Block verhält sich ein Profil exakt wie ohne Aktuator: jeder Satz
+  # geht wie gewohnt an den Brain. Erst `enabled: true` PLUS base_url schaltet
+  # den schnellen lokalen Schaltpfad ein. Wer keine Hausautomation anbindet,
+  # lässt den Block einfach weg. Vertrag der Gegenstelle: ACTUATOR_INTERFACE.md
+  #
+  #   actuator:
+  #     enabled: true
+  #     base_url: "http://<hausautomation>:1880/voiceact"   # PFLICHT wenn enabled
+  #     llm_url:  "http://localhost:8090/v1/chat/completions"
+  #     mqtt_host: ""        # leer = kein MQTT, nur Poll alle refresh_poll_sec
+  #     mqtt_port: 1883
+  #     refresh_poll_sec: 600
+  #     llm_timeout: 5.0
+  #     intent_timeout: 1.5
 
   # ---------------------------------------------------------------------
   # Beispiel "local" - Mikrofon/Lautsprecher direkt am Pi
