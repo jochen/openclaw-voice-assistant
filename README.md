@@ -243,6 +243,52 @@ directory (gitignored) and is sent as the `X-Actuator-Token` header.
 Turns handled by the actuator itself are never seen by the backend — they are
 written as JSONL to `<workspace>/actuator_turns.log` instead.
 
+### Overseer (Stage 1 — read and report only)
+
+Since the actuator bypasses the backend, nothing double-checks whether what
+was said matches what was switched. The overseer closes that gap conservatively:
+it reads `actuator_turns.log` and reports discrepancies — it does **not**
+intervene, switch, or correct anything.
+
+Three discrepancy classes are detected from the log alone (no MQTT state, no
+device registry needed):
+
+- **AKTIONS_MISMATCH** — the transcript names a different action than the
+  classified intent (e.g. "…aus" said, "ein" classified — a possible STT
+  mishear).
+- **EXEC_DIFFERS** — the home automation executed a different target/action
+  than the intent requested.
+- **STATUS_PROBLEM** — the automation did not answer "ausgefuehrt" (rejected,
+  unknown target, deferred). Archived but not sent to Telegram (too noisy).
+
+Two ways to use it:
+
+```bash
+# One-off CLI — prints findings, deduplicates via actuator_watch.jsonl
+ow-venv/bin/python -m tools.actuator_watch
+ow-venv/bin/python -m tools.actuator_watch --seit 3   # last 3 days only
+ow-venv/bin/python -m tools.actuator_watch --alles     # re-show seen ones
+```
+
+Or as a background worker inside the assistant, reporting to a separate
+Telegram chat (not the family voice chat):
+
+```yaml
+    watcher:
+      enabled: true
+      chat_id: "<telegram-chat-id>"   # separate group, not the voice mirror
+      quiet_start: 1                   # no messages 01:00–07:00
+      quiet_end: 7
+      poll_interval: 300               # check every 5 min
+```
+
+Only `AKTIONS_MISMATCH` and `EXEC_DIFFERS` are sent to Telegram; during quiet
+hours findings are collected and held. Stage 1 is deliberately conservative —
+the most expensive mistake the overseer could make is a *hallucinated*
+correction, physically in the house, possibly at night. Later stages
+(group completion, proactive follow-up on objective signals) build on this
+once stage 1 has proven reliable over weeks.
+
 ## OpenClaw Integration
 
 ### Session Key

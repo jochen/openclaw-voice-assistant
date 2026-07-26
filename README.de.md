@@ -243,6 +243,53 @@ Der Token für die Endpunkte steht in `voiceact-token.txt` im Projektverzeichnis
 Turns, die der Aktuator selbst erledigt, sieht das Backend nicht — sie landen
 deshalb als JSONL in `<workspace>/actuator_turns.log`.
 
+### Überwacher (Stufe 1 — nur lesen und melden)
+
+Da der Aktuator das Backend überspringt, prüft nichts nach, ob das Gesagte
+mit dem Geschalteten übereinstimmt. Der Überwacher schließt diese Lücke
+konservativ: er liest `actuator_turns.log` und meldet Diskrepanzen — er
+greift **nicht** ein, schaltet nicht, korrigiert nicht.
+
+Drei Diskrepanzklassen werden aus dem Log allein erkannt (kein MQTT-State,
+keine Gerätekennung nötig):
+
+- **AKTIONS_MISMATCH** — das Transkript nennt eine andere Aktion als der
+  klassifizierte Intent (z.B. „…aus" gesagt, „ein" klassifiziert — mögliche
+  STT-Verhörmöglichkeit).
+- **EXEC_DIFFERS** — die Haussteuerung hat ein anderes Ziel/eine andere
+  Aktion ausgeführt als der Intent verlangte.
+- **STATUS_PROBLEM** — die Automation antwortet nicht „ausgefuehrt" (abgelehnt,
+  unbekanntes Ziel, zurückgestellt). Wird archiviert, aber nicht nach Telegram
+  geschickt (zu laut).
+
+Zwei Nutzungsmöglichkeiten:
+
+```bash
+# Einmaliges CLI — gibt Befunde aus, dedupliziert via actuator_watch.jsonl
+ow-venv/bin/python -m tools.actuator_watch
+ow-venv/bin/python -m tools.actuator_watch --seit 3   # nur letzte 3 Tage
+ow-venv/bin/python -m tools.actuator_watch --alles     # auch schon gesehene
+```
+
+Oder als Hintergrund-Worker im Assistant, der in einen separaten Telegram-Chat
+meldet (nicht den Familien-Voice-Chat):
+
+```yaml
+    watcher:
+      enabled: true
+      chat_id: "<telegram-chat-id>"   # separate Gruppe, nicht der Voice-Spiegel
+      quiet_start: 1                   # keine Meldungen 01:00–07:00 Uhr
+      quiet_end: 7
+      poll_interval: 300               # alle 5 Min prüfen
+```
+
+Nur `AKTIONS_MISMATCH` und `EXEC_DIFFERS` werden nach Telegram geschickt;
+während der Stille-Zeit werden Befunde gesammelt und zurückgehalten. Stufe 1
+ist bewusst konservativ — der teuerste Fehler des Überwachers wäre eine
+*eingebildete* Korrektur, physisch im Haus, womöglich nachts. Spätere Stufen
+(Gruppen-Vervollständigung, proaktive Rückfrage bei objektivem Signal)
+bauen darauf auf, sobald Stufe 1 sich über Wochen bewährt hat.
+
 ## OpenClaw-Integration
 
 ### Session-Key

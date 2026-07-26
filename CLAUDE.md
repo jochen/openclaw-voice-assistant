@@ -99,7 +99,21 @@ Messungen: `ACTUATOR_V1_PLAN.md`.
 
 Turns, die der Aktuator selbst erledigt, sieht der Brain nicht — sie landen
 deshalb in `~/.openclaw/workspace/actuator_turns.log` (Rohmaterial für den
-geplanten Überwacher). Bewusst nicht in Telegram und nicht in der Haus-Session.
+Überwacher). Bewusst nicht in Telegram und nicht in der Haus-Session.
+
+### Überwacher Stufe 1 (nur LESEN + MELDEN)
+
+`tools/actuator_watch.py` — CLI-Tool, liest `actuator_turns.log` und erkennt
+Diskrepanzen (AKTIONS_MISMATCH, EXEC_DIFFERS, STATUS_PROBLEM). Dedupliziert
+via `actuator_watch.jsonl`. Siehe `tools/wake_triage.py` für den Stil.
+
+`voice_assistant/services/watcher.py` — Daemon-Thread im Voice-Assistant.
+Prüft periodisch (default 300 s) das Log, schickt AKTIONS_MISMATCH und
+EXEC_DIFFERS in eine separate Telegram-Gruppe (nicht den Voice-Spiegel).
+Stille Zeit 01:00–07:00: nichts wird gesendet, nur gesammelt.
+STATUS_PROBLEM bleibt im JSONL-Archiv, nicht in Telegram (zu laut).
+
+Aktiviert per Profil-Block `watcher:` (Default `enabled: false`).
 
 ## Profile System
 
