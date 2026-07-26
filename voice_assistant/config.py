@@ -135,6 +135,9 @@ class WakewordConfig:
     # None = aus manifest.yaml (oder Fallback auf min_peak) ableiten.
     # Siehe WakewordHit.min_peak_short.
     min_peak_short: float | None = None
+    # None = aus manifest.yaml (oder Default 0.0 = aus) ableiten.
+    # Siehe WakewordHit.min_peak_single.
+    min_peak_single: float | None = None
 
 
 @dataclass
@@ -264,6 +267,7 @@ def _parse_wakewords(
         min_hits_raw = entry.get("min_hits")
         min_peak_raw = entry.get("min_peak")
         min_peak_short_raw = entry.get("min_peak_short")
+        min_peak_single_raw = entry.get("min_peak_single")
         result.append(
             WakewordConfig(
                 bundle=bundle,
@@ -274,6 +278,7 @@ def _parse_wakewords(
                 min_hits=int(min_hits_raw) if min_hits_raw is not None else None,
                 min_peak=float(min_peak_raw) if min_peak_raw is not None else None,
                 min_peak_short=float(min_peak_short_raw) if min_peak_short_raw is not None else None,
+                min_peak_single=float(min_peak_single_raw) if min_peak_single_raw is not None else None,
             )
         )
     if not result:

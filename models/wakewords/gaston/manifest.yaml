@@ -20,6 +20,18 @@ min_peak: 0.7
 # False Positives (Peaks 0.70/0.77/0.83/0.92), der einzige echte 2-Frame-Ruf
 # (Test 08.07. 23:19) peakte 0.93. Ab 3 Frames gilt weiter min_peak 0.7.
 min_peak_short: 0.9
+# 1-Frame-Trigger (2026-07-26): ein EINZELNER Frame darf triggern, wenn sein
+# Peak >= 0.75 liegt. Grund: von 16 Near-Misses waren 6 nachweislich echte Rufe
+# (per STT-Triage, tools/wake_triage.py) und 9 Rauschen — und 5 der 6 echten
+# kamen als EINZELNE Spitze an, scheiterten also an min_hits, nicht am Peak.
+# Die Peaks des Rauschens endeten bei 0.58, die wiedergewinnbaren echten Rufe
+# begannen bei 0.82; 0.75 liegt in der leeren Lücke dazwischen, mit Abstand
+# nach unten. Wirkung an den Daten: 4 der 6 verlorenen Rufe kommen durch,
+# 0 der 9 Rausch-Ereignisse. Die zwei Rufe bei 0.37/0.38 sind durch keine
+# Schwelle zu retten (dort liegt Rauschen gleichauf) — Modellproblem.
+# Restrisiko: die FP-Analyse 08.-13.07. fand 2-Frame-Fehltrigger mit Peaks bis
+# 0.92; solche kommen hier durch. Rate unbekannt, Stichprobe war ein Tag.
+min_peak_single: 0.75
 spellings:
   - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
   - "Gastong (40%)"

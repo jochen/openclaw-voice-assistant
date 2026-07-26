@@ -300,7 +300,38 @@ def _log_endpoint(meta: dict) -> None:
         print(f"⚠️  endpoint-log: {exc}")
 
 
-def _required_peak(wake_hits: int, min_peak: float, min_peak_short: float) -> float:
+def _gate_passed(
+    wake_hits: int,
+    wake_peak: float,
+    min_hits: int,
+    min_peak: float,
+    min_peak_short: float,
+    min_peak_single: float,
+) -> bool:
+    """Entscheidet, ob ein beendeter Streak triggern darf.
+
+    Zwei Wege, absichtlich als ODER: der bisherige Streak-Weg (min_hits Frames
+    plus gestufte Peak-Anforderung) und — falls konfiguriert — ein einzelner
+    sehr hoher Frame. Der zweite ist ADDITIV; min_hits bleibt unangetastet,
+    damit die Gap-Toleranz im Streak-Zähler unverändert erst ab min_hits
+    greift (sonst würde sie zwei unabhängige Rausch-Spitzen zusammennähen).
+
+    Der 1-Frame-Weg existiert, weil 5 der 6 nachweislich echten, verlorenen
+    Rufe vom 2026-07-26 als EINZELNE Spitze ankamen (Nachbar-Frames bei 0.01)
+    und damit an min_hits scheiterten, nicht am Peak. Siehe
+    WakewordHit.min_peak_single für die Datenbasis und tools/wake_triage.py
+    für das Verfahren, mit dem echte Rufe von Rauschen getrennt wurden.
+    """
+    if wake_hits >= min_hits and wake_peak >= _required_peak(
+        wake_hits, min_peak, min_peak_short
+    ):
+        return True
+    return wake_hits == 1 and min_peak_single > 0.0 and wake_peak >= min_peak_single
+
+
+def _required_peak(
+    wake_hits: int, min_peak: float, min_peak_short: float, min_peak_single: float = 0.0
+) -> float:
     """Peak-Anforderung abhängig von der Streak-Länge.
 
     Kurz-Streaks (< 3 Frames, also der min_hits-2-Pfad) müssen min_peak_short
@@ -309,6 +340,8 @@ def _required_peak(wake_hits: int, min_peak: float, min_peak_short: float) -> fl
     der einzige echte 2-Frame-Ruf peakte 0.93 — ab 3 Frames tragen die
     zusätzlichen Hits die Evidenz, dort bleibt min_peak ausreichend.
     """
+    if wake_hits == 1 and min_peak_single > 0.0:
+        return min_peak_single
     return min_peak_short if wake_hits < 3 else min_peak
 
 
@@ -531,6 +564,7 @@ def run() -> None:
     current_min_hits = 3
     current_min_peak = 0.0
     current_min_peak_short = 0.0
+    current_min_peak_single = 0.0
     current_threshold = 0.65               # Threshold des aktiven Streaks (fürs Score-Log)
     near_miss_until = 0.0                  # Timestamp bis Near-Miss-LED zurückgesetzt wird
     recent_scores: deque[float] = deque(maxlen=30)  # ~1.2s Rolling-Window aller Scores
@@ -600,11 +634,11 @@ def run() -> None:
                     current_min_hits = hit.min_hits
                     current_min_peak = hit.min_peak
                     current_min_peak_short = hit.min_peak_short
+                    current_min_peak_single = hit.min_peak_single
                     current_threshold = hit.threshold
-                    if (
-                        not wake_announced
-                        and wake_hits >= current_min_hits
-                        and wake_peak >= _required_peak(wake_hits, current_min_peak, current_min_peak_short)
+                    if not wake_announced and _gate_passed(
+                        wake_hits, wake_peak, current_min_hits,
+                        current_min_peak, current_min_peak_short, current_min_peak_single,
                     ):
                         wake_announced = True
                         leds.set_phase(LED_WAKEWORD)
@@ -617,7 +651,10 @@ def run() -> None:
                 else:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    if wake_hits >= current_min_hits and wake_peak >= _required_peak(wake_hits, current_min_peak, current_min_peak_short):
+                    if _gate_passed(
+                        wake_hits, wake_peak, current_min_hits,
+                        current_min_peak, current_min_peak_short, current_min_peak_single,
+                    ):
                         print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
                         trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                         trigger_audio_bundle = current_wakeword.bundle
@@ -630,7 +667,7 @@ def run() -> None:
                             "hits": wake_hits,
                             "peak": round(wake_peak, 3),
                             "required_peak": round(
-                                _required_peak(wake_hits, current_min_peak, current_min_peak_short), 3
+                                _required_peak(wake_hits, current_min_peak, current_min_peak_short, current_min_peak_single), 3
                             ),
                             "min_hits": current_min_hits,
                             "threshold": current_threshold,
@@ -661,8 +698,8 @@ def run() -> None:
                         # Zuordnung pro Modell.
                         last_scores = " ".join(f"{s:.2f}" for s in list(recent_scores)[-5:])
                         peak_str = (
-                            f", Peak {wake_peak:.2f} < {_required_peak(wake_hits, current_min_peak, current_min_peak_short):.2f}"
-                            if wake_hits >= current_min_hits
+                            f", Peak {wake_peak:.2f} < {_required_peak(wake_hits, current_min_peak, current_min_peak_short, current_min_peak_single):.2f}"
+                            if wake_hits >= current_min_hits or wake_hits == 1
                             else ""
                         )
                         print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] ({wake_hits} Frame{'s' if wake_hits > 1 else ''}: {last_scores}{peak_str}){beam_str}")
@@ -682,7 +719,7 @@ def run() -> None:
                             "hits": wake_hits,
                             "peak": round(wake_peak, 3),
                             "required_peak": round(
-                                _required_peak(wake_hits, current_min_peak, current_min_peak_short), 3
+                                _required_peak(wake_hits, current_min_peak, current_min_peak_short, current_min_peak_single), 3
                             ),
                             "min_hits": current_min_hits,
                             "threshold": current_threshold,

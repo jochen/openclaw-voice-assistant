@@ -82,6 +82,14 @@ class OpenWakewordEngine:
                 if w.min_peak_short is not None
                 else float(manifest.get("min_peak_short", min_peak))
             )
+            # 0.0 = aus. Kein Fallback auf min_peak — ein 1-Frame-Trigger ist
+            # eine bewusste Entscheidung und darf nicht aus einem anderen Wert
+            # herausfallen.
+            min_peak_single = (
+                w.min_peak_single
+                if w.min_peak_single is not None
+                else float(manifest.get("min_peak_single", 0.0))
+            )
             # Bundle-Pfad → Key ist der Dateiname ohne Endung (so vergibt
             # openwakeword.Model die Keys für predict()); eingebauter Name →
             # Key ist der Name selbst (unverändert durchgereicht).
@@ -96,6 +104,7 @@ class OpenWakewordEngine:
                     "min_hits": min_hits,
                     "min_peak": min_peak,
                     "min_peak_short": min_peak_short,
+                    "min_peak_single": min_peak_single,
                 }
             )
 
@@ -127,6 +136,7 @@ class OpenWakewordEngine:
             min_hits=best["min_hits"] if best else _DEFAULT_MIN_HITS,
             min_peak=best["min_peak"] if best else _DEFAULT_MIN_PEAK,
             min_peak_short=best["min_peak_short"] if best else _DEFAULT_MIN_PEAK,
+            min_peak_single=best["min_peak_single"] if best else 0.0,
         )
 
     def reset(self) -> None:

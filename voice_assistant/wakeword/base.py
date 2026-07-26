@@ -33,6 +33,18 @@ class WakewordHit:
         alle vier 2-Frame-Trigger waren False Positives (Peaks 0.70-0.92),
         der einzige echte 2-Frame-Ruf peakte 0.93. Fällt ohne Konfiguration
         auf min_peak zurück (Engine löst das auf).
+    min_peak_single: erlaubt einen Trigger aus einem EINZIGEN Frame, wenn
+        dessen Peak diesen Wert erreicht — zusätzlich zur min_hits-Bedingung,
+        nicht an ihrer Stelle. 0.0 = aus (Default, Verhalten wie vorher).
+        Datenbasis (gaston, Triage vom 2026-07-26, tools/wake_triage.py):
+        von 16 Near-Misses waren 6 echte Rufe und 9 Rauschen. Die Peaks des
+        Rauschens endeten bei 0.58, die wiedergewinnbaren echten Rufe begannen
+        bei 0.82 — dazwischen eine leere Lücke. Vier der sechs verlorenen Rufe
+        liegen darüber, kein einziges Rauschen. Vier weitere Merkmale
+        (zweithöchster Score, Summe Top 3, Frames über 0.1 bzw. 0.2) trennten
+        NICHT besser als der Peak. Die zwei Rufe bei 0.37/0.38 sind durch keine
+        Schwelle zu retten (Rauschen liegt dort gleichauf) — das ist ein
+        Modellproblem, kein Schwellenproblem.
     """
 
     name: str
@@ -41,6 +53,7 @@ class WakewordHit:
     min_hits: int = 3
     min_peak: float = 0.0
     min_peak_short: float = 0.0
+    min_peak_single: float = 0.0
 
 
 class WakewordEngine(Protocol):
