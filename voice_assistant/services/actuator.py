@@ -36,6 +36,13 @@ import urllib.request
 from voice_assistant.config import ActuatorConfig
 
 
+# Ziel-Typen, deren Einzelgerät-gegen-Gruppe-Fall der statische Beispielblock in
+# _build_system_prompt schon vorführt. Statischer und generierter Teil bilden EINEN
+# Prompt — sie müssen voneinander wissen, sonst doppeln sie dieselbe Lehre.
+# Wer unten ein Beispiel hinzufügt oder entfernt, pflegt diese Menge mit.
+_STATISCH_GEZEIGTE_TYPEN = {"rollo"}
+
+
 def _kontrast_beispiel(digest: dict) -> str:
     """Erzeugt ein Einzelgerät-gegen-Gruppe-Beispielpaar aus den Live-Daten.
 
@@ -72,6 +79,19 @@ def _kontrast_beispiel(digest: dict) -> str:
         if not mitglieder:
             continue
         mid = mitglieder[0]
+        # Typen, für die der statische Beispielblock den Einzel-gegen-Gruppe-Fall
+        # schon zeigt (kuechenrollo_links/kuechenrollos), werden übersprungen —
+        # ein zweites Beispiel für dieselbe Lehre hilft nicht, es schadet.
+        # Gemessen am 44-Satz-Set, als noderedpi4 allen 9 Gruppen `mitglieder`
+        # gab: alle Gruppen 40/44, nur die noch nicht gezeigten Typen 41/44,
+        # ohne Block 36/44 (dann bricht badlichtoben wieder). Der Ausfall bei
+        # "alle Gruppen" war `badobenheizung` -> badlichtoben: das eigene
+        # Beispiel "Schalte Badlicht oben ein" wurde selbst zum Attraktor.
+        # MEHR FEW-SHOTS SIND NICHT BESSER. Ebenfalls verworfen: Paare zwischen
+        # verschachtelten Gruppen (mitglieder ⊂ mitglieder) — 9 Paare mit
+        # Dubletten, 27/30 und ein neuer Ausfall bei einem Nicht-Kommando.
+        if digest[mid].get("typ") in _STATISCH_GEZEIGTE_TYPEN:
+            continue
         # Verb, das für Gruppe UND Mitglied gültig ist. Hart "ein" zu nehmen
         # ginge nur bei Lichtern gut — bekäme eine Rollo-Gruppe ein
         # `mitglieder`-Feld, lehrte das Beispiel eine Aktion, die für dieses
