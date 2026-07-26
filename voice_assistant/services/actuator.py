@@ -72,6 +72,20 @@ def _kontrast_beispiel(digest: dict) -> str:
         if not mitglieder:
             continue
         mid = mitglieder[0]
+        # Verb, das für Gruppe UND Mitglied gültig ist. Hart "ein" zu nehmen
+        # ginge nur bei Lichtern gut — bekäme eine Rollo-Gruppe ein
+        # `mitglieder`-Feld, lehrte das Beispiel eine Aktion, die für dieses
+        # Ziel gar nicht erlaubt ist, und Node-RED würde sie ablehnen.
+        gemeinsam = [x for x in (digest[gid].get("aktionen") or [])
+                     if x in (digest[mid].get("aktionen") or [])]
+        if not gemeinsam:
+            continue
+        aktion = gemeinsam[0]
+        satz = {
+            "ein": "Schalte {} ein", "aus": "Schalte {} aus",
+            "auf": "Mach {} auf", "zu": "Mach {} zu",
+            "aktivieren": "Aktiviere {}", "starten": "Starte {}",
+        }.get(aktion, aktion + " {}")
         mitglied_namen = digest[mid].get("namen") or [mid]
         gruppen_namen = digest[gid].get("namen") or [gid]
         # Für die Gruppe bevorzugt der "alle …"-Alias — das ist die
@@ -81,8 +95,8 @@ def _kontrast_beispiel(digest: dict) -> str:
             (n for n in gruppen_namen if n.lower().startswith("alle")), gruppen_namen[0]
         )
         block.append(
-            f'Schalte {max(mitglied_namen, key=len)} ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"{mid}","wert":null,"einheit":null}}\n'
-            f'Schalte {gruppen_phrase} ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"{gid}","wert":null,"einheit":null}}\n'
+            f'{satz.format(max(mitglied_namen, key=len))} -> {{"ist_kommando":true,"aktion":"{aktion}","ziel":"{mid}","wert":null,"einheit":null}}\n'
+            f'{satz.format(gruppen_phrase)} -> {{"ist_kommando":true,"aktion":"{aktion}","ziel":"{gid}","wert":null,"einheit":null}}\n'
         )
     return "".join(block)
 
