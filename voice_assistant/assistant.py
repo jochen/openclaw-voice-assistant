@@ -555,6 +555,10 @@ def run() -> None:
                 poll_interval=wt.poll_interval,
                 quiet_start=wt.quiet_start,
                 quiet_end=wt.quiet_end,
+                llm_url=wt.llm_url,
+                llm_model=wt.llm_model,
+                llm_api_key=wt.llm_api_key,
+                llm_timeout=wt.llm_timeout,
             )
             watcher.start()
         except Exception as e:

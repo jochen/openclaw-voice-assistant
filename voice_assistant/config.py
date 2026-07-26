@@ -133,6 +133,15 @@ class WatcherConfig:
     # Befunde gesammelt. Default 01:00–07:00. Bereich über Mitternacht möglich.
     quiet_start: int = 1
     quiet_end: int = 7
+    # LLM-Endpoint für die semantische Prüfung (Transkript vs. Intent).
+    # OpenAI-kompatibel, wie actuator.llm_url. Leer = semantische Prüfung aus.
+    llm_url: str = ""
+    # Modellname, z.B. "vllm/release/glm-5-2". Leer = semantische Prüfung aus.
+    llm_model: str = ""
+    # API-Key für den Provider. Leer = kein Auth-Header (lokaler Endpunkt).
+    llm_api_key: str = ""
+    # Timeout für den LLM-Call in Sekunden.
+    llm_timeout: float = 10.0
 
 
 @dataclass
@@ -388,6 +397,10 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         poll_interval=int(watcher_raw.get("poll_interval", _dw.poll_interval)),
         quiet_start=int(watcher_raw.get("quiet_start", _dw.quiet_start)),
         quiet_end=int(watcher_raw.get("quiet_end", _dw.quiet_end)),
+        llm_url=str(watcher_raw.get("llm_url", _dw.llm_url)),
+        llm_model=str(watcher_raw.get("llm_model", _dw.llm_model)),
+        llm_api_key=str(watcher_raw.get("llm_api_key", _dw.llm_api_key)),
+        llm_timeout=float(watcher_raw.get("llm_timeout", _dw.llm_timeout)),
     )
 
     locale_raw = raw.get("locale") or {}
