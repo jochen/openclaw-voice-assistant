@@ -36,7 +36,58 @@ import urllib.request
 from voice_assistant.config import ActuatorConfig
 
 
-def _build_system_prompt(ziel_liste: str) -> str:
+def _kontrast_beispiel(digest: dict) -> str:
+    """Erzeugt ein Einzelgerät-gegen-Gruppe-Beispielpaar aus den Live-Daten.
+
+    Die Namensregel (ACTUATOR_INTERFACE.md, Teil 2) verlangt, dass eine Gruppe
+    keine morphologische Variante ihrer Mitglieder ist. Wo sie sich trotzdem
+    ähneln, verschluckt die Gruppe den Einzelbefehl: gemessen 2026-07-26 ging
+    "Mach das Badlicht oben an" auf badbeleuchtungoben statt badlichtoben, in
+    jeder Formulierung. Ein Beispielpaar für genau dieses Paar hob 13/16 auf
+    16/16 (auf zurückgehaltenen Sätzen, keine Regression anderswo).
+
+    Fest verdrahten lässt es sich nicht — ids sind je Installation andere, und
+    ein Beispiel mit unbekannter id wäre schlimmer als keins. Also je Gruppe
+    (erkennbar an `mitglieder`) ein Paar, erzeugt bei jedem refresh(). Fehlt
+    `mitglieder` in den capabilities, entfällt der Block ersatzlos.
+
+    Zwei Dinge, die gemessen wurden und nicht offensichtlich sind:
+
+    Nur EIN Paar für die riskanteste Gruppe reicht nicht. Der Versuch, sie über
+    Zeichenähnlichkeit (SequenceMatcher zwischen Gruppen- und Mitglieds-id) zu
+    bestimmen, wählte wohnzimmerlicht/wohnzimmerbeleuchtung — ein Paar, das gar
+    nicht verwechselt wird — und ließ das echte Problem stehen (34/38).
+    Zeichenähnlichkeit misst nicht Verwechslungsrisiko. Ein Paar pro Gruppe
+    braucht keine Heuristik und kann nichts falsch wählen.
+
+    Für das Mitglied wird der LÄNGSTE Alias genommen, nicht namen[0]. Klingt
+    nach Kosmetik, entschied aber alles: badlichtoben führt namen[0]
+    "Badlichtoben" (schreibt so niemand) und daneben "Badlicht oben". Mit
+    namen[0] blieb es bei 35/38, mit dem längsten Alias 38/38. Der längere
+    Alias ist die gesprochene Form, und darauf trifft das Gehörte.
+    """
+    block = []
+    for gid, g in digest.items():
+        mitglieder = [m for m in (g.get("mitglieder") or []) if m in digest]
+        if not mitglieder:
+            continue
+        mid = mitglieder[0]
+        mitglied_namen = digest[mid].get("namen") or [mid]
+        gruppen_namen = digest[gid].get("namen") or [gid]
+        # Für die Gruppe bevorzugt der "alle …"-Alias — das ist die
+        # Formulierung, die verwechselt wird. "Schalte X ein" statt "Mach das
+        # X an", weil ein Artikel bei Namen wie "Majas Stehlampe" nicht passt.
+        gruppen_phrase = next(
+            (n for n in gruppen_namen if n.lower().startswith("alle")), gruppen_namen[0]
+        )
+        block.append(
+            f'Schalte {max(mitglied_namen, key=len)} ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"{mid}","wert":null,"einheit":null}}\n'
+            f'Schalte {gruppen_phrase} ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"{gid}","wert":null,"einheit":null}}\n'
+        )
+    return "".join(block)
+
+
+def _build_system_prompt(ziel_liste: str, kontrast: str = "") -> str:
     """Baut den System-Prompt nach der SYS-Vorlage aus
     actuator_prototype/test_grammar.py (Verb-Regeln + Few-Shot-Beispiele +
     generierte Ziel-Liste). Formulierung nur gegen Messungen ändern.
@@ -62,7 +113,7 @@ Stell die Felixheizung auf 22 Grad -> {{"ist_kommando":true,"aktion":"setzen","z
 Mach das Kuechenrollo links zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollo_links","wert":null,"einheit":null}}
 Mach alle Rollos in der Kueche zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollos","wert":null,"einheit":null}}
 Mach alle Rollos zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"alle_rollos","wert":null,"einheit":null}}
-Erzaehl mir einen Witz -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
+{kontrast}Erzaehl mir einen Witz -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
 
 Bekannte Ziele:
 {ziel_liste}"""
@@ -149,6 +200,11 @@ class Actuator:
                     "typ": z.get("typ"),
                     "aktionen": z.get("aktionen", []),
                     "wert": z.get("wert"),
+                    # Nur bei Sammel-Zielen: die ziel-ids, in die sich die
+                    # Gruppe entfaltet. Der Assistent steuert sie nicht einzeln
+                    # an — er baut daraus das Kontrast-Beispiel unten, und der
+                    # Überwacher sieht im Mitschnitt, wozu eine Gruppe wird.
+                    "mitglieder": z.get("mitglieder"),
                 }
                 for z in ziele
             }
@@ -166,7 +222,7 @@ class Actuator:
                 lines.append(
                     f'- {z["id"]}: {al}  (aktionen: {",".join(z.get("aktionen", []))}){rng}'
                 )
-            system_prompt = _build_system_prompt("\n".join(lines))
+            system_prompt = _build_system_prompt("\n".join(lines), _kontrast_beispiel(digest))
             version = caps.get("version")
 
             with self._lock:
