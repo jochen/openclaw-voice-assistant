@@ -538,21 +538,19 @@ def run() -> None:
             print(f"⚠️  Aktuator-Start fehlgeschlagen: {e}")
             actuator = None
 
-    # --- Überwacher Stufe 1 (periodisch actuator_turns.log prüfen + melden) ---
-    # Fehlt der `watcher:`-Block oder enabled=false: kein Thread. Der Watcher
-    # braucht den Aktuator nicht zwingend (er liest nur das Log), aber ohne
-    # Aktuator ist das Log leer — dann läuft er sinnlos. Also nur starten wenn
-    # auch der Aktuator aktiv ist.
+    # --- Überwacher (semantische Prüfung jedes Aktuator-Turns via LLM) ---
+    # Fehlt der `watcher:`-Block oder enabled=false: kein Overseer. Der
+    # Overseer braucht den Aktuator (er prüft dessen Turns), also nur starten
+    # wenn auch der Aktuator aktiv ist.
+    overseer = None
     if profile.watcher.enabled and profile.watcher.chat_id and actuator is not None:
         try:
-            from voice_assistant.services.watcher import Watcher
+            from voice_assistant.services.watcher import Overseer
             wt = profile.watcher
-            # bot_token leer = Profil-Telegram-Token nutzen (gleicher Bot, anderer Chat)
             bot_tok = wt.bot_token or profile.telegram_bot_token
-            watcher = Watcher(
+            overseer = Overseer(
                 chat_id=wt.chat_id,
                 bot_token=bot_tok,
-                poll_interval=wt.poll_interval,
                 quiet_start=wt.quiet_start,
                 quiet_end=wt.quiet_end,
                 llm_url=wt.llm_url,
@@ -560,7 +558,9 @@ def run() -> None:
                 llm_api_key=wt.llm_api_key,
                 llm_timeout=wt.llm_timeout,
             )
-            watcher.start()
+            llm_info = f", Modell {wt.llm_model}" if wt.llm_model else ""
+            print(f"👁️  Überwacher aktiv{llm_info}, meldet an Chat {wt.chat_id}, "
+                  f"still {wt.quiet_start:02d}–{wt.quiet_end:02d} Uhr")
         except Exception as e:
             print(f"⚠️  Überwacher-Start fehlgeschlagen: {e}")
     elif profile.watcher.enabled and not profile.watcher.chat_id:
@@ -989,6 +989,17 @@ def run() -> None:
                                 "grund": (resp or {}).get("grund"),
                                 "gesprochen": (resp or {}).get("gesprochen"),
                             })
+                            if overseer is not None:
+                                overseer.check_turn({
+                                    "ts": datetime.now().isoformat(timespec="seconds"),
+                                    "request_id": request_id,
+                                    "transcript": text,
+                                    "speaker": act_spk,
+                                    "intent": intent,
+                                    "status": (resp or {}).get("status", "keine_antwort"),
+                                    "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
+                                    "gesprochen": (resp or {}).get("gesprochen"),
+                                })
                             if resp is None:
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
