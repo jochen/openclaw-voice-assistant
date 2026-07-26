@@ -2,6 +2,12 @@ config.yaml
 config.yaml.bak-*
 # Shared Secret für die Node-RED-Aktuator-Endpunkte (X-Actuator-Token)
 voiceact-token.txt
+# Generierte /capabilities-Schnappschüsse: sie enthalten die komplette
+# Geräteliste der jeweiligen Installation (Räume, Namen) und gehören damit
+# niemandem außer ihrem Betreiber. Regenerierbar mit
+# actuator_prototype/capabilities_to_schema.py — der Generator bleibt im Repo.
+actuator_prototype/*.json
+actuator_prototype/version.txt
 esphome/secrets.yaml
 esphome/.esphome/
 esphome-venv/

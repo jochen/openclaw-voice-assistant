@@ -12,6 +12,7 @@ Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
   → WebRTC VAD + recording (max 30 s)
   → STT: Speaches /v1/audio/transcriptions  (fallback: faster-whisper local)
   → Diarization (parallel): Speaches /v1/audio/diarization with known speakers
+  → Voice actuator (optional): a switching command? → run locally (~0.5 s), skip the rest
   → Confirmation TTS ("I understood…") — parallel thread
   → POST /v1/responses → OpenClaw  (wrapper: "🎤 [Sprecher: jochen|unbekannt] {text}")
   → Reply TTS sentence by sentence: Speaches /v1/audio/speech  (fallback: Piper local)
@@ -187,6 +188,58 @@ esphome-venv/bin/pip install esphome
 **How it works:** The Pi connects to the ESP via ESPHome Native API (port 6053, `aioesphomeapi`). Audio streams continuously via the `voice_assistant` component in API_AUDIO mode. TTS output is sent back as WAV via the ESP's `media_player` announce API — the Pi serves the WAV over HTTP (port 18800) and the ESP fetches and plays it.
 
 Wakeword detection (`openwakeword`) runs on the Pi against the audio stream.
+
+## Voice actuator (optional)
+
+Switching commands like "turn on the kitchen light" normally take the same road
+as any other question: through the language model in the backend. That takes
+seconds. The voice actuator intercepts them right after speech recognition and
+runs them locally — measured at **about 0.5 seconds** instead of several.
+
+```
+STT text → small LLM forms ONE JSON intent → POST /intent to your home
+           automation → its reply text is read out verbatim
+```
+
+If the sentence is not a switching command, everything continues to the backend
+as before. Same if the small model is unavailable — the actuator is a shortcut,
+never a bottleneck.
+
+**The assistant only contains the speech side.** You provide the executing side
+yourself: two HTTP endpoints, `GET /capabilities` (what may be switched) and
+`POST /intent` (do it). What you build them with is up to you — Node-RED, Home
+Assistant, openHAB or a fifty-line script.
+
+**→ [`ACTUATOR_INTERFACE.md`](ACTUATOR_INTERFACE.md)** (German) describes the
+contract in full, including the reasoning behind every design decision, a
+working minimal implementation in Flask and an acceptance check via `curl`.
+
+The device vocabulary is **not** maintained in the assistant: schema and prompt
+for the small model are generated at runtime from `/capabilities`. Adding a new
+device there is enough — it becomes speakable immediately, without a restart and
+without touching the prompt.
+
+The actuator is enabled per profile; without the block it stays off:
+
+```yaml
+    actuator:
+      enabled: true
+      base_url: "http://<home-automation>:1880/voiceact"
+      llm_url:  "http://localhost:8090/v1/chat/completions"
+      mqtt_host: ""          # optional: instant notification on changes;
+                             # empty = polling every 10 min only
+```
+
+The local model is expected to be a small instruction-following LLM behind an
+OpenAI-compatible API (tested: Gemma-4-E2B-Q4 via llama.cpp). It must support
+`response_format: json_schema` — the closed form of the intent is half the
+safety, the executing side checks the other half.
+
+The token for the endpoints lives in `voiceact-token.txt` in the project
+directory (gitignored) and is sent as the `X-Actuator-Token` header.
+
+Turns handled by the actuator itself are never seen by the backend — they are
+written as JSONL to `<workspace>/actuator_turns.log` instead.
 
 ## OpenClaw Integration
 

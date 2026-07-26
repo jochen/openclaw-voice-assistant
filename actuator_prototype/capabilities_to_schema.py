@@ -12,9 +12,11 @@ Outputs (in OUTDIR):
 """
 import json, os, sys, urllib.request, urllib.error
 
-BASE = os.environ.get("VOICEACT_BASE", "http://<hausautomation>:1880/voiceact")
-TOKEN_FILE = os.environ.get("VOICEACT_TOKEN_FILE",
-                            "/home/jochen/openclaw_voice_assist/voiceact-token.txt")
+BASE = os.environ.get("VOICEACT_BASE", "http://<node-red-host>:1880/voiceact")  # per Env setzen
+TOKEN_FILE = os.environ.get(
+    "VOICEACT_TOKEN_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "voiceact-token.txt"),
+)
 OUTDIR = os.path.dirname(os.path.abspath(__file__))
 
 def fetch_capabilities():

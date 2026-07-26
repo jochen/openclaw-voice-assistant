@@ -100,14 +100,17 @@ class ActuatorConfig:
     und voice_assistant/services/actuator.py). Default enabled=False: Profile ohne
     den `actuator:`-Block verhalten sich exakt wie vor diesem Umbau."""
     enabled: bool = False
-    base_url: str = "http://<hausautomation>:1880/voiceact"
+    # Leer = muss im Profil gesetzt werden. Kein echter Host als Default —
+    # das Repo ist öffentlich, die Adresse gehört in die (gitignorierte)
+    # config.yaml. Siehe ACTUATOR_INTERFACE.md.
+    base_url: str = ""
     # leer -> Default <repo-root>/voiceact-token.txt (siehe _parse_profile,
     # aus PROJECT_DIR abgeleitet statt hart kodiert)
     token_file: str = ""
     llm_url: str = "http://localhost:8090/v1/chat/completions"
     llm_timeout: float = 5.0
     intent_timeout: float = 1.5
-    mqtt_host: str = "<hausautomation>"
+    mqtt_host: str = ""
     mqtt_port: int = 1883
     refresh_poll_sec: int = 600
 
@@ -421,7 +424,9 @@ OPENCLAW_STREAM_TIMEOUT = 600
 # gesprochen (Worker-Thread läuft weiter, LED-Reset übernimmt der Worker).
 OPENCLAW_OVERALL_TIMEOUT = OPENCLAW_STREAM_TIMEOUT + 60
 
-VOICE_ANALYSIS_BASE = "http://<speaches-host>:8001"
+# Aus der (gitignorierten) config.yaml statt als Konstante im Repo — sonst
+# stünde eine echte interne Adresse öffentlich. Leer = Stimmungsanalyse aus.
+VOICE_ANALYSIS_BASE = str(_load_yaml().get("voice_analysis_base", ""))
 
 SPEACHES_TIMEOUT = 15
 SPEACHES_RETRY_COOLDOWN = 60

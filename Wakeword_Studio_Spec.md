@@ -126,7 +126,7 @@ profiles:
     # ... wie bisher ...
     wakewords:
       - bundle: gaston                      # models/wakewords/gaston/
-        session: "agent:main:telegram:group:<telegram-group>"
+        session: "agent:main:telegram:group:-1003XXXXXXXXX"
         ack: "Ja?"                          # optional, default: wakeword_ack
         tts_voice: "..."                    # optional, default: speaches_tts_voice
       - bundle: hey_jarvis                  # eingebaute openwakeword-Modelle

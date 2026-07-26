@@ -187,7 +187,7 @@ Bei Stream-Timeout wird der Auftrag NICHT erneut gepostet (Doppel-Ausführung),
 sondern per `query_status()` nur das Ergebnis des laufenden Turns abgefragt.
 
 Der `x-openclaw-session-key`-Header trägt die Session-Kennung (z.B.
-`agent:main:telegram:group:<telegram-group>`) und teilt die Session mit dem
+`agent:main:telegram:group:-1003XXXXXXXXX`) und teilt die Session mit dem
 Telegram-Chat.
 
 ## LED States

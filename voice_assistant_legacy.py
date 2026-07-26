@@ -31,7 +31,7 @@ LED-Status:
 - LED5 = Cyan     (liest Antwort vor)
 
 Profil-Auswahl: Hostname oder Env-Variable GASTON_PROFILE
-  GASTON_PROFILE=clawdpi  →  clawdpi1 (<voice-pi>)
+  GASTON_PROFILE=clawdpi  →  clawdpi1 (<pi-host>)
   GASTON_PROFILE=openclaw →  zweiter Pi
 
 Usage: source ~/ow-venv/bin/activate && python live_wakeword_and_wisphertts10.py

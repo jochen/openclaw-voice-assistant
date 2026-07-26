@@ -43,11 +43,11 @@ MemPalace-Wings/Rooms durchsuchen — hier v.a. Wing `clawdpi1-home-pi-openclaw-
 ## 2. Was schon existiert
 
 **noderedpi4 (Ausführungsseite, live & gemergt):**
-- `GET  http://<hausautomation>:1880/voiceact/capabilities` — 62 Ziele, aktuell Version `e3d6af78`.
-- `POST http://<hausautomation>:1880/voiceact/intent` — Validierung, Gate, Handshake, Dedup, `gesprochen`, MQTT-Echo.
-- `GET  http://<hausautomation>:1880/voiceact/registry` — 78 Geräte (für den späteren Überwacher).
+- `GET  http://<node-red-host>:1880/voiceact/capabilities` — 62 Ziele, aktuell Version `e3d6af78`.
+- `POST http://<node-red-host>:1880/voiceact/intent` — Validierung, Gate, Handshake, Dedup, `gesprochen`, MQTT-Echo.
+- `GET  http://<node-red-host>:1880/voiceact/registry` — 78 Geräte (für den späteren Überwacher).
 - Auth: Header **`X-Actuator-Token`**, Token in **`/home/jochen/openclaw_voice_assist/voiceact-token.txt`** (gitignored).
-- MQTT-Broker `<hausautomation>:1883`: `voiceact/capabilities_changed` (retained `{version}`),
+- MQTT-Broker `<node-red-host>:1883`: `voiceact/capabilities_changed` (retained `{version}`),
   `voiceact/executed` (Echo = kompletter Request verbatim + status + timestamp),
   `voiceact/registry_changed`.
 
