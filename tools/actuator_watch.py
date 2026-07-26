@@ -160,6 +160,14 @@ def _pruefe_aktions_mismatch(turn: dict) -> dict | None:
     # nicht aus" mit intent „ein" ist Selbstkorrektur, kein Mismatch.
     if intent_aktion in gefunden:
         return None
+    # Sonderfall: Intent ist „setzen" mit einem wert (z.B. „alle rollos auf
+    # 10%"). Das Wort „auf" im Transkript ist hier die natürliche Sprechweise
+    # („auf X%"), nicht die Aktion „auf" (ganz öffnen). Gemessen 2026-07-26:
+    # „alle rollos auf 10%" löste fälschlich AKTIONS_MISMATCH aus, weil die
+    # Heuristik „auf" als abweichende Aktion sah. Bei setzen+wert ist „auf"
+    # niemals ein Mismatch — es ist die Präposition, nicht die Aktion.
+    if intent_aktion == "setzen" and intent.get("wert") is not None:
+        return None
     andere = gefunden - {intent_aktion}
     if not andere:
         return None
