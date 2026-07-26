@@ -105,7 +105,8 @@ def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
             {"role": "user", "content": user_msg},
         ],
         "temperature": 0,
-        "max_tokens": 100,
+        "max_tokens": 500,
+        "chat_template_kwargs": {"enable_thinking": False},
     }).encode("utf-8")
 
     headers = {"Content-Type": "application/json"}
@@ -116,9 +117,26 @@ def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             out = json.loads(r.read().decode())
-        content = out["choices"][0]["message"]["content"].strip()
-        # Parse das JSON aus der Antwort
-        result = json.loads(content)
+        msg = out["choices"][0]["message"]
+        # GLM-5-2 ist ein Reasoning-Modell: mit enable_thinking=False sollte
+        # content direkt das JSON enthalten. Falls trotzdem reasoning da ist
+        # und content leer, versuche reasoning zu parsen (Fallback).
+        content = (msg.get("content") or "").strip()
+        if not content:
+            content = (msg.get("reasoning") or "").strip()
+        if not content:
+            return {
+                "art": "LLM_ERROR",
+                "detail": "LLM antwortete ohne content (leer).",
+            }
+        # Das JSON kann im Reasoning-Text eingebettet sein — extrahieren.
+        # Suche nach dem letzten JSON-Objekt im Text.
+        import re
+        json_match = re.search(r'\{[^{}]*"ok"[^{}]*\}', content)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(content)
         if result.get("ok"):
             return None
         return {
