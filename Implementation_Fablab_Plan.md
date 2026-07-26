@@ -71,19 +71,19 @@ Bei Änderung am Lärmpegel (anderer Raum, Lasercutter aus) Wert ggf. anpassen.
 
 ### pip-Problem im ow-venv
 
-Das ow-venv auf dem Fablab-Pi wurde ursprünglich als `/home/pi/ow-venv` angelegt
+Das ow-venv auf dem Fablab-Pi wurde ursprünglich als `~/ow-venv` angelegt
 und dann in den Projektordner verschoben. `bin/pip` hat den alten Pfad hardcoded
 und installiert Pakete ins alte venv statt ins neue.
 
 **Immer `python -m pip` verwenden, nie `pip` direkt:**
 ```bash
-/home/pi/openclaw_voice_assist/ow-venv/bin/python -m pip install <paket>
+~/openclaw_voice_assist/ow-venv/bin/python -m pip install <paket>
 ```
 
 ### aioesphomeapi muss in Projekt-venv sein
 
 ```bash
-cd /home/pi/openclaw_voice_assist
+cd ~/openclaw_voice_assist
 ow-venv/bin/python -m pip install aioesphomeapi
 ```
 
@@ -107,7 +107,7 @@ Falls abweichend → `config.yaml` anpassen (nur `local_audio.playback_device`).
 
 ```bash
 ssh pi@<fablab-pi>
-cd /home/pi/openclaw_voice_assist
+cd ~/openclaw_voice_assist
 source ow-venv/bin/activate
 python -m voice_assistant
 ```
@@ -135,7 +135,7 @@ sudo systemctl status voice-assistant.service
 
 ```bash
 ssh pi@<fablab-pi>
-cd /home/pi/openclaw_voice_assist
+cd ~/openclaw_voice_assist
 esphome-venv/bin/esphome run esphome/respeaker-fablab.yaml --device /dev/ttyACM0
 ```
 

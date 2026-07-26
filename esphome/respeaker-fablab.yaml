@@ -3,7 +3,7 @@
 # Kein Home Assistant erforderlich — Python-Client nutzt aioesphomeapi direkt.
 #
 # Flashen (USB, erstes Mal):
-#   cd /home/pi/openclaw_voice_assist
+#   cd ~/openclaw_voice_assist
 #   esphome-venv/bin/esphome run esphome/respeaker-fablab.yaml --device /dev/ttyACM0
 # OTA (danach):
 #   esphome-venv/bin/esphome run esphome/respeaker-fablab.yaml --device respeaker-fablab.local

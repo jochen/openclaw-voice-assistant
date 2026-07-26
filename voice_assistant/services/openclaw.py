@@ -21,7 +21,7 @@ from voice_assistant.config import (
 #
 # Der Vertrag wird NICHT hier definiert, sondern OpenClaw-seitig im Workspace-
 # Kontext, der in den Agent-Prompt geladen wird — kanonische Quelle:
-#   /home/pi/.openclaw/workspace/SYSTEMNOTIZEN.md  → "NO_REPLY-Regel (2026-05-08)"
+#   ~/.openclaw/workspace/SYSTEMNOTIZEN.md  → "NO_REPLY-Regel (2026-05-08)"
 #   "Wenn keine Ausgabe erfolgen soll, muss die Antwort exakt `NO_REPLY` sein."
 # (Die Regel ist bewusst generisch; die TV-Erkennung ist eine Generalisierung
 # des Modells, kein eigener Trigger.) Hier nur die Erkennung/der Abbruch.

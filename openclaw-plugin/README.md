@@ -20,7 +20,7 @@ OpenClaw plugin that lets the LLM manage speaker references for the [openclaw-vo
 From this repo's checkout:
 
 ```bash
-openclaw plugins install --link /home/pi/openclaw_voice_assist/openclaw-plugin/
+openclaw plugins install --link ~/openclaw_voice_assist/openclaw-plugin/
 openclaw gateway restart
 openclaw plugins inspect voice-enrol --runtime --json
 ```
@@ -51,7 +51,7 @@ The plugin has no runtime dependencies beyond Node ≥ 18 (`fetch` is built-in).
 
 ```bash
 # Re-link after editing index.js (no rebuild needed — pure JS)
-openclaw plugins install --link /home/pi/openclaw_voice_assist/openclaw-plugin/
+openclaw plugins install --link ~/openclaw_voice_assist/openclaw-plugin/
 openclaw gateway restart
 
 # Uninstall
@@ -87,7 +87,7 @@ OpenClaw-Plugin, mit dem das LLM Stimm-Referenzen für den [openclaw-voice-assis
 Aus diesem Repo-Checkout:
 
 ```bash
-openclaw plugins install --link /home/pi/openclaw_voice_assist/openclaw-plugin/
+openclaw plugins install --link ~/openclaw_voice_assist/openclaw-plugin/
 openclaw gateway restart
 openclaw plugins inspect voice-enrol --runtime --json
 ```
@@ -128,7 +128,7 @@ Das Enrolment läuft über zwei Voice-Turns (Follow-up-Mechanismus):
 
 ```bash
 # Nach index.js-Änderung neu linken (kein Build nötig — reines JS)
-openclaw plugins install --link /home/pi/openclaw_voice_assist/openclaw-plugin/
+openclaw plugins install --link ~/openclaw_voice_assist/openclaw-plugin/
 openclaw gateway restart
 
 # Deinstallation

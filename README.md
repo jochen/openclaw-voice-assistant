@@ -36,8 +36,10 @@ Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/jochen/openclaw-voice-assistant.git
-cd openclaw-voice-assistant
+# Verzeichnisname bewusst mit Unterstrichen: die systemd-Unit erwartet
+# %h/openclaw_voice_assist
+git clone https://github.com/jochen/openclaw-voice-assistant.git openclaw_voice_assist
+cd openclaw_voice_assist
 ```
 
 ### 2. Install Python 3.11.9 via pyenv
@@ -63,8 +65,8 @@ The repo includes a `.python-version` file — pyenv activates 3.11.9 automatica
 ### 3. Create venv and install dependencies
 
 ```bash
-python -m venv /home/pi/openclaw_voice_assist/ow-venv
-source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
+python -m venv ~/openclaw_voice_assist/ow-venv
+source ~/openclaw_voice_assist/ow-venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -130,7 +132,7 @@ Each model needs both the `.onnx` and its `.onnx.json` sidecar. If the models al
 ## Running
 
 ```bash
-source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
+source ~/openclaw_voice_assist/ow-venv/bin/activate
 python -m voice_assistant
 ```
 
@@ -333,7 +335,7 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 Install / register:
 
 ```bash
-openclaw plugins install --link /home/pi/openclaw_voice_assist/openclaw-plugin/
+openclaw plugins install --link ~/openclaw_voice_assist/openclaw-plugin/
 openclaw gateway restart
 openclaw plugins inspect voice-enrol --runtime --json   # status should be "loaded"
 ```

@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pi/openclaw_voice_assist
+WorkingDirectory=%h/openclaw_voice_assist
 Environment="PYTHONUNBUFFERED=1"
 # piper liegt im Projekt-venv, aplay/arecord in den System-bins — ohne expliziten
 # PATH findet der Dienst die subprocess-Aufrufe (piper/aplay) nicht.
-Environment="PATH=/home/pi/openclaw_voice_assist/ow-venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/pi/openclaw_voice_assist/ow-venv/bin/python -u -m voice_assistant
+Environment="PATH=%h/openclaw_voice_assist/ow-venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=%h/openclaw_voice_assist/ow-venv/bin/python -u -m voice_assistant
 Restart=on-failure
 RestartSec=15
 

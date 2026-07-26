@@ -9,8 +9,8 @@ ow-venv/bin/python -m voice_assistant
 ```
 
 The entry point (`voice_assistant/__main__.py`) self-reinvokes with the project venv
-Python (`/home/pi/openclaw_voice_assist/ow-venv/bin/python`) on startup if not already
-running inside it. Der frühere separate venv `~/ow-venv` wurde aufgelöst — alle Pakete
+Python (`<repo>/ow-venv/bin/python`, aus dem Dateipfad abgeleitet) on startup if not
+already running inside it. Der frühere separate venv `~/ow-venv` wurde aufgelöst — alle Pakete
 liegen jetzt im Projekt-venv (`pip install` immer via `ow-venv/bin/python -m pip`).
 
 Override the profile: `GASTON_PROFILE=openclaw python -m voice_assistant`
@@ -134,7 +134,7 @@ weiterhin Vorrang vor der Wakeword-Stimme).
 | Speaches (GPU container) | `http://<speaches-host>:8000` | STT + TTS (OpenAI-compatible) |
 | OpenClaw | `http://127.0.0.1:18789/v1/responses` | AI brain, SSE-streaming, session-based |
 | WLED controller | `wled_controller.py` (repo-local) | LED-Status |
-| Piper TTS | `/home/pi/.local/share/piper/*.onnx` | Lokaler TTS-Fallback |
+| Piper TTS | `~/.local/share/piper/*.onnx` | Lokaler TTS-Fallback |
 | Telegram Bot API | `https://api.telegram.org/...` | Mirror queries and replies |
 | ReSpeaker (ESPHome) | `<host>:6053` | Native API (Audio-Stream, Wakeword-Events, LED-Ring) — optional |
 
@@ -206,14 +206,14 @@ Der `LedDirector` verteilt die Kommandos auf **alle aktiven** LED-Senken
 
 ## File Paths
 
-- Workspace: `/home/pi/.openclaw/workspace`
-- Piper "Ja?" pre-rendered WAV: `/home/pi/.openclaw/workspace/ja.wav`
-- Piper models: `/home/pi/openclaw_voice_assist/models/piper/de_DE-thorsten_emotional-medium.onnx`,
+- Workspace: `~/.openclaw/workspace`
+- Piper "Ja?" pre-rendered WAV: `~/.openclaw/workspace/ja.wav`
+- Piper models: `~/openclaw_voice_assist/models/piper/de_DE-thorsten_emotional-medium.onnx`,
   `de_DE-thorsten-low.onnx` (im Projekt, gitignored wegen Größe; je `.onnx` + Pflicht-Sidecar `.onnx.json`)
 - Wakeword-Bundles (eigene Wakewords, Manifest + `.tflite`):
-  `/home/pi/openclaw_voice_assist/models/wakewords/<name>/` (committed außer
+  `~/openclaw_voice_assist/models/wakewords/<name>/` (committed außer
   `samples/`; siehe `models/wakewords/README.md`). Eingebaute openwakeword-
   Modelle (`hey_jarvis`, `alexa`, …) kommen weiterhin aus den Package-
   Ressourcen, kein Env-Var-Override nötig.
-- Venv (Python 3.11, openwakeword/tflite/piper/num2words): `/home/pi/openclaw_voice_assist/ow-venv`
-- ESPHome venv (getrennt, nur fürs Flashen): `/home/pi/openclaw_voice_assist/esphome-venv`
+- Venv (Python 3.11, openwakeword/tflite/piper/num2words): `~/openclaw_voice_assist/ow-venv`
+- ESPHome venv (getrennt, nur fürs Flashen): `~/openclaw_voice_assist/esphome-venv`

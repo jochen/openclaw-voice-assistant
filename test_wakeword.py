@@ -5,6 +5,7 @@
 """
 import asyncio
 import time
+import os
 import sys
 
 import numpy as np
@@ -14,7 +15,7 @@ PORT = 6053
 SECS = 30
 CHUNK_BYTES = 1280  # 640 int16 samples = 40ms @ 16kHz
 
-sys.path.insert(0, "/home/pi/openclaw_voice_assist")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 async def main():

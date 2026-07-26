@@ -8,19 +8,20 @@ Ablauf:
   4. Kein STT / kein OpenClaw — reiner Speaker-Test
 
 Verwendung:
-  source /home/pi/openclaw_voice_assist/ow-venv/bin/activate
+  source ow-venv/bin/activate
   python test_tts.py
 """
 import asyncio
+import os
 import sys
 import wave
 import numpy as np
 
-sys.path.insert(0, "/home/pi/openclaw_voice_assist")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 HOST = "respeaker-openclaw.local"
 PORT = 6053
-WAV  = "/home/pi/.openclaw/workspace/ja.wav"
+WAV  = os.path.expanduser("~/.openclaw/workspace/ja.wav")
 
 
 def _resample_to_16k(samples: np.ndarray, src_rate: int) -> np.ndarray:

@@ -3,7 +3,7 @@
 # Kein Home Assistant erforderlich — Python-Client nutzt aioesphomeapi direkt.
 #
 # Flashen:
-#   cd /home/pi/openclaw_voice_assist
+#   cd ~/openclaw_voice_assist
 #   esphome-venv/bin/esphome run esphome/respeaker.yaml --device /dev/ttyACM0
 #   OTA: esphome-venv/bin/esphome run esphome/respeaker.yaml --device respeaker-openclaw.local
 #

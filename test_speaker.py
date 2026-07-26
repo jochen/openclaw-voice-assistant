@@ -12,11 +12,11 @@ import numpy as np
 from scipy.signal import resample_poly
 from math import gcd
 
-sys.path.insert(0, "/home/pi/openclaw_voice_assist")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 HOST_ESP = "respeaker-openclaw.local"
 PORT_ESP  = 6053
-WAV       = "/home/pi/.openclaw/workspace/ja.wav"
+WAV       = os.path.expanduser("~/.openclaw/workspace/ja.wav")
 HTTP_PORT = 18800
 
 
