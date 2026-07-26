@@ -174,7 +174,9 @@ class RespeakerClient:
             self._in_session = False
             self._audio_q.put(b"")  # EOS
 
-        async def handle_audio(data: bytes) -> None:
+        async def handle_audio(data: bytes, data2: bytes | None = None) -> None:
+            # data2 kam mit einer neueren aioesphomeapi-Version dazu (optionales
+            # Zusatzfeld) - fuer unsere Single-Channel-Pipeline ohne Belang.
             try:
                 self._audio_q.put_nowait(data)
             except queue.Full:
