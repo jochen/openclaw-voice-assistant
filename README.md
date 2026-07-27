@@ -247,31 +247,40 @@ written as JSONL to `<workspace>/actuator_turns.log` instead.
 
 Since the actuator bypasses the backend, nothing double-checks whether what
 was said matches what was switched. The overseer closes that gap conservatively:
-it reads `actuator_turns.log` and reports discrepancies — it does **not**
+it checks each actuator turn and reports discrepancies — it does **not**
 intervene, switch, or correct anything.
 
-Three discrepancy classes are detected from the log alone (no MQTT state, no
-device registry needed):
+The semantic check uses an LLM (OpenAI-compatible API, like the actuator
+itself). A short system prompt asks: does the transcript match the intent?
+The LLM recognises subtler patterns that a regex heuristic would miss —
+negations, restrictions, prepositions vs. actions („auf 10%" is a SET action,
+not the OPEN action). See `voice_assistant/services/watcher.py`.
 
-- **AKTIONS_MISMATCH** — the transcript names a different action than the
-  classified intent (e.g. "…aus" said, "ein" classified — a possible STT
-  mishear).
+Additionally, a deterministic structural check runs without an LLM:
+
 - **EXEC_DIFFERS** — the home automation executed a different target/action
   than the intent requested.
-- **STATUS_PROBLEM** — the automation did not answer "ausgefuehrt" (rejected,
+- **STATUS_PROBLEM** — the automation did not answer „ausgefuehrt" (rejected,
   unknown target, deferred). Archived but not sent to Telegram (too noisy).
 
-Two ways to use it:
+On LLM errors (provider down, timeout): the overseer sends a message to the
+Telegram chat („Überwachung konnte nicht erfolgen weil …") instead of failing
+silently. Timeout is 30s with one retry on network/timeout errors.
+
+The overseer runs as an event-driven daemon thread — `check_turn()` is called
+immediately after each actuator turn (not on a polling timer), so a mismatch
+is reported within ~1 second.
+
+One-off CLI tool (reads the log, classifies, deduplicates):
 
 ```bash
-# One-off CLI — prints findings, deduplicates via actuator_watch.jsonl
 ow-venv/bin/python -m tools.actuator_watch
 ow-venv/bin/python -m tools.actuator_watch --seit 3   # last 3 days only
 ow-venv/bin/python -m tools.actuator_watch --alles     # re-show seen ones
 ```
 
-Or as a background worker inside the assistant, reporting to a separate
-Telegram chat (not the family voice chat):
+Background worker inside the assistant, reporting to a separate Telegram chat
+(not the family voice chat):
 
 ```yaml
     watcher:
@@ -279,10 +288,13 @@ Telegram chat (not the family voice chat):
       chat_id: "<telegram-chat-id>"   # separate group, not the voice mirror
       quiet_start: 1                   # no messages 01:00–07:00
       quiet_end: 7
-      poll_interval: 300               # check every 5 min
+      llm_url: "https://<provider>/v1/chat/completions"
+      llm_model: "<model>"
+      llm_api_key: "<api-key>"
+      llm_timeout: 30
 ```
 
-Only `AKTIONS_MISMATCH` and `EXEC_DIFFERS` are sent to Telegram; during quiet
+Only `LLM_MISMATCH` and `EXEC_DIFFERS` are sent to Telegram; during quiet
 hours findings are collected and held. Stage 1 is deliberately conservative —
 the most expensive mistake the overseer could make is a *hallucinated*
 correction, physically in the house, possibly at night. Later stages

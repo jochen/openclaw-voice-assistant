@@ -104,16 +104,21 @@ deshalb in `~/.openclaw/workspace/actuator_turns.log` (Rohmaterial für den
 ### Überwacher Stufe 1 (nur LESEN + MELDEN)
 
 `tools/actuator_watch.py` — CLI-Tool, liest `actuator_turns.log` und erkennt
-Diskrepanzen (AKTIONS_MISMATCH, EXEC_DIFFERS, STATUS_PROBLEM). Dedupliziert
-via `actuator_watch.jsonl`. Siehe `tools/wake_triage.py` für den Stil.
+Diskrepanzen (EXEC_DIFFERS, STATUS_PROBLEM). Dedupliziert via
+`actuator_watch.jsonl`. Siehe `tools/wake_triage.py` für den Stil.
 
-`voice_assistant/services/watcher.py` — Daemon-Thread im Voice-Assistant.
-Prüft periodisch (default 300 s) das Log, schickt AKTIONS_MISMATCH und
-EXEC_DIFFERS in eine separate Telegram-Gruppe (nicht den Voice-Spiegel).
-Stille Zeit 01:00–07:00: nichts wird gesendet, nur gesammelt.
-STATUS_PROBLEM bleibt im JSONL-Archiv, nicht in Telegram (zu laut).
+`voice_assistant/services/watcher.py` — Event-gesteuerter Daemon-Thread im
+Voice-Assistant. `check_turn()` wird sofort nach jedem Aktuator-Turn
+aufgerufen (nicht periodisch). Semantische Prüfung via LLM
+(OpenAI-kompatibles API, System-Prompt ~200 Token): passt das Transkript
+zum Intent? LLM_MISMATCH und EXEC_DIFFERS gehen in eine separate Telegram-
+Gruppe (nicht den Voice-Spiegel). Stille Zeit 01:00–07:00: nichts wird
+gesendet, nur gesammelt. STATUS_PROBLEM bleibt im JSONL-Archiv, nicht in
+Telegram (zu laut). Bei LLM-Fehler: Meldung an Telegram
+(„Überwachung konnte nicht erfolgen weil …"). Timeout 30s + 1 Retry.
 
 Aktiviert per Profil-Block `watcher:` (Default `enabled: false`).
+LLM-Felder: `llm_url`, `llm_model`, `llm_api_key`, `llm_timeout`.
 
 ## Profile System
 

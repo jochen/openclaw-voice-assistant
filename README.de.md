@@ -247,31 +247,42 @@ deshalb als JSONL in `<workspace>/actuator_turns.log`.
 
 Da der Aktuator das Backend überspringt, prüft nichts nach, ob das Gesagte
 mit dem Geschalteten übereinstimmt. Der Überwacher schließt diese Lücke
-konservativ: er liest `actuator_turns.log` und meldet Diskrepanzen — er
+konservativ: er prüft jeden Aktuator-Turn und meldet Diskrepanzen — er
 greift **nicht** ein, schaltet nicht, korrigiert nicht.
 
-Drei Diskrepanzklassen werden aus dem Log allein erkannt (kein MQTT-State,
-keine Gerätekennung nötig):
+Die semantische Prüfung nutzt ein LLM (OpenAI-kompatibles API, wie der
+Aktuator selbst). Ein kurzer System-Prompt fragt: passt das Transkript zum
+Intent? Das LLM erkennt subtilere Muster die eine Regex-Heuristik verfehlt
+— Verneinungen, Einschränkungen, Präposition vs. Aktion („auf 10%" ist eine
+SETZEN-Aktion, nicht die Aktion „auf" = ganz öffnen). Siehe
+`voice_assistant/services/watcher.py`.
 
-- **AKTIONS_MISMATCH** — das Transkript nennt eine andere Aktion als der
-  klassifizierte Intent (z.B. „…aus" gesagt, „ein" klassifiziert — mögliche
-  STT-Verhörmöglichkeit).
+Zusätzlich eine deterministische strukturelle Prüfung ohne LLM:
+
 - **EXEC_DIFFERS** — die Haussteuerung hat ein anderes Ziel/eine andere
   Aktion ausgeführt als der Intent verlangte.
 - **STATUS_PROBLEM** — die Automation antwortet nicht „ausgefuehrt" (abgelehnt,
   unbekanntes Ziel, zurückgestellt). Wird archiviert, aber nicht nach Telegram
   geschickt (zu laut).
 
-Zwei Nutzungsmöglichkeiten:
+Bei LLM-Fehlern (Provider down, Timeout): der Überwacher schickt eine Meldung
+an den Telegram-Chat („Überwachung konnte nicht erfolgen weil …") statt im
+Dunkeln zu versagen. Timeout ist 30s mit einem Retry bei Netzwerk-/Timeout-
+Fehlern.
+
+Der Überwacher läuft als event-gesteuerter Daemon-Thread — `check_turn()`
+wird sofort nach jedem Aktuator-Turn aufgerufen (nicht als periodischer
+Timer), sodass ein Mismatch binnen ~1 Sekunde gemeldet wird.
+
+Einmaliges CLI-Tool (liest das Log, klassifiziert, dedupliziert):
 
 ```bash
-# Einmaliges CLI — gibt Befunde aus, dedupliziert via actuator_watch.jsonl
 ow-venv/bin/python -m tools.actuator_watch
 ow-venv/bin/python -m tools.actuator_watch --seit 3   # nur letzte 3 Tage
 ow-venv/bin/python -m tools.actuator_watch --alles     # auch schon gesehene
 ```
 
-Oder als Hintergrund-Worker im Assistant, der in einen separaten Telegram-Chat
+Hintergrund-Worker im Assistant, der in einen separaten Telegram-Chat
 meldet (nicht den Familien-Voice-Chat):
 
 ```yaml
@@ -280,10 +291,13 @@ meldet (nicht den Familien-Voice-Chat):
       chat_id: "<telegram-chat-id>"   # separate Gruppe, nicht der Voice-Spiegel
       quiet_start: 1                   # keine Meldungen 01:00–07:00 Uhr
       quiet_end: 7
-      poll_interval: 300               # alle 5 Min prüfen
+      llm_url: "https://<provider>/v1/chat/completions"
+      llm_model: "<modell>"
+      llm_api_key: "<api-key>"
+      llm_timeout: 30
 ```
 
-Nur `AKTIONS_MISMATCH` und `EXEC_DIFFERS` werden nach Telegram geschickt;
+Nur `LLM_MISMATCH` und `EXEC_DIFFERS` werden nach Telegram geschickt;
 während der Stille-Zeit werden Befunde gesammelt und zurückgehalten. Stufe 1
 ist bewusst konservativ — der teuerste Fehler des Überwachers wäre eine
 *eingebildete* Korrektur, physisch im Haus, womöglich nachts. Spätere Stufen
