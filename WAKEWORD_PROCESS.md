@@ -84,5 +84,8 @@ bloß das Wort „Stopp".
 
 ## Stand
 
-Siehe MemPalace (Wing `clawdpi1-home-pi-openclaw-voice-assist`, Room
-`decisions`) für den aktuellen Sammlungsstand und detaillierte Drawer.
+Im MemPalace (Wing `clawdpi1-home-pi-openclaw-voice-assist`, Room `decisions`,
+Drawer `...11c2e98f58cb...`) liegt der ausführliche Prozess-Drawer mit
+Session-Kontext, Fehlerdokumentation und aktuellem Sammlungsstand.
+Diese Datei (`WAKEWORD_PROCESS.md`) ist die Repo-Seite desselben — beide
+sinden gegenseitig verlinkt und sagen dasselbe.
