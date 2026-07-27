@@ -730,15 +730,17 @@ def run() -> None:
                         })
                         wake_ring.clear()
                         wake_ring_samples = 0
-                        # Ein-Satz-Kommando: LED SOFORT, kein play_wav, kein flush.
-                        # wake_ring-Schwanz als recorded_chunks voranstellen —
-                        # enthält das Wakewort und evtl. schon den Anfang des
-                        # durchgesprochenen Kommandos. "Ja?" kommt verzögert
-                        # (siehe STATE_RECORDING, ack_pending).
+                        # Ein-Satz-Kommando: LED SOFORT, kein play_wav.
+                        # flush LEERT den Puffer — wichtig! Ohne flush steht
+                        # das Wakewort-Audio noch im Puffer und wird als erstes
+                        # aufgezeichnet, was die STT verwirrt (gemessen 2026-07-27:
+                        # "Gaston Wohnzimmerrollo" wurde zu "Manolo auf 70 Prozent").
+                        # "Ja?" kommt verzögert (siehe STATE_RECORDING, ack_pending).
                         leds.set_phase(LED_RECORDING)
                         voice_controller.set_default_voice(current_wakeword.tts_voice)
                         near_miss_until = 0.0
                         wakeword.reset()
+                        audio_source.flush()
                         state = STATE_RECORDING
                         state_start = time.time()
                         recorded_chunks = []
@@ -816,11 +818,13 @@ def run() -> None:
                     wake_ring.clear()
                     wake_ring_samples = 0
                     # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
-                    # kein play_wav, kein flush, "Ja?" verzögert via ack_pending.
+                    # kein play_wav, flush leert den Puffer (sonst Wakewort-Audio
+                    # in der Aufnahme das die STT verwirrt). "Ja?" verzögert.
                     leds.set_phase(LED_RECORDING)
                     voice_controller.set_default_voice(current_wakeword.tts_voice)
                     near_miss_until = 0.0
                     wakeword.reset()
+                    audio_source.flush()
                     state = STATE_RECORDING
                     state_start = time.time()
                     recorded_chunks = []
