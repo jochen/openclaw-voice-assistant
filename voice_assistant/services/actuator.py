@@ -140,6 +140,7 @@ aktion: ein/aus (Licht,Schalter), auf/zu (Rollo ganz oeffnen/schliessen; "hoch"=
 wert(Zahl)+einheit nur bei setzen (prozent Rollo, grad Heizung), sonst null. Kein Steuerkommando -> ist_kommando=false, ziel="", rest null.
 Waehle das passende ziel aus der Liste (id links). Aliase stehen rechts.
 EINZAHL vs MEHRZAHL: "das <Geraet>" meint EIN einzelnes Ziel. "die"/"alle <Geraete> in <Raum>" meint das Sammel-Ziel fuer diesen Raum, falls die Liste eines fuehrt.
+ROLLO OHNE RAUM: "Rollo" oder "Rollos" OHNE Raumangabe und OHNE "alle" ist KEIN Kommando fuer alle_rollos. Antworte ist_kommando=false. Nur "alle Rollos" (mit dem Wort "alle") ist alle_rollos.
 
 Beispiele:
 Schalte das Flurlicht ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"flurlicht","wert":null,"einheit":null}}
@@ -147,6 +148,9 @@ Stell die Felixheizung auf 22 Grad -> {{"ist_kommando":true,"aktion":"setzen","z
 Mach das Kuechenrollo links zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollo_links","wert":null,"einheit":null}}
 Mach alle Rollos in der Kueche zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollos","wert":null,"einheit":null}}
 Mach alle Rollos zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"alle_rollos","wert":null,"einheit":null}}
+Wohnzimmerrollo auf 70% -> {{"ist_kommando":true,"aktion":"setzen","ziel":"wohnzimmerrollo","wert":70,"einheit":"prozent"}}
+Rollo auf 70% -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
+Rollo zu -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
 {kontrast}Erzaehl mir einen Witz -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
 
 Bekannte Ziele:
