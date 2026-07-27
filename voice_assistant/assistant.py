@@ -80,6 +80,12 @@ from voice_assistant.workers import Workers
 
 
 _STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
+
+# Ein-Satz-Kommando: nach dem Trigger wird das "Ja?" nicht sofort gespielt,
+# sondern ACK_DELAY_SEC lang der VAD beobachtet. Wird weitergesprochen, kommt
+# gar kein "Ja?" (LED-Ring reicht als Rückmeldung). Bleibt es still, wird
+# "Ja?" gespielt wie bisher. Siehe EIN_SATZ_KOMMANDO_PLAN.md.
+_ACK_DELAY_SEC = 0.4
 # 'bitte' war hier drin und hat jedes höfliche Schaltkommando verschluckt:
 # "Schalt das Küchenlicht bitte aus" matchte über ANY(bitte)+CORE(aus) als
 # Abbruch, die Anfrage starb wortlos (live beobachtet 2026-07-25 22:46).
@@ -625,6 +631,14 @@ def run() -> None:
     # sickert er in einen späteren Turn durch.
     pending_confirm: dict | None = None
 
+    # Ein-Satz-Kommando: "Ja?" wird verzögert gespielt. ack_pending=True nach
+    # dem Trigger, ack_deadline = Triggerzeit + _ACK_DELAY_SEC. Im
+    # STATE_RECORDING wird nach Ablauf entschieden: Sprache erkannt → kein
+    # "Ja?", Still → "Ja?" spielen. ack_path wird vom Trigger-Pfad gesetzt.
+    ack_pending = False
+    ack_deadline = 0.0
+    ack_path = ""
+
     _cleanup_trigger_audio()
 
     leds.set_phase(LED_IDLE)
@@ -716,21 +730,24 @@ def run() -> None:
                         })
                         wake_ring.clear()
                         wake_ring_samples = 0
-                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
-                        if os.path.exists(ack_path):
-                            print("🔊 Playing acknowledgement...")
-                            audio_sink.play_wav(ack_path)
-                        voice_controller.set_default_voice(current_wakeword.tts_voice)
+                        # Ein-Satz-Kommando: LED SOFORT, kein play_wav, kein flush.
+                        # wake_ring-Schwanz als recorded_chunks voranstellen —
+                        # enthält das Wakewort und evtl. schon den Anfang des
+                        # durchgesprochenen Kommandos. "Ja?" kommt verzögert
+                        # (siehe STATE_RECORDING, ack_pending).
                         leds.set_phase(LED_RECORDING)
+                        voice_controller.set_default_voice(current_wakeword.tts_voice)
                         near_miss_until = 0.0
                         wakeword.reset()
-                        audio_source.flush()
                         state = STATE_RECORDING
                         state_start = time.time()
                         recorded_chunks = []
                         silence_counter = 0
                         max_internal_pause = 0
                         speech_detected = False
+                        ack_pending = True
+                        ack_deadline = now + _ACK_DELAY_SEC
+                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     elif wake_hits >= 1:
                         # Wakeword-Name mitloggen: current_wakeword wurde von den
                         # Frames dieses Streaks gesetzt → erlaubt False-Positive-
@@ -798,21 +815,21 @@ def run() -> None:
                     })
                     wake_ring.clear()
                     wake_ring_samples = 0
-                    ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
-                    if os.path.exists(ack_path):
-                        print("🔊 Spiele Ja? ...")
-                        audio_sink.play_wav(ack_path)
-                    voice_controller.set_default_voice(current_wakeword.tts_voice)
+                    # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
+                    # kein play_wav, kein flush, "Ja?" verzögert via ack_pending.
                     leds.set_phase(LED_RECORDING)
+                    voice_controller.set_default_voice(current_wakeword.tts_voice)
                     near_miss_until = 0.0
                     wakeword.reset()
-                    audio_source.flush()
                     state = STATE_RECORDING
                     state_start = time.time()
                     recorded_chunks = []
                     silence_counter = 0
                     max_internal_pause = 0
                     speech_detected = False
+                    ack_pending = True
+                    ack_deadline = now + _ACK_DELAY_SEC
+                    ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     wake_hits = 0
                     wake_peak = 0.0
                     wake_announced = False
@@ -829,6 +846,21 @@ def run() -> None:
                 elif speech_detected:
                     silence_counter += 1
 
+                # Ein-Satz-Kommando: "Ja?" verzögert spielen. Nach _ACK_DELAY_SEC
+                # entscheiden: Sprache erkannt → User spricht weiter → kein "Ja?"
+                # (LED-Ring reicht). Still → "Ja?" spielen wie bisher.
+                # play_wav blockiert ~0,6s — währenddessen läuft Audio weiter in
+                # den Puffer, der nächste Loop-Durchlauf holt es ab. KEIN flush.
+                if ack_pending and now >= ack_deadline:
+                    if speech_detected:
+                        print(f"[{now:.1f}s] ⚡ Ein-Satz erkannt — kein Ja?")
+                        ack_pending = False
+                    else:
+                        ack_pending = False
+                        if os.path.exists(ack_path):
+                            print(f"[{now:.1f}s] 🔊 Playing acknowledgement...")
+                            audio_sink.play_wav(ack_path)
+
                 timeout = (now - state_start) > RECORDING_MAX_SEC
                 stop = speech_detected and silence_counter >= _silence_limit
 
@@ -839,6 +871,7 @@ def run() -> None:
                         f"[{now:.1f}s] ⏹  Recording stopped ({reason}), "
                         f"{dur:.1f}s audio"
                     )
+                    ack_pending = False  # egal ob gespielt oder nicht — Turn ist vorbei
                     endpoint_meta = {
                         "phase": "recording",
                         "reason": reason,
