@@ -140,8 +140,10 @@ class WatcherConfig:
     llm_model: str = ""
     # API-Key für den Provider. Leer = kein Auth-Header (lokaler Endpunkt).
     llm_api_key: str = ""
-    # Timeout für den LLM-Call in Sekunden.
-    llm_timeout: float = 10.0
+    # Timeout für den LLM-Call in Sekunden. Höher als der Aktuator (5s) weil
+    # der Overseer-Thread nicht blockiert — lieber spät melden als gar nicht.
+    # Bei Lastspitzen/Reasoning braucht GLM-5-2 manchmal >10s.
+    llm_timeout: float = 30.0
 
 
 @dataclass

@@ -80,7 +80,11 @@ def _in_stillen_stunden(now: datetime, quiet_start: int, quiet_end: int) -> bool
 def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
                 timeout: float) -> dict | None:
     """Semantische Prüfung via LLM. Gibt einen Befund-Dict zurück oder None
-    wenn alles ok. Bei Fehler wird ein Befund mit art=LLM_ERROR zurückgegeben."""
+    wenn alles ok. Bei Fehler wird ein Befund mit art=LLM_ERROR zurückgegeben.
+
+    Retry: bei Timeout oder Netzwerkfehler EIN Retry mit vollem Timeout.
+    Der Overseer-Thread blockiert nichts — lieber spät melden als gar nicht.
+    """
     transcript = turn.get("transcript", "")
     intent = turn.get("intent") or {}
     if not transcript or not intent.get("ist_kommando"):
@@ -105,8 +109,9 @@ def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    req = urllib.request.Request(llm_url, data=body, headers=headers, method="POST")
-    try:
+    def _attempt() -> dict | None:
+        """Ein LLM-Versuch. Wirft bei Timeout/Netzwerkfehler."""
+        req = urllib.request.Request(llm_url, data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as r:
             out = json.loads(r.read().decode())
         msg = out["choices"][0]["message"]
@@ -126,6 +131,18 @@ def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
             "art": "LLM_MISMATCH",
             "detail": result.get("grund", "Transkript und Intent passen nicht zusammen."),
         }
+
+    try:
+        return _attempt()
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        # Retry bei Timeout/Netzwerk — der Provider kann temporär langsam sein.
+        # Kurze Pause, dann voller Timeout nochmal.
+        print(f"⚠️  Überwacher: LLM-Timeout/Netzwerk ({e}), Retry in 2s …")
+        time.sleep(2)
+        try:
+            return _attempt()
+        except Exception as e2:
+            return {"art": "LLM_ERROR", "detail": f"LLM-Prüfung nach Retry fehlgeschlagen: {e2}"}
     except Exception as e:
         return {"art": "LLM_ERROR", "detail": f"LLM-Prüfung fehlgeschlagen: {e}"}
 
