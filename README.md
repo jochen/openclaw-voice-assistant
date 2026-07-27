@@ -243,6 +243,64 @@ directory (gitignored) and is sent as the `X-Actuator-Token` header.
 Turns handled by the actuator itself are never seen by the backend — they are
 written as JSONL to `<workspace>/actuator_turns.log` instead.
 
+### Overseer (Stage 1 — read and report only)
+
+Since the actuator bypasses the backend, nothing double-checks whether what
+was said matches what was switched. The overseer closes that gap conservatively:
+it checks each actuator turn and reports discrepancies — it does **not**
+intervene, switch, or correct anything.
+
+The semantic check uses an LLM (OpenAI-compatible API, like the actuator
+itself). A short system prompt asks: does the transcript match the intent?
+The LLM recognises subtler patterns that a regex heuristic would miss —
+negations, restrictions, prepositions vs. actions („auf 10%" is a SET action,
+not the OPEN action). See `voice_assistant/services/watcher.py`.
+
+Additionally, a deterministic structural check runs without an LLM:
+
+- **EXEC_DIFFERS** — the home automation executed a different target/action
+  than the intent requested.
+- **STATUS_PROBLEM** — the automation did not answer „ausgefuehrt" (rejected,
+  unknown target, deferred). Archived but not sent to Telegram (too noisy).
+
+On LLM errors (provider down, timeout): the overseer sends a message to the
+Telegram chat („Überwachung konnte nicht erfolgen weil …") instead of failing
+silently. Timeout is 30s with one retry on network/timeout errors.
+
+The overseer runs as an event-driven daemon thread — `check_turn()` is called
+immediately after each actuator turn (not on a polling timer), so a mismatch
+is reported within ~1 second.
+
+One-off CLI tool (reads the log, classifies, deduplicates):
+
+```bash
+ow-venv/bin/python -m tools.actuator_watch
+ow-venv/bin/python -m tools.actuator_watch --seit 3   # last 3 days only
+ow-venv/bin/python -m tools.actuator_watch --alles     # re-show seen ones
+```
+
+Background worker inside the assistant, reporting to a separate Telegram chat
+(not the family voice chat):
+
+```yaml
+    watcher:
+      enabled: true
+      chat_id: "<telegram-chat-id>"   # separate group, not the voice mirror
+      quiet_start: 1                   # no messages 01:00–07:00
+      quiet_end: 7
+      llm_url: "https://<provider>/v1/chat/completions"
+      llm_model: "<model>"
+      llm_api_key: "<api-key>"
+      llm_timeout: 30
+```
+
+Only `LLM_MISMATCH` and `EXEC_DIFFERS` are sent to Telegram; during quiet
+hours findings are collected and held. Stage 1 is deliberately conservative —
+the most expensive mistake the overseer could make is a *hallucinated*
+correction, physically in the house, possibly at night. Later stages
+(group completion, proactive follow-up on objective signals) build on this
+once stage 1 has proven reliable over weeks.
+
 ## OpenClaw Integration
 
 ### Session Key
