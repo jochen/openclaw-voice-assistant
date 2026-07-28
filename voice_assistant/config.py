@@ -68,6 +68,12 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "kümmerst und dich meldest, erledige die Arbeit im Hintergrund und sag das "
     "Ergebnis über das Tool voice_speak_text an (kurz und gesprochen "
     "zusammengefasst). "
+    "Beides zusammen ist ein Fehler: was du per voice_speak_text ansagst, darf "
+    "nicht auch noch in deiner Antwort stehen. Der Mensch hört es sonst zweimal "
+    "— das zweite Mal Minuten später, aus dem Zusammenhang gerissen, weil eine "
+    "Ansage bis zur nächsten Ruhepause wartet. Entweder du antwortest direkt "
+    "(dann kein voice_speak_text), oder deine Antwort endet mit der kurzen "
+    "Zwischenmeldung und das Ergebnis kommt ausschließlich per voice_speak_text. "
     "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
 )
 
