@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
-"""Wakeword-Near-Misses gegen die STT prüfen und in drei Klassen sortieren.
+"""Wakeword-Near-Misses in drei Klassen sortieren — selbst gelabelt, sonst per STT.
 
 Aufruf (Projekt-venv wird selbst gesucht):
     ow-venv/bin/python -m tools.wake_triage
     ow-venv/bin/python -m tools.wake_triage --seit 3        # nur letzte 3 Tage
     ow-venv/bin/python -m tools.wake_triage --auch-trigger  # Kontrollgruppe mit
 
-Warum das hier steht, und warum es NICHT automatisch labelt
------------------------------------------------------------
+Zwei Label-Quellen, in dieser Rangfolge
+---------------------------------------
+1. SELBST-LABELS (_selbst_labels) — aus Handlungen, die nur bei einem echten
+   Ruf bzw. nur bei einem Fehltrigger vorkommen: der Nutzer wiederholt sich
+   nach einem Near-Miss, ein Schaltkommando wird ausgeführt, der Nutzer bricht
+   mit einem Stopp-Wort ab. Kein Mensch, keine STT, kein Schwellwert. Diese
+   Labels stechen die STT-Einstufung immer, auch nachträglich. Details und
+   Grenzen stehen an der Funktion.
+2. STT-EINSTUFUNG (_klassifiziere) — für alles, was Regel 1 nicht erreicht.
+   Der Rest dieses Textes gilt für diese zweite Quelle; sie ist deutlich
+   schwächer, deshalb kam sie in Wirkung erst an zweiter Stelle.
+
+Warum die STT-Einstufung allein nicht als Label taugt
+-----------------------------------------------------
 Die naheliegende Idee ist: Near-Miss-Audio durch die STT schicken, und wenn
 "Gaston" drin steht, war es ein echter Ruf. Gemessen am 2026-07-26: die STT
 erkennt nur einen Teil der echten Rufe. "Gaston" kam u.a. als "Gestalt.",
@@ -60,6 +72,7 @@ import re
 import sys
 import time
 from collections import Counter
+from datetime import datetime
 
 # --- venv-Re-Exec wie in voice_assistant/__main__.py -----------------------
 _VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -110,7 +123,13 @@ def _klassifiziere(text: str, verworfen: bool) -> str:
 
 
 def _lade_wake_log() -> dict[str, dict]:
-    """audio-Dateiname -> Log-Zeile (peak, hits, failed_on, scores, beam)."""
+    """audio-Dateiname -> zusammengeführte Log-Zeilen.
+
+    Zu einem Trigger können mehrere Zeilen mit derselben audio-Datei gehören:
+    das Trigger-Ereignis selbst (peak, hits, scores) und die spätere
+    ack-Entscheidung (ein_satz). Die werden gemischt statt überschrieben —
+    sonst verlöre die zweite Zeile die Gate-Werte der ersten.
+    """
     out: dict[str, dict] = {}
     if not os.path.exists(WAKE_LOG_PATH):
         return out
@@ -120,9 +139,112 @@ def _lade_wake_log() -> dict[str, dict]:
                 row = json.loads(line)
             except ValueError:
                 continue
-            if row.get("audio"):
-                out[row["audio"]] = row
+            audio = row.get("audio")
+            if not audio:
+                continue
+            ziel = out.setdefault(audio, {})
+            # result nicht überschreiben: "trigger"/"nearmiss" ist die Art des
+            # Ereignisses, "ack" nur ein Nachtrag dazu.
+            ziel.update({k: v for k, v in row.items()
+                         if k != "result" or "result" not in ziel})
     return out
+
+
+def _lade_wake_events() -> list[dict]:
+    """Alle Wake-Log-Zeilen in zeitlicher Reihenfolge (für Nachbarschaftsregeln)."""
+    rows: list[dict] = []
+    if not os.path.exists(WAKE_LOG_PATH):
+        return rows
+    with open(WAKE_LOG_PATH) as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("ts"):
+                rows.append(row)
+    rows.sort(key=lambda r: r["ts"])
+    return rows
+
+
+# Innerhalb dieser Spanne gilt ein Trigger als Wiederholung des vorangegangenen
+# Near-Miss. Gemessen am Archiv 2026-07-25..28: die 19 gefundenen Paare liegen
+# bei 2-15 s, der Schwerpunkt bei 3-8 s. Weiter aufmachen würde anfangen,
+# unabhängige Rufe einzusammeln.
+WIEDERHOLUNG_SEK = 15.0
+
+
+def _selbst_labels(events: list[dict]) -> dict[str, dict]:
+    """Labels, die das System sich selbst gibt — audio-Datei -> {klasse, grund}.
+
+    Kein Mensch, keine STT, kein Schwellwert. Alle drei Regeln stützen sich auf
+    eine Handlung des Nutzers bzw. der Haussteuerung, die nur bei einem echten
+    Ruf (oder nur bei einem Fehltrigger) vorkommt:
+
+    1. Near-Miss, dem binnen WIEDERHOLUNG_SEK ein Trigger folgt → der Nutzer hat
+       sich wiederholt, weil der erste Ruf nicht ankam. Das ist ein VERLORENER
+       echter Ruf. Diese Regel ist die wertvollste: sie labelt genau das, was
+       das Gate verpasst hat, statt zu bestätigen was es ohnehin durchlässt.
+       Am Archiv gegengeprüft: von 19 so gefundenen Fällen hatte die
+       STT-Heuristik 10 als 'unklar' liegen lassen und 2 als 'rauschen'
+       FALSCH einsortiert (darunter ein per Transkript belegtes 'Gaston macht…').
+    2. Trigger, aus dem ein Schaltkommando wurde → echter Ruf. Ein Fehltrigger
+       erzeugt praktisch nie ein gültiges Intent auf ein existierendes Ziel.
+    3. Trigger, den der Nutzer mit einem Stopp-Wort abgebrochen hat →
+       Fehltrigger. Der Abbruch ist ein ausdrückliches Urteil des Nutzers.
+
+    Bewusst NICHT als Label: 'keine_sprache' und 'leer' nach einem Trigger.
+    Das sieht nach Fehltrigger aus, deckt aber auch den Fall ab, dass der Ruf
+    echt war und der Nutzer dann unterbrochen wurde — zu unsicher für ein
+    hartes Label, es bleibt bei der STT-Einstufung.
+
+    GRENZE: ein verlorener Ruf, den der Nutzer NICHT wiederholt hat, taucht
+    hier nie auf. Die Bilanz schätzt den Recall deshalb systematisch zu gut.
+    """
+    labels: dict[str, dict] = {}
+    for i, ev in enumerate(events):
+        audio = ev.get("audio")
+        if not audio:
+            continue
+
+        if ev.get("result") == "nearmiss":
+            t0 = datetime.fromisoformat(ev["ts"])
+            for spaeter in events[i + 1:]:
+                dt = (datetime.fromisoformat(spaeter["ts"]) - t0).total_seconds()
+                if dt > WIEDERHOLUNG_SEK:
+                    break
+                if spaeter.get("result") == "trigger":
+                    labels[audio] = {"klasse": ECHT,
+                                     "grund": f"wiederholt nach {dt:.0f}s"}
+                    break
+
+        elif ev.get("result") == "outcome":
+            ausgang = ev.get("ausgang")
+            if ausgang == "aktuator" and ev.get("status") in ("ausgefuehrt", "zurueckgestellt"):
+                labels[audio] = {"klasse": ECHT,
+                                 "grund": f"Aktuator: {ev.get('ziel')}/{ev.get('aktion')}"}
+            elif ausgang == "stopwort":
+                labels[audio] = {"klasse": RAUSCH, "grund": "vom Nutzer abgebrochen"}
+    return labels
+
+
+def _norm_text(text: str) -> str:
+    """Wortlaut auf Vergleichsform bringen (klein, ohne Satzzeichen)."""
+    return re.sub(r"[^\wäöüß ]", "", (text or "").lower()).strip()
+
+
+def _sprechfluss(meta: dict) -> str:
+    """'ein_satz' | 'pause' | '' — aus der protokollierten ack-Entscheidung.
+
+    Leer heißt: unbekannt (Near-Miss, oder Trigger von vor dem 2026-07-28,
+    als die Entscheidung noch nicht mitgeschrieben wurde). Bewusst KEIN
+    Rateverfahren aus dem Audio als Ersatz — gegen die echte Entscheidung
+    gemessen traf die naheliegende Tail-RMS-Heuristik nur 6 von 9 Fällen,
+    und ein falsches Label ist hier schlimmer als gar keins.
+    """
+    if "ein_satz" not in meta:
+        return ""
+    return "ein_satz" if meta["ein_satz"] else "pause"
 
 
 def _lade_triage() -> dict[str, dict]:
@@ -157,6 +279,7 @@ def main() -> int:
     profil = load_profile()
     stt = SpeachesStt(SpeachesState(), profil.speaches_base, profil.speaches_stt_model)
     wake_log = _lade_wake_log()
+    selbst = _selbst_labels(_lade_wake_events())
     bekannt = {} if args.neu else _lade_triage()
 
     endungen = ["_nearmiss.wav"] + (["_wake.wav"] if args.auch_trigger else [])
@@ -192,18 +315,37 @@ def main() -> int:
                        if name.endswith("_wake.wav")
                        and os.path.exists(os.path.join(TRIGGER_AUDIO_DIR, rec)) else ""),
             "klasse": _klassifiziere(text, verworfen),
+            "quelle": "stt",
             "transkript": text,
             "peak": meta.get("peak"),
             "hits": meta.get("hits"),
             "failed_on": meta.get("failed_on"),
             "scores": meta.get("scores"),
+            "sprechfluss": _sprechfluss(meta),
         }
         neue.append(row)
         zeilen.append(row)
 
-    if neue:
+    # Der Sprechfluss kam später dazu als die ersten Labels — bei schon
+    # gelabelten Zeilen aus dem Wake-Log nachtragen, ohne die STT erneut zu
+    # bemühen (das Label selbst bleibt unangetastet).
+    aktualisiert: list[dict] = []
+    for row in zeilen:
+        if not row.get("sprechfluss"):
+            row["sprechfluss"] = _sprechfluss(wake_log.get(row["audio"], {}))
+        # Ein Selbst-Label sticht die STT-Einstufung immer — es beruht auf einer
+        # Handlung, nicht auf einem Transkript. Auch bei laengst gelabelten
+        # Zeilen, denn die Handlung kann erst nach dem letzten Lauf passiert sein.
+        sl = selbst.get(row["audio"])
+        if sl and (row.get("klasse") != sl["klasse"] or row.get("quelle") != "selbst"):
+            row["vorher_stt"] = row.get("klasse")
+            row.update(klasse=sl["klasse"], quelle="selbst", grund=sl["grund"])
+            if row not in neue:
+                aktualisiert.append(row)
+
+    if neue or aktualisiert:
         with open(TRIAGE_PATH, "a") as f:
-            for row in neue:
+            for row in neue + aktualisiert:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     # --- Ausgabe -----------------------------------------------------------
@@ -229,13 +371,66 @@ def main() -> int:
             for r in sorted(gruppe, key=lambda x: -(x.get("peak") or 0)):
                 pk = f"peak {r['peak']:.2f}" if r.get("peak") is not None else "peak   ? "
                 fo = f" {r['failed_on']:9s}" if r.get("failed_on") else " " * 10
-                print(f"    {pk}{fo} {r['transkript'][:48]!r}")
+                sf = {"ein_satz": " [Ein-Satz]", "pause": " [Pause]  "}.get(
+                    r.get("sprechfluss") or "", " " * 11)
+                print(f"    {pk}{fo}{sf} {r['transkript'][:48]!r}")
+                if r.get("quelle") == "selbst":
+                    vorher = (f", STT sagte {r['vorher_stt']}"
+                              if r.get("vorher_stt") and r["vorher_stt"] != r["klasse"] else "")
+                    print(f"       selbst gelabelt: {r.get('grund')}{vorher}")
                 if r.get("danach"):
                     print(f"       → danach: {r['danach'][:70]!r}")
                 if klasse == UNKLAR:
                     print(f"       anhören: aplay {os.path.join(TRIGGER_AUDIO_DIR, r['audio'])}")
 
+    # --- Ein-Satz gegen Pause: triggert der Durchsprech-Fall schlechter? ---
+    # Die Frage entscheidet, ob Nachtrainieren mit Ein-Satz-Aufnahmen nötig ist.
+    # Gemessen wird an den Triggern, weil nur dort der Sprechfluss feststeht.
+    # Aussagekräftig ist der Anteil KURZER Streaks: die müssen am Gate einen
+    # höheren Peak erreichen (min_peak_short/min_peak_single) und fallen
+    # deshalb als erste durch.
+    trig = [r for r in zeilen if r["art"] == "trigger" and r.get("sprechfluss")]
+    if trig:
+        print("\n=== EIN-SATZ GEGEN PAUSE (nur Trigger, Sprechfluss protokolliert) ===")
+        for fluss, label in (("ein_satz", "durchgesprochen"), ("pause", "Pause danach")):
+            g = [r for r in trig if r["sprechfluss"] == fluss]
+            if not g:
+                continue
+            hits = [r["hits"] for r in g if r.get("hits")]
+            peaks = [r["peak"] for r in g if r.get("peak")]
+            kurz = sum(1 for h in hits if h < 3)
+            print(f"    {label:<16} n={len(g):>3}   "
+                  f"kurze Streaks (<3 Frames): {kurz}/{len(hits)}"
+                  f"{f'   Peak-Median {sorted(peaks)[len(peaks) // 2]:.2f}' if peaks else ''}")
+        print("    Deutlich mehr kurze Streaks beim Durchsprechen heißt: das Modell")
+        print("    kennt das Wort nur isoliert gesprochen — Ein-Satz-Aufnahmen ins")
+        print("    Nachtraining aufnehmen (siehe WAKEWORD_PROCESS.md).")
+
     nm = [r for r in zeilen if r["art"] == "nearmiss"]
+    # --- Wiederkehrer: gleiches Transkript mehrfach = wiederkehrende Quelle ---
+    # Ein Mensch ruft nicht viermal denselben Satz mit identischem Wortlaut.
+    # Solche Gruppen sind Fernseher-Abspänne, Jingles, Ansagen — sie gehören
+    # gebündelt in den Negativ-Korpus statt einzeln angehört zu werden.
+    if nm:
+        haeufig = Counter(_norm_text(r["transkript"]) for r in nm
+                          if (r["transkript"] or "").strip())
+        wieder = [(t, n) for t, n in haeufig.most_common() if n > 1]
+        if wieder:
+            print("\n=== WIEDERKEHRER (gleicher Wortlaut mehrfach) ===")
+            print("    Ein mehrfach identischer Wortlaut hat ZWEI mögliche Ursachen, und")
+            print("    die Selbst-Labels entscheiden welche:")
+            print("      ohne Selbst-Label → wiederkehrende Fremdquelle (TV, Jingle,")
+            print("        Ansage). Als Block in den NEGATIV-Korpus.")
+            print("      mit Selbst-Label 'echter Ruf' → kein Fremdgeräusch, sondern ein")
+            print("        wiederkehrender VERHÖRER des Wakeworts. Wer zweimal ruft, wird")
+            print("        auch zweimal gleich verhört. Gehört in den POSITIV-Korpus.")
+            for t, n in wieder:
+                gruppe = [r for r in nm if _norm_text(r["transkript"]) == t]
+                echt = sum(1 for r in gruppe
+                           if r.get("quelle") == "selbst" and r["klasse"] == ECHT)
+                marke = (f"  ⚠️ {echt}× selbst als echter Ruf gelabelt → Verhörer, nicht TV"
+                         if echt else "")
+                print(f"    {n:>2}×  {t[:52]!r}{marke}")
     if nm:
         c = Counter(r["klasse"] for r in nm)
         echt_peaks = [r["peak"] for r in nm if r["klasse"] == ECHT and r.get("peak")]
