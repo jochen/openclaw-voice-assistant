@@ -34,6 +34,38 @@ profiles:
   #     refresh_poll_sec: 600
   #     llm_timeout: 5.0
   #     intent_timeout: 1.5
+  #
+  #     # Der Prompt ist die einzige sprachabhaengige Stelle des Projekts. Der
+  #     # Default ist deutsch und nennt Beispiel-Geraete DIESER Installation.
+  #     # Wer eine andere Sprache oder andere Geraete hat, ersetzt ihn hier
+  #     # komplett — der Code kommt ohne einzige feste Ziel-id aus.
+  #     #
+  #     # Platzhalter (einfache Textersetzung, KEIN str.format — die
+  #     # geschweiften Klammern der JSON-Beispiele bleiben so stehen):
+  #     #   {kontrast}      erzeugte Einzelgeraet-gegen-Gruppe-Beispiele
+  #     #   {ziel_liste}    die Ziel-Liste aus /capabilities
+  #     #   {gruppen_regel} erzeugte Regel fuer Geraete-Mehrzahl ohne Raum
+  #     #
+  #     # WER DEN PROMPT ERSETZT, MISST NEU:
+  #     #   ow-venv/bin/python -m tools.actuator_grammar_test
+  #     # Die Testsaetze dort sind ebenfalls deutsch und gehoeren mit uebersetzt.
+  #     # Gemessene Erfahrung, sprachunabhaengig: wenige Beispiele schlagen
+  #     # viele, und {gruppen_regel} traegt nur HINTER der Ziel-Liste.
+  #     system_prompt: |
+  #       You are the local switching actuator. Turn the spoken sentence into ONE JSON intent. Output ONLY the JSON.
+  #       ... (siehe voice_assistant/config.py, _DEFAULT_ACTUATOR_PROMPT)
+  #
+  #     # Eine Zeile je Geraetegruppe mit einem Alias "alle <Mehrzahl>".
+  #     # Platzhalter: {einzahl_gross} {einzahl} {mehrzahl} {ziel}
+  #     gruppen_regel: '{einzahl_gross} WITHOUT ROOM: ...'
+  #
+  #     # Satzschablonen fuer die erzeugten Kontrast-Beispiele, je Aktion.
+  #     beispiel_saetze:
+  #       ein: "Turn on {}"
+  #       aus: "Turn off {}"
+  #     # Ziel-Typen, die der Beispielblock im Prompt schon vorfuehrt — der
+  #     # erzeugte Kontrast-Block laesst sie dann aus.
+  #     beispiel_typen: ["rollo"]
 
   # ---------------------------------------------------------------------
   # Beispiel "local" - Mikrofon/Lautsprecher direkt am Pi

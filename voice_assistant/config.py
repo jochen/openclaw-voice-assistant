@@ -100,6 +100,69 @@ class LedsConfig:
     respeaker_ring_enabled: bool = False
 
 
+# --- Aktuator: Prompt-Vorlagen (sprachabhängig, deshalb hier und nicht im Code)
+#
+# Der Prompt ist die einzige Stelle, an der dieses Projekt Deutsch VORAUSSETZT,
+# und er nennt Beispiel-ids aus DIESER Installation (flurlicht, felixheizung,
+# kuechenrollo_links, …). Beides gehört nicht in ein öffentliches Repo als
+# unveränderliche Wahrheit — wer eine andere Sprache oder andere Geräte hat,
+# überschreibt `actuator.system_prompt` im Profil und ist fertig.
+#
+# Die Beispiele sind gemessen, nicht geraten (siehe tools/actuator_grammar_test.py
+# und den Docstring von actuator._build_system_prompt). Wer sie ersetzt, misst
+# neu — auch in der eigenen Sprache. Weniger Beispiele waren dabei mehrfach
+# besser als mehr.
+#
+# Platzhalter, die zur Laufzeit ersetzt werden (einfache Textersetzung, KEIN
+# str.format — die geschweiften Klammern der JSON-Beispiele bleiben deshalb
+# so stehen, wie man sie schreibt):
+#   {kontrast}      aus den capabilities erzeugte Einzelgerät-gegen-Gruppe-Paare
+#   {ziel_liste}    die Ziel-Liste
+#   {gruppen_regel} aus den capabilities erzeugte Regel(n) für Geräte-Mehrzahl
+#                   ohne Raumangabe — steht bewusst GANZ AM ENDE, hinter der
+#                   Ziel-Liste (gemessen: davor wirkt sie nicht)
+_DEFAULT_ACTUATOR_PROMPT = """Du bist der lokale Schalt-Aktuator. Wandle den gesprochenen Satz in EIN JSON-Intent. Gib NUR das JSON aus.
+aktion: ein/aus (Licht,Schalter), auf/zu (Rollo ganz oeffnen/schliessen; "hoch"=auf,"runter"=zu), setzen (Zahlenwert), aktivieren (Szene), starten (Routine).
+wert(Zahl)+einheit nur bei setzen (prozent Rollo, grad Heizung), sonst null. Kein Steuerkommando -> ist_kommando=false, ziel="", rest null.
+Waehle das passende ziel aus der Liste (id links). Aliase stehen rechts.
+EINZAHL vs MEHRZAHL: "das <Geraet>" meint EIN einzelnes Ziel. "die"/"alle <Geraete> in <Raum>" meint das Sammel-Ziel fuer diesen Raum, falls die Liste eines fuehrt.
+
+Beispiele:
+Schalte das Flurlicht ein -> {"ist_kommando":true,"aktion":"ein","ziel":"flurlicht","wert":null,"einheit":null}
+Stell die Felixheizung auf 22 Grad -> {"ist_kommando":true,"aktion":"setzen","ziel":"felixheizung","wert":22,"einheit":"grad"}
+Mach das Kuechenrollo links zu -> {"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollo_links","wert":null,"einheit":null}
+Mach alle Rollos in der Kueche zu -> {"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollos","wert":null,"einheit":null}
+Mach alle Rollos zu -> {"ist_kommando":true,"aktion":"zu","ziel":"alle_rollos","wert":null,"einheit":null}
+Wohnzimmerrollo auf 70% -> {"ist_kommando":true,"aktion":"setzen","ziel":"wohnzimmerrollo","wert":70,"einheit":"prozent"}
+Rollo auf 70% -> {"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}
+Rollo zu -> {"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}
+{kontrast}Erzaehl mir einen Witz -> {"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}
+
+Bekannte Ziele:
+{ziel_liste}
+
+{gruppen_regel}"""
+
+# Eine Zeile je Gruppe, die einen Alias "alle <Mehrzahl>" führt. Platzhalter:
+#   {einzahl_gross} {einzahl}  aus dem `typ` der Mitglieder ("rollo" -> Rollo/ROLLO)
+#   {mehrzahl}                 das Wort aus dem "alle …"-Alias
+#   {ziel}                     die id der Gruppe
+# Steht der Satz erst hinter der Ziel-Liste, trägt er — davor gewinnt die Liste.
+_DEFAULT_ACTUATOR_GRUPPEN_REGEL = (
+    '{einzahl_gross} OHNE RAUM: "{einzahl}" oder "{mehrzahl}" OHNE Raumangabe und OHNE '
+    '"alle" ist KEIN Kommando fuer {ziel}. Antworte ist_kommando=false. '
+    'Nur "alle {mehrzahl}" (mit dem Wort "alle") ist {ziel}.'
+)
+
+# Satzschablonen für die aus den capabilities erzeugten Kontrast-Beispiele.
+# Fehlt eine Aktion, wird "<aktion> {}" genommen.
+_DEFAULT_ACTUATOR_BEISPIEL_SAETZE = {
+    "ein": "Schalte {} ein", "aus": "Schalte {} aus",
+    "auf": "Mach {} auf", "zu": "Mach {} zu",
+    "aktivieren": "Aktiviere {}", "starten": "Starte {}",
+}
+
+
 @dataclass
 class ActuatorConfig:
     """Voice-Aktuator v1 — schneller lokaler Schalt-Pfad (siehe ACTUATOR_V1_PLAN.md
@@ -119,6 +182,18 @@ class ActuatorConfig:
     mqtt_host: str = ""
     mqtt_port: int = 1883
     refresh_poll_sec: int = 600
+    # Sprach-/installationsabhängig — siehe die Vorlagen oben.
+    system_prompt: str = _DEFAULT_ACTUATOR_PROMPT
+    gruppen_regel: str = _DEFAULT_ACTUATOR_GRUPPEN_REGEL
+    beispiel_saetze: dict = field(
+        default_factory=lambda: dict(_DEFAULT_ACTUATOR_BEISPIEL_SAETZE)
+    )
+    # Ziel-Typen, für die der Beispielblock im Prompt den Einzelgerät-gegen-
+    # Gruppe-Fall schon zeigt. Der erzeugte Kontrast-Block überspringt sie —
+    # ein zweites Beispiel für dieselbe Lehre hilft nicht, es schadet
+    # (gemessen, siehe actuator._kontrast_beispiel). Wer den Prompt ersetzt,
+    # pflegt diese Liste mit.
+    beispiel_typen: list = field(default_factory=lambda: ["rollo"])
 
 
 @dataclass
@@ -392,6 +467,10 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         mqtt_host=str(actuator_raw.get("mqtt_host", _dact.mqtt_host)),
         mqtt_port=int(actuator_raw.get("mqtt_port", _dact.mqtt_port)),
         refresh_poll_sec=int(actuator_raw.get("refresh_poll_sec", _dact.refresh_poll_sec)),
+        system_prompt=str(actuator_raw.get("system_prompt") or _dact.system_prompt),
+        gruppen_regel=str(actuator_raw.get("gruppen_regel") or _dact.gruppen_regel),
+        beispiel_saetze=dict(actuator_raw.get("beispiel_saetze") or _dact.beispiel_saetze),
+        beispiel_typen=list(actuator_raw.get("beispiel_typen") or _dact.beispiel_typen),
     )
 
     # --- Überwacher: separater Block, analog zu actuator ---

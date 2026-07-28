@@ -38,12 +38,6 @@ import urllib.request
 from voice_assistant.config import ActuatorConfig
 
 
-# Ziel-Typen, deren Einzelgerät-gegen-Gruppe-Fall der statische Beispielblock in
-# _build_system_prompt schon vorführt. Statischer und generierter Teil bilden EINEN
-# Prompt — sie müssen voneinander wissen, sonst doppeln sie dieselbe Lehre.
-# Wer unten ein Beispiel hinzufügt oder entfernt, pflegt diese Menge mit.
-_STATISCH_GEZEIGTE_TYPEN = {"rollo"}
-
 # Umgangssprachliche Aktionswörter -> kanonische Aktion des Schemas. Nur für
 # das Mehrzahl-Muster unten; der normale Weg über das Modell braucht das nicht.
 _AKTIONSWORT = {
@@ -99,7 +93,46 @@ def _mehrzahl_muster(digest: dict) -> list[tuple, ]:
     return muster
 
 
-def _kontrast_beispiel(digest: dict) -> str:
+def _gruppen_regeln(digest: dict, muster: list, vorlage: str) -> str:
+    """Regelzeile(n) für "Geraete-Mehrzahl ohne Raum" aus den capabilities.
+
+    Erzeugt für jede Gruppe, die am Mehrzahl-Muster teilnimmt, eine Zeile aus
+    der Vorlage. Alle drei Bausteine kommen aus den Daten:
+
+        {mehrzahl}   das Wort aus dem Alias "alle <Mehrzahl>"
+        {einzahl}    der `typ` der Mitglieder ("rollo" -> "Rollo")
+        {ziel}       die id der Gruppe
+
+    Vorher stand diese Zeile mit der id "alle_rollos" fest im Quelltext. In
+    einem oeffentlichen Repo ist das falsch: ids sind je Installation andere,
+    und bei jedem anderen Nutzer haette die Regel auf ein Ziel gezeigt, das es
+    bei ihm gar nicht gibt.
+
+    Fehlt der `typ` (er ist im Vertrag optional), entfaellt die Zeile fuer
+    diese Gruppe — eine Regel ohne das Wort, um das es geht, traegt nichts.
+    """
+    zeilen = []
+    for pattern, zid in muster:
+        z = digest.get(zid) or {}
+        mehrzahl = next(
+            (n.split(None, 1)[1] for n in (z.get("namen") or [])
+             if _ALLE_ALIAS.match(n.strip())), None
+        )
+        typen = {digest[m].get("typ") for m in (z.get("mitglieder") or []) if m in digest}
+        typen.discard(None)
+        if not mehrzahl or len(typen) != 1:
+            continue
+        einzahl = next(iter(typen)).capitalize()
+        zeilen.append(
+            vorlage.replace("{einzahl_gross}", einzahl.upper())
+                   .replace("{einzahl}", einzahl)
+                   .replace("{mehrzahl}", mehrzahl)
+                   .replace("{ziel}", zid)
+        )
+    return "\n".join(zeilen)
+
+
+def _kontrast_beispiel(digest: dict, saetze: dict, gezeigte_typen: set) -> str:
     """Erzeugt ein Einzelgerät-gegen-Gruppe-Beispielpaar aus den Live-Daten.
 
     Die Namensregel (ACTUATOR_INTERFACE.md, Teil 2) verlangt, dass eine Gruppe
@@ -146,7 +179,7 @@ def _kontrast_beispiel(digest: dict) -> str:
         # MEHR FEW-SHOTS SIND NICHT BESSER. Ebenfalls verworfen: Paare zwischen
         # verschachtelten Gruppen (mitglieder ⊂ mitglieder) — 9 Paare mit
         # Dubletten, 27/30 und ein neuer Ausfall bei einem Nicht-Kommando.
-        if digest[mid].get("typ") in _STATISCH_GEZEIGTE_TYPEN:
+        if digest[mid].get("typ") in gezeigte_typen:
             continue
         # Verb, das für Gruppe UND Mitglied gültig ist. Hart "ein" zu nehmen
         # ginge nur bei Lichtern gut — bekäme eine Rollo-Gruppe ein
@@ -157,11 +190,7 @@ def _kontrast_beispiel(digest: dict) -> str:
         if not gemeinsam:
             continue
         aktion = gemeinsam[0]
-        satz = {
-            "ein": "Schalte {} ein", "aus": "Schalte {} aus",
-            "auf": "Mach {} auf", "zu": "Mach {} zu",
-            "aktivieren": "Aktiviere {}", "starten": "Starte {}",
-        }.get(aktion, aktion + " {}")
+        satz = saetze.get(aktion, aktion + " {}")
         mitglied_namen = digest[mid].get("namen") or [mid]
         gruppen_namen = digest[gid].get("namen") or [gid]
         # Für die Gruppe bevorzugt der "alle …"-Alias — das ist die
@@ -177,8 +206,18 @@ def _kontrast_beispiel(digest: dict) -> str:
     return "".join(block)
 
 
-def _build_system_prompt(ziel_liste: str, kontrast: str = "") -> str:
-    """Baut den System-Prompt nach der SYS-Vorlage aus
+def _build_system_prompt(vorlage: str, ziel_liste: str, kontrast: str,
+                         gruppen_regel: str) -> str:
+    """Setzt die Prompt-Vorlage aus der Config zusammen.
+
+    Vorlage, Gruppen-Regel und Satzschablonen stehen in config.py
+    (_DEFAULT_ACTUATOR_*) und sind pro Profil überschreibbar — der Prompt ist
+    die einzige sprachabhängige Stelle des Projekts und nennt Beispiel-ids
+    dieser Installation. Ersetzt wird per Textersetzung, nicht mit
+    str.format(): die JSON-Beispiele im Prompt sind voller geschweifter
+    Klammern, die niemand in einer YAML-Datei verdoppeln möchte.
+
+    Herkunft der Vorlage: SYS aus
     actuator_prototype/test_grammar.py (Verb-Regeln + Few-Shot-Beispiele +
     generierte Ziel-Liste). Formulierung nur gegen Messungen ändern.
 
@@ -234,27 +273,10 @@ def _build_system_prompt(ziel_liste: str, kontrast: str = "") -> str:
     Messung war nicht falsch, sondern veraltet. Nach jeder Änderung an den
     capabilities gehört sie deshalb wiederholt.
     """
-    return f"""Du bist der lokale Schalt-Aktuator. Wandle den gesprochenen Satz in EIN JSON-Intent. Gib NUR das JSON aus.
-aktion: ein/aus (Licht,Schalter), auf/zu (Rollo ganz oeffnen/schliessen; "hoch"=auf,"runter"=zu), setzen (Zahlenwert), aktivieren (Szene), starten (Routine).
-wert(Zahl)+einheit nur bei setzen (prozent Rollo, grad Heizung), sonst null. Kein Steuerkommando -> ist_kommando=false, ziel="", rest null.
-Waehle das passende ziel aus der Liste (id links). Aliase stehen rechts.
-EINZAHL vs MEHRZAHL: "das <Geraet>" meint EIN einzelnes Ziel. "die"/"alle <Geraete> in <Raum>" meint das Sammel-Ziel fuer diesen Raum, falls die Liste eines fuehrt.
+    return (vorlage.replace("{kontrast}", kontrast)
+                   .replace("{ziel_liste}", ziel_liste)
+                   .replace("{gruppen_regel}", gruppen_regel))
 
-Beispiele:
-Schalte das Flurlicht ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"flurlicht","wert":null,"einheit":null}}
-Stell die Felixheizung auf 22 Grad -> {{"ist_kommando":true,"aktion":"setzen","ziel":"felixheizung","wert":22,"einheit":"grad"}}
-Mach das Kuechenrollo links zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollo_links","wert":null,"einheit":null}}
-Mach alle Rollos in der Kueche zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollos","wert":null,"einheit":null}}
-Mach alle Rollos zu -> {{"ist_kommando":true,"aktion":"zu","ziel":"alle_rollos","wert":null,"einheit":null}}
-Wohnzimmerrollo auf 70% -> {{"ist_kommando":true,"aktion":"setzen","ziel":"wohnzimmerrollo","wert":70,"einheit":"prozent"}}
-Rollo auf 70% -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
-Rollo zu -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
-{kontrast}Erzaehl mir einen Witz -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
-
-Bekannte Ziele:
-{ziel_liste}
-
-ROLLO OHNE RAUM: "Rollo" oder "Rollos" OHNE Raumangabe und OHNE "alle" ist KEIN Kommando fuer alle_rollos. Antworte ist_kommando=false. Nur "alle Rollos" (mit dem Wort "alle") ist alle_rollos."""
 
 
 class Actuator:
@@ -362,8 +384,14 @@ class Actuator:
                 lines.append(
                     f'- {z["id"]}: {al}  (aktionen: {",".join(z.get("aktionen", []))}){rng}'
                 )
-            system_prompt = _build_system_prompt("\n".join(lines), _kontrast_beispiel(digest))
             mehrzahl = _mehrzahl_muster(digest)
+            system_prompt = _build_system_prompt(
+                self.cfg.system_prompt,
+                "\n".join(lines),
+                _kontrast_beispiel(digest, self.cfg.beispiel_saetze,
+                                   set(self.cfg.beispiel_typen)),
+                _gruppen_regeln(digest, mehrzahl, self.cfg.gruppen_regel),
+            )
             version = caps.get("version")
 
             with self._lock:

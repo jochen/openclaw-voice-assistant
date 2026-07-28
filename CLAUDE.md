@@ -91,6 +91,20 @@ den Block verhält sich ein Profil wie vor dem Einbau). In dieser Installation
 liegt die ausführende Seite auf Node-RED (noderedpi4), **das ist aber keine
 Voraussetzung**.
 
+Der System-Prompt des Klassifikations-LLM steht als `actuator.system_prompt`
+in der Profil-Config (Default: `config.py:_DEFAULT_ACTUATOR_PROMPT`, deutsch).
+Er ist die einzige sprachabhängige Stelle des Projekts — für Englisch wird er
+dort ersetzt, der Code selbst enthält keine einzige feste Ziel-id. Ziel-Liste,
+Kontrast-Beispiele und die Regel für Geräte-Mehrzahl ohne Raumangabe werden bei
+jedem `refresh()` aus `/capabilities` erzeugt und über die Platzhalter
+`{ziel_liste}`, `{kontrast}`, `{gruppen_regel}` eingesetzt.
+
+**Prompt-Änderungen nur gegen `tools/actuator_grammar_test.py`.** Das Test-Set
+liegt im Repo, weil eine frühere Messung ("20/20") nur in einem Scratchpad
+stand und einen Tag später weder reproduzierbar noch gültig war. Wiederholen
+nach jeder Änderung an den capabilities — die Zahl gilt immer nur für eine
+capabilities-Version.
+
 **Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
 implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige
 Vertrag beider Endpunkte samt Begründung jeder Design-Entscheidung, eine
