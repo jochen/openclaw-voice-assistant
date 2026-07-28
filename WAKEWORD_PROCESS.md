@@ -134,8 +134,47 @@ Takes.
 
 ## Stand
 
+> Zahlen altern. Was hier steht, ist mit `tools/wake_triage.py` in Minuten neu
+> zu erheben — die Datei sagt, **wo der Prozess steht und was als naechstes
+> ansteht**, nicht was gerade in den Logs liegt.
+
+**Wo der Prozess steht (2026-07-28):**
+
+Schritt 1 (Sammeln) laeuft, Schritt 2 (Triagieren) ist automatisiert, soweit
+es geht. Was noch fehlt, ist eine Entscheidungsgrundlage fuer Schritt 4
+(Trainieren) — genauer: fuer die Frage, ob Ein-Satz-Aufnahmen ins Training
+gehoeren.
+
+Bestand zu diesem Zeitpunkt: ~250 archivierte Clips, 54 Trigger, 61
+Near-Misses. Nach den Selbst-Labels: 22 verlorene echte Rufe, 33 Rauschen,
+2 offen zum Anhoeren. Von den 22 echten kamen 17 aus den Selbst-Labels, nicht
+aus der STT.
+
+**Was als naechstes ansteht, in dieser Reihenfolge:**
+
+1. **Warten und sammeln.** Der Sprechfluss (`ack`-Zeilen) wird erst seit dem
+   2026-07-28 abends protokolliert — die Ein-Satz-Bilanz in wake_triage hat
+   noch einstellige n und sagt nichts. Ein paar Tage Alltag reichen.
+2. **Bilanz lesen.** `ow-venv/bin/python -m tools.wake_triage --auch-trigger`,
+   Abschnitt „EIN-SATZ GEGEN PAUSE". Die Frage lautet: landen
+   durchgesprochene Rufe deutlich haeufiger auf kurzen Streaks als Rufe mit
+   Pause? Erste, noch nicht belastbare Zahl: 25 % gegen 3 % (n=12 bzw. 35).
+3. **Wenn ja: Ein-Satz-Aufnahmen ins Training.** Das Modell wurde auf 30 000
+   synthetischen Einzelwort-Samples trainiert (`piper-sample-generator`,
+   siehe `models/wakewords/gaston/manifest.yaml`) und kennt „Gaston" nur
+   isoliert, mit Endsilbenloesung und fallender Intonation. Im Satzfluss
+   klingt es anders. `wakeword_studio record` nimmt heute NUR isolierte Takes
+   auf — es muesste Ein-Satz-Takes fuehren („Gaston schalte das Tischlicht
+   ein") und daraus den „Gaston"-Anteil schneiden.
+4. **Wenn nein:** Recall-Problem liegt woanders, dann zaehlt der normale Weg
+   (mehr Positivdaten, Negativ-Korpus aus den Wiederkehrern).
+
+**Was NICHT mehr zu versuchen ist:** an den Schwellen drehen. Die Begruendung
+mit Messwerten steht in `models/wakewords/gaston/manifest.yaml` an jedem
+einzelnen Parameter. Zwei belegte echte Rufe kamen mit Peak 0.37/0.38 an, dort
+liegt Rauschen gleichauf — die sind durch keine Schwelle zu retten.
+
 Im MemPalace (Wing `clawdpi1-home-pi-openclaw-voice-assist`, Room `decisions`,
-Drawer `...11c2e98f58cb...`) liegt der ausführliche Prozess-Drawer mit
-Session-Kontext, Fehlerdokumentation und aktuellem Sammlungsstand.
-Diese Datei (`WAKEWORD_PROCESS.md`) ist die Repo-Seite desselben — beide
-sind gegenseitig verlinkt und sagen dasselbe.
+Drawer `...11c2e98f58cb...`) liegt der ausfuehrliche Prozess-Drawer mit
+Session-Kontext und Fehlerdokumentation. Diese Datei ist die Repo-Seite
+desselben — beide sind gegenseitig verlinkt.
