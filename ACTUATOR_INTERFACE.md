@@ -386,6 +386,24 @@ eine zu weit weg konstruierte id wird gar nicht mehr gefunden. Gesucht ist ein
 Alias, der einen Gerätenamen fast wiederholt („Lichter in der Küche" neben
 „Licht in der Küche"), zieht denselben Fehler an.
 
+**Ein Alias der Form „alle ‹Mehrzahl›" macht eine Gruppe ohne Raumangabe
+ansprechbar.** Führt ein Ziel mit `mitglieder` einen Alias aus genau zwei
+Wörtern — „alle" plus einem Mehrzahlwort, also z.B. `"alle Rollos"` —, dann
+schaltet der Assistent Sätze der Form „‹Mehrzahl› ‹Aktion›" („Rollos runter",
+„Mach die Rollos zu") deterministisch auf dieses Ziel, ohne das Sprachmodell
+zu fragen. Das ist Absicht und hat einen gemessenen Grund: die Einzahl („Rollo
+zu", ohne Raum) *muss* abgelehnt werden, weil sonst nachts das ganze Haus
+zufährt — und kein Prompt-Wortlaut bekam Einzahl und Mehrzahl gleichzeitig hin
+(Messreihe im Docstring von `_build_system_prompt`). Die Mehrzahl deshalb per
+Muster, exakt und offline.
+
+Die Regel ist rein datengetrieben: es steht keine id und kein Gerätewort im
+Code, alles kommt aus `namen`. Wer den Mechanismus nicht will, lässt den
+`"alle …"`-Alias weg — dann entfällt er ersatzlos. Aliase mit mehr als einem
+Wort nach „alle" („alle Rollos in der Küche") nehmen nicht teil, das sind
+Raumgruppen, die der Nutzer ohnehin benennt. Nennen zwei Gruppen dieselbe
+Mehrzahl, wird sie verworfen — dann ist nicht entscheidbar, welche gemeint ist.
+
 **Der Assistent verzweigt nur auf `zurueckgestellt`.** Der Vertrag nennt zwar
 vier Statuswerte, aber weil für alles außer der Rückfrage ohnehin nur
 `gesprochen` vorgelesen wird, ist die Kopplung zwischen beiden Seiten auf ein

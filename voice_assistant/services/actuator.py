@@ -16,8 +16,9 @@ Schema-Generator (refresh) und Prompt-Bauweise (System-Prompt) sind 1:1 aus
 dem validierten Prototyp übernommen — siehe
 actuator_prototype/capabilities_to_schema.py und
 actuator_prototype/test_grammar.py sowie ACTUATOR_V1_PLAN.md für die
-Geschichte/Entscheidungen dahinter. Die Prompt-Formulierung ist empirisch
-validiert (5/5 auf 62 Ziele) und wird hier bewusst NICHT umformuliert.
+Geschichte/Entscheidungen dahinter. Die Prompt-Formulierung wird bewusst NICHT
+umformuliert, sondern nur gegen tools/actuator_grammar_test.py geaendert —
+siehe die Messreihe im Docstring von _build_system_prompt.
 
 Jeder Netzwerk-/Parse-Fehler wird gefangen und geloggt — der Assistant muss
 ohne Aktuator (bzw. mit ihm im "kein Kommando"-Zustand) genauso weiterlaufen
@@ -28,6 +29,7 @@ ist).
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -41,6 +43,60 @@ from voice_assistant.config import ActuatorConfig
 # Prompt — sie müssen voneinander wissen, sonst doppeln sie dieselbe Lehre.
 # Wer unten ein Beispiel hinzufügt oder entfernt, pflegt diese Menge mit.
 _STATISCH_GEZEIGTE_TYPEN = {"rollo"}
+
+# Umgangssprachliche Aktionswörter -> kanonische Aktion des Schemas. Nur für
+# das Mehrzahl-Muster unten; der normale Weg über das Modell braucht das nicht.
+_AKTIONSWORT = {
+    "an": "ein", "ein": "ein", "einschalten": "ein",
+    "aus": "aus", "ausschalten": "aus",
+    "auf": "auf", "hoch": "auf", "rauf": "auf", "oeffne": "auf", "öffne": "auf",
+    "zu": "zu", "runter": "zu", "herunter": "zu", "schliess": "zu", "schließ": "zu",
+}
+_AKTIONSTEIL = (
+    r"(?:auf\s+(?P<wert>\d{1,3})\s*(?:prozent|%|grad)"
+    r"|(?P<wort>" + "|".join(sorted(_AKTIONSWORT, key=len, reverse=True)) + r"))"
+)
+# Gruppen-Alias der Form "alle <EinWort>" — daraus entsteht das Mehrzahl-Muster.
+# Genau EIN Wort: "alle Rollos" trägt, "alle Rollos in der Küche" nicht (das ist
+# eine Raumgruppe, die der Nutzer auch benennt).
+_ALLE_ALIAS = re.compile(r"^alle\s+(\w+)$", re.IGNORECASE)
+
+
+def _mehrzahl_muster(digest: dict) -> list[tuple, ]:
+    """[(Muster, ziel_id)] für "‹Mehrzahl› ‹Aktion›" ohne Raumangabe.
+
+    Wird bei jedem refresh() aus den capabilities gebaut — im Code steht KEINE
+    Ziel-id und kein Gerätewort. Eine Gruppe nimmt daran teil, indem sie einen
+    Alias der Form "alle <Mehrzahl>" führt (also genau das Wort, mit dem man
+    sie ohne Raum meint). Führt keine Gruppe so einen Alias, entfällt der
+    Mechanismus ersatzlos — dieselbe Bauweise wie _kontrast_beispiel, aus dem
+    gleichen Grund: ids sind je Installation andere.
+
+    Mehrdeutige Wörter werden verworfen: nennen zwei Gruppen dieselbe
+    Mehrzahl, kann niemand entscheiden welche gemeint ist.
+    """
+    kandidaten: dict[str, list[str]] = {}
+    for zid, z in digest.items():
+        if not z.get("mitglieder"):
+            continue
+        for name in z.get("namen") or []:
+            m = _ALLE_ALIAS.match(name.strip())
+            if m:
+                kandidaten.setdefault(m.group(1).lower(), []).append(zid)
+    muster = []
+    for wort, ziele in kandidaten.items():
+        if len(ziele) != 1:
+            continue
+        muster.append((
+            re.compile(
+                r"^\s*(?:mach|macht|fahr|fahre|schalte|schalt)?\s*(?:mal\s+)?"
+                r"(?:die\s+|alle\s+)?" + re.escape(wort) + r"\s+" + _AKTIONSTEIL +
+                r"\s*[.!?]*\s*$",
+                re.IGNORECASE,
+            ),
+            ziele[0],
+        ))
+    return muster
 
 
 def _kontrast_beispiel(digest: dict) -> str:
@@ -134,13 +190,55 @@ def _build_system_prompt(ziel_liste: str, kontrast: str = "") -> str:
     kuechenrollo_links/kuechenrollos: existierende ids, die denselben
     Einzel-gegen-Raumgruppe-Fall zeigen. Ein Beispiel mit einer noch nicht
     angelegten Licht-Gruppe würde eine id lehren, die es nicht gibt.
+
+    Die ROLLO-OHNE-RAUM-Regel steht als EINZIGE Regel HINTER der Ziel-Liste,
+    nicht oben bei den anderen. Nur die STELLUNG ist geändert — Wortlaut und
+    die zwei Gegenbeispiele sind dieselben wie vorher.
+
+    Gemessen 2026-07-28 mit tools/actuator_grammar_test.py, 36 Fälle, je
+    3 Läufe (innerhalb eines Prozesses stabil, zwischen Prozessen schwankt es
+    um ein bis zwei Fälle — Varianten deshalb immer back-to-back messen):
+
+        A  Regel oben (bis dahin produktiv)   31/36   4x Einzahl -> alle_rollos
+        F  Regel hinter der Ziel-Liste        32/36   0x
+        M  wie F, Regel umformuliert          32/36   0x, exakt dieselben Fehler
+        M2 nur umformuliert, Stellung oben    31/36   zusätzlich Tischlicht kaputt
+
+    Die Ziel-Liste ist mit Abstand der längste Teil des Prompts; steht die
+    Regel davor, gewinnt am Ende die Liste voller Rollo-ids. Der Effekt ist
+    reine Stellung: M sagt wörtlich 'Mehrzahl ("Rollos zu") ist alle_rollos'
+    und ändert am Ergebnis nichts.
+
+    NICHT gemacht, weil gemessen SCHLECHTER — jeweils dieselbe Ursache, ein
+    kleines Modell greift ein genanntes Ziel eher auf, als dass es das Verbot
+    dazu befolgt:
+      - Regel verbietet alle_rollos ausdrücklich .................. 24-25/36
+      - Regel zählt die Artikelformen auf ("das Rollo", "die Rollos") .. 33/36*
+      - Regel auf die Einzahl verengt, Mehrzahl positiv erlaubt ..... 31/36
+      - vier statt zwei Gegenbeispiele .............................. 30/36*
+      (* unter der später korrigierten Erwartung gemessen, siehe unten)
+
+    OFFEN und bewusst so: "Rollos runter" / "Die Rollos hoch" (Mehrzahl ohne
+    Raum) liefern ist_kommando=false und gehen damit an den Brain, obwohl
+    alle_rollos richtig wäre (Entscheidung Jochen 2026-07-28: die Mehrzahl
+    meint umgangssprachlich sehr wohl alle). Keine der gemessenen
+    Prompt-Varianten bekommt beides gleichzeitig hin; die Einzahl richtig zu
+    halten hat Vorrang, weil "Rollo zu" nachts sonst das ganze Haus schliesst.
+    Das ist ein Fall für eine deterministische Regel im Code, nicht für den
+    Prompt — der Aktuator soll ohne Internet arbeiten, und der Brain ist keine
+    offline verfügbare Ausweichstelle.
+
+    Anlass für die Neumessung: die Zahl "20/20" aus der Einführung galt für
+    62 Ziele (capabilities e3d6af78). Inzwischen sind es 67, darunter die
+    zusätzlichen Rollo-Gruppen rollos_ganzes_haus und rollos_im_westen — die
+    Messung war nicht falsch, sondern veraltet. Nach jeder Änderung an den
+    capabilities gehört sie deshalb wiederholt.
     """
     return f"""Du bist der lokale Schalt-Aktuator. Wandle den gesprochenen Satz in EIN JSON-Intent. Gib NUR das JSON aus.
 aktion: ein/aus (Licht,Schalter), auf/zu (Rollo ganz oeffnen/schliessen; "hoch"=auf,"runter"=zu), setzen (Zahlenwert), aktivieren (Szene), starten (Routine).
 wert(Zahl)+einheit nur bei setzen (prozent Rollo, grad Heizung), sonst null. Kein Steuerkommando -> ist_kommando=false, ziel="", rest null.
 Waehle das passende ziel aus der Liste (id links). Aliase stehen rechts.
 EINZAHL vs MEHRZAHL: "das <Geraet>" meint EIN einzelnes Ziel. "die"/"alle <Geraete> in <Raum>" meint das Sammel-Ziel fuer diesen Raum, falls die Liste eines fuehrt.
-ROLLO OHNE RAUM: "Rollo" oder "Rollos" OHNE Raumangabe und OHNE "alle" ist KEIN Kommando fuer alle_rollos. Antworte ist_kommando=false. Nur "alle Rollos" (mit dem Wort "alle") ist alle_rollos.
 
 Beispiele:
 Schalte das Flurlicht ein -> {{"ist_kommando":true,"aktion":"ein","ziel":"flurlicht","wert":null,"einheit":null}}
@@ -154,7 +252,9 @@ Rollo zu -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit"
 {kontrast}Erzaehl mir einen Witz -> {{"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}}
 
 Bekannte Ziele:
-{ziel_liste}"""
+{ziel_liste}
+
+ROLLO OHNE RAUM: "Rollo" oder "Rollos" OHNE Raumangabe und OHNE "alle" ist KEIN Kommando fuer alle_rollos. Antworte ist_kommando=false. Nur "alle Rollos" (mit dem Wort "alle") ist alle_rollos."""
 
 
 class Actuator:
@@ -173,6 +273,8 @@ class Actuator:
         self.request_template: dict | None = None
         self.digest: dict | None = None          # id -> {namen, typ, aktionen, wert}
         self.system_prompt: str | None = None
+        # [(Muster, ziel_id)] aus den capabilities — siehe _mehrzahl_muster
+        self.mehrzahl_muster: list = []
         self.version: str | None = None
         # Letzte classify()-Latenz in ms — fürs Logging in assistant.py.
         self.last_latency_ms: float = 0.0
@@ -261,6 +363,7 @@ class Actuator:
                     f'- {z["id"]}: {al}  (aktionen: {",".join(z.get("aktionen", []))}){rng}'
                 )
             system_prompt = _build_system_prompt("\n".join(lines), _kontrast_beispiel(digest))
+            mehrzahl = _mehrzahl_muster(digest)
             version = caps.get("version")
 
             with self._lock:
@@ -268,6 +371,7 @@ class Actuator:
                 self.request_template = request_template
                 self.digest = digest
                 self.system_prompt = system_prompt
+                self.mehrzahl_muster = mehrzahl
                 self.version = version
 
             print(f"🔌 Aktuator: capabilities aktualisiert — {len(ids)} Ziele, Version {version}")
@@ -363,6 +467,58 @@ class Actuator:
     # ------------------------------------------------------------------
     # Klassifikation + Sanity + Ausführung
     # ------------------------------------------------------------------
+    def _mehrzahl_gruppe(self, text: str, intent: dict) -> dict:
+        """Geräte-MEHRZAHL ohne Raum: Modell sagt nein, gemeint ist die Gruppe.
+
+        Die ROLLO-OHNE-RAUM-Regel im Prompt (siehe _build_system_prompt) fängt
+        die Einzahl ab — "Rollo zu" darf nachts nicht das ganze Haus schließen.
+        Sie fängt aber die Mehrzahl mit ab, und "Mach die Rollos zu" meint
+        umgangssprachlich sehr wohl alle (Entscheidung Jochen 2026-07-28).
+        Keine der gemessenen Prompt-Varianten trennt beides; eine, die die
+        Mehrzahl ausdrücklich erlaubt, verliert dafür die Einzahl (31/36 gegen
+        32/36, alle Zahlen im Docstring von _build_system_prompt).
+
+        Also hier, deterministisch: kein Modell, kein Prompt-Risiko. Das ist
+        auch die einzig zulässige Stelle dafür — die Anlage soll ohne Internet
+        schalten, ein "geht dann eben an den Brain" ist keine Lösung.
+
+        Absichtlich als VOLLTREFFER-Muster und nicht als Suche nach dem Wort:
+        alles, was mehr Wörter mitbringt ("Mach die Rollos im ganzen Haus zu",
+        "Mach die Küchenrollos zu"), fällt durch und bleibt beim Modell. Ein zu
+        weites Muster wäre hier genau der Fehler, den die Prompt-Regel
+        verhindern soll — nur umgekehrt.
+
+        Welche Wörter und welche Ziele das sind, steht NICHT im Code: die
+        Muster kommen aus den capabilities (_mehrzahl_muster). Dieses Repo ist
+        öffentlich und die ids sind je Installation andere.
+
+        Greift ausschließlich, wenn das Modell schon "kein Kommando" gesagt hat.
+        Ein positiv erkanntes Intent wird nie überschrieben.
+        """
+        if intent.get("ist_kommando"):
+            return intent
+        with self._lock:
+            muster = list(self.mehrzahl_muster)
+            digest = self.digest or {}
+        for pattern, zid in muster:
+            m = pattern.match(text or "")
+            if not m:
+                continue
+            ziel = digest.get(zid)
+            if not ziel:
+                continue
+            if m.group("wert") is not None:
+                aktion, wert = "setzen", int(m.group("wert"))
+            else:
+                aktion, wert = _AKTIONSWORT.get(m.group("wort").lower()), None
+            if not aktion or aktion not in (ziel.get("aktionen") or []):
+                continue
+            einheit = (ziel.get("wert") or {}).get("einheit") if wert is not None else None
+            print(f"🔌 Aktuator: Mehrzahl ohne Raum → {zid}/{aktion} (lokale Regel)")
+            return {"ist_kommando": True, "aktion": aktion, "ziel": zid,
+                    "wert": wert, "einheit": einheit}
+        return intent
+
     def classify(self, text: str) -> dict | None:
         """STT-Text -> Intent-Dict via LLM, oder None bei jedem Fehler/Timeout.
 
@@ -392,7 +548,8 @@ class Actuator:
                 out = r.read().decode()
             self.last_latency_ms = (time.time() - t0) * 1000
             content = json.loads(out)["choices"][0]["message"]["content"]
-            return json.loads(content)
+            intent = json.loads(content)
+            return self._mehrzahl_gruppe(text, intent)
         except Exception as e:
             self.last_latency_ms = (time.time() - t0) * 1000
             print(f"⚠️  Aktuator: classify fehlgeschlagen ({self.last_latency_ms:.0f} ms): {e}")
