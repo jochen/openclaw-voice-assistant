@@ -240,6 +240,23 @@ safety, the executing side checks the other half.
 The token for the endpoints lives in `voiceact-token.txt` in the project
 directory (gitignored) and is sent as the `X-Actuator-Token` header.
 
+**The classifier prompt is German by default — and replaceable.** It is the
+only language-dependent part of this project. Set `actuator.system_prompt` in
+your profile to run it in English (or any other language); the code itself
+contains no fixed target id and no device word. Target list, contrast examples
+and the rule for device plurals without a room are generated from
+`/capabilities` on every refresh and substituted into the placeholders
+`{ziel_liste}`, `{kontrast}` and `{gruppen_regel}`. See
+`config.example.yaml` for the full set of keys.
+
+**If you replace the prompt, measure it.** `tools/actuator_grammar_test.py`
+runs a fixed suite against the real `classify()` path and prints the
+capabilities version it was measured against — a score is only ever valid for
+one version of your device list. Two findings from our own measurements that
+appear to be language-independent: fewer few-shot examples beat more, and the
+plural rule only takes effect when placed *after* the target list, never
+before it. Translate the test sentences along with the prompt.
+
 Turns handled by the actuator itself are never seen by the backend — they are
 written as JSONL to `<workspace>/actuator_turns.log` instead.
 

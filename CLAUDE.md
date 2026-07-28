@@ -15,6 +15,20 @@ liegen jetzt im Projekt-venv (`pip install` immer via `ow-venv/bin/python -m pip
 
 Override the profile: `GASTON_PROFILE=openclaw python -m voice_assistant`
 
+Im Regelbetrieb läuft er als User-Unit, nicht von Hand:
+
+```bash
+systemctl --user restart openclaw-voice-assist.service
+journalctl --user -fu openclaw-voice-assist.service
+```
+
+Der Mic-Stream ist exklusiv — wer den Assistenten von Hand startet oder
+Aufnahmen macht (`wakeword_studio record`), stoppt vorher die Unit.
+
+Das kleine Klassifikations-LLM des Aktuators und die Speaches-Container
+liegen in einem eigenen Repo (`openclaw-voice-stack`, compose je Host,
+`restart: unless-stopped`) — nicht hier, und nicht von Hand gestartet.
+
 Der alte Monolith `voice_assistant.py` wurde in ein Package refaktoriert und
 liegt übergangsweise als `voice_assistant_legacy.py` weiter im Repo (zum
 Nachschlagen bei Regressions). Nicht starten.

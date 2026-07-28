@@ -240,6 +240,23 @@ Intents ist die halbe Sicherheit, die andere Hälfte prüft die ausführende Sei
 Der Token für die Endpunkte steht in `voiceact-token.txt` im Projektverzeichnis
 (gitignored) und geht als Header `X-Actuator-Token` mit.
 
+**Der Prompt des Klassifikators ist deutsch — und austauschbar.** Er ist die
+einzige sprachabhängige Stelle des Projekts. Wer ihn auf Englisch (oder eine
+andere Sprache) betreiben will, setzt `actuator.system_prompt` im Profil; der
+Code selbst enthält keine feste Ziel-id und kein Gerätewort. Ziel-Liste,
+Kontrast-Beispiele und die Regel für Geräte-Mehrzahl ohne Raumangabe entstehen
+bei jedem Refresh aus `/capabilities` und werden über die Platzhalter
+`{ziel_liste}`, `{kontrast}` und `{gruppen_regel}` eingesetzt. Alle Schlüssel
+stehen in `config.example.yaml`.
+
+**Wer den Prompt ersetzt, misst neu.** `tools/actuator_grammar_test.py` fährt
+ein festes Test-Set gegen den echten `classify()`-Pfad und schreibt die
+capabilities-Version mit in die Ausgabe — eine Zahl gilt immer nur für einen
+Stand der Geräteliste. Zwei Erkenntnisse aus unseren Messungen, die
+sprachunabhängig sein dürften: wenige Few-Shots schlagen viele, und die
+Mehrzahl-Regel wirkt nur *hinter* der Ziel-Liste, nie davor. Die Testsätze
+gehören mit übersetzt.
+
 Turns, die der Aktuator selbst erledigt, sieht das Backend nicht — sie landen
 deshalb als JSONL in `<workspace>/actuator_turns.log`.
 

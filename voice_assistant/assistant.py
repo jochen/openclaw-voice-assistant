@@ -84,7 +84,8 @@ _STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
 # Ein-Satz-Kommando: nach dem Trigger wird das "Ja?" nicht sofort gespielt,
 # sondern ACK_DELAY_SEC lang der VAD beobachtet. Wird weitergesprochen, kommt
 # gar kein "Ja?" (LED-Ring reicht als Rückmeldung). Bleibt es still, wird
-# "Ja?" gespielt wie bisher. Siehe EIN_SATZ_KOMMANDO_PLAN.md.
+# "Ja?" gespielt wie bisher. Zusammen mit _PRE_ROLL_SEC ergibt das den
+# Ein-Satz-Betrieb: die LED quittiert sofort, der Anfang geht nicht verloren.
 _ACK_DELAY_SEC = 0.4
 
 # Pre-Roll: so viel Audio VOR dem Trigger wird der Aufnahme vorangestellt.

@@ -50,20 +50,70 @@ bloß das Wort „Stopp".
 
 ## Werkzeuge
 
-- `wake_triage.py` — klassifiziert Wake/Nearmiss-Files per STT in ECHTER RUF /
-  RAUSCHEN / UNKLAR, nutzt `danach` (Folgeaufnahme) als Beleg. Dedupliziert
-  via `wake_triage.jsonl`.
+- `wake_triage.py` — sortiert in ECHTER RUF / RAUSCHEN / UNKLAR, aus **zwei
+  Quellen in dieser Rangfolge**:
+  1. **Selbst-Labels** aus Handlungen, die nur bei einem echten Ruf bzw. nur
+     bei einem Fehltrigger vorkommen (siehe Abschnitt unten). Kein Mensch,
+     keine STT, kein Schwellwert.
+  2. **STT-Einstufung** für alles, was Regel 1 nicht erreicht — schwächer, das
+     Wort „Gaston" wird regelmäßig verhört.
+  Zeigt zusätzlich den Sprechfluss ([Ein-Satz]/[Pause], aus der
+  protokollierten ack-Entscheidung) und Wiederkehrer. Dedupliziert via
+  `wake_triage.jsonl`.
 - `wakeword_studio record` — geführte echte Aufnahmen (eigenes Package).
 - Trigger-Archiv: `~/.openclaw/workspace/voice/triggers/`
 - Labels: `~/.openclaw/workspace/wake_triage.jsonl`
+
+## Was sich von selbst labelt
+
+Der Nutzer labelt beim Benutzen mit, ohne es zu merken. Drei Regeln, alle
+gemessen am Bestand vom 2026-07-25..28:
+
+| Beobachtung | Label | warum es trägt |
+|---|---|---|
+| Near-Miss, dem binnen 15 s ein Trigger folgt | echter Ruf, **verloren** | der Nutzer hat sich wiederholt, weil der erste Ruf nicht ankam |
+| Trigger, aus dem ein ausgeführtes Schaltkommando wurde | echter Ruf | ein Fehltrigger erzeugt praktisch nie ein gültiges Intent |
+| Trigger, den der Nutzer mit einem Stopp-Wort abbrach | Fehltrigger | der Abbruch ist sein ausdrückliches Urteil |
+
+Die erste Regel ist die wertvollste: sie labelt genau das, was das Gate
+**verpasst** hat, statt zu bestätigen, was es ohnehin durchlässt. Von 19 so
+gefundenen Fällen hatte die STT-Einstufung 10 als UNKLAR liegen gelassen und
+2 als RAUSCHEN falsch einsortiert.
+
+Bewusst **kein** Label: „keine Sprache" oder leeres Transkript nach einem
+Trigger. Das sieht nach Fehltrigger aus, deckt aber auch den Fall ab, dass der
+Ruf echt war und der Nutzer dann unterbrochen wurde.
+
+**Die Grenze, die bleibt:** ein verlorener Ruf, den der Nutzer *nicht*
+wiederholt hat, taucht nirgends auf. Der Prozess misst nicht den wahren
+Recall, sondern nur den beobachtbaren Teil — und schätzt ihn systematisch zu
+gut. Für die Recall-Zahl der Spec zählt weiterhin nur das Validierungs-Set aus
+`wakeword_studio record`.
+
+## Ein-Satz gegen Pause
+
+Seit dem Pre-Roll (2026-07-28) hält der Assistent je Trigger fest, ob
+durchgesprochen wurde. Aus dem Audio ist das **nicht** rekonstruierbar — der
+Wake-Clip endet, bevor das nächste Wort beginnt; die naheliegende
+Tail-RMS-Heuristik traf gegen die echte Entscheidung nur 6 von 9 Fällen.
+
+Das ist die Datenbasis für eine offene Frage: „Gaston" im Satzfluss wird
+schneller und unbetont gesprochen, das Modell kennt nur die isolierte Form
+(30 000 synthetische Einzelwort-Samples). Erste Zahlen: Ein-Satz-Trigger
+landen bei 25 % auf einem 1-Frame-Streak, Rufe mit Pause bei 3 % — und kurze
+Streaks müssen am Gate einen höheren Peak erreichen. Bestätigt sich das über
+mehr Daten, gehören Ein-Satz-Aufnahmen ins Nachtraining, nicht nur isolierte
+Takes.
 
 ## Prozess (wiederholend)
 
 1. **Sammeln** — passiv aus dem Alltag. Tage bis Wochen.
 2. **Triagieren** — `ow-venv/bin/python -m tools.wake_triage --seit N --auch-trigger`
-   läuft über ungelabelte Files, STT klassifiziert, UNKLAR-Fälle listen.
+   läuft über ungelabelte Files. Die Selbst-Labels stehen sofort, die STT
+   klassifiziert nur den Rest, UNKLAR-Fälle bleiben übrig.
 3. **Per Ohr entscheiden** — UNKLAR-Fälle mit `aplay` anhören (wake_triage
-   schlägt den Pfad vor). Label in `wake_triage.jsonl` eintragen.
+   schlägt den Pfad vor). Label in `wake_triage.jsonl` eintragen. Der Stapel
+   ist klein: auf dem Bestand blieben nach den Selbst-Labels 2 von 56 übrig.
 4. **Trainieren** — synthetische TTS-Samples + echtes Validierungs-Set +
    Negativ-Korpus → neues Modell. Siehe `Wakeword_Studio_Spec.md`.
 5. **Validieren** — gegen Validierungs-Gate prüfen: Recall ≥ 0.9 gegen echte
@@ -88,4 +138,4 @@ Im MemPalace (Wing `clawdpi1-home-pi-openclaw-voice-assist`, Room `decisions`,
 Drawer `...11c2e98f58cb...`) liegt der ausführliche Prozess-Drawer mit
 Session-Kontext, Fehlerdokumentation und aktuellem Sammlungsstand.
 Diese Datei (`WAKEWORD_PROCESS.md`) ist die Repo-Seite desselben — beide
-sinden gegenseitig verlinkt und sagen dasselbe.
+sind gegenseitig verlinkt und sagen dasselbe.

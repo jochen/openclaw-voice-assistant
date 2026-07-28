@@ -1,8 +1,13 @@
-# Voice-Aktuator v1 — Geschichte & Bauplan
+# Voice-Aktuator v1 — Entstehungsgeschichte
 
-*Stand 2026-07-25. Dieses Dokument ist der Einstieg für die neue Session, die den
-schnellen lokalen Schalt-Aktuator in den Voice-Assistant einbaut. Ergänzt
-`CLAUDE.md` (Package-Struktur). Der globale CLAUDE.md-Hinweis gilt: relevante
+> **Rückblick, keine Anleitung.** Der Aktuator ist gebaut und läuft; dieses
+> Dokument hält fest, warum er so aussieht, wie er aussieht, und was dabei
+> gemessen wurde. Wer ihn *benutzt* oder die Gegenstelle implementiert, liest
+> `ACTUATOR_INTERFACE.md`. Wer den Prompt ändert, misst mit
+> `tools/actuator_grammar_test.py` — die Zahlen hier unten gelten für den
+> Stand von 2026-07-25 und einen früheren capabilities-Satz.
+
+*Stand 2026-07-25. Ergänzt `CLAUDE.md` (Package-Struktur). Der globale CLAUDE.md-Hinweis gilt: relevante
 MemPalace-Wings/Rooms durchsuchen — hier v.a. Wing `clawdpi1-home-pi-openclaw-voice-assist`
 (room `technical`/`decisions`) und `noderedpi4-home-pi/technical`.*
 
