@@ -194,11 +194,56 @@ Fünf Zustände in der Hauptschleife (`voice_assistant/assistant.py`):
 
 1. **LISTENING** — WakewordEngine bekommt jeden 16-kHz-Chunk; triggert bei Score über
    dem Wakeword-Threshold (Config > manifest.yaml > Default 0.65)
-2. **RECORDING** — Chunks werden gesammelt; endet bei Stille (25 stille Chunks
-   nach Sprache) oder nach 15 s Timeout
+2. **RECORDING** — Chunks werden gesammelt; endet bei Stille nach Sprache oder
+   am Deckel. Zwei Parametersätze, siehe „Endpointing" unten
 3. **PROCESSING** — wartet auf STT-Ergebnis aus `state.stt_queue`
 4. **WAITING** — wartet auf `state.reply_done_event` (openclaw_worker setzt es)
 5. **PAUSE** — 1 s Totzone bevor es zurück in LISTENING geht
+
+### Endpointing: Dialog vs. Kommando
+
+Wann eine Aufnahme endet, hängt davon ab, ob der Nutzer das „Ja?" abgewartet
+hat. Wer durchspricht (Ein-Satz), meint fast immer einen kurzen Schaltbefehl
+für den Aktuator — da zählt Tempo und Denkpausen kommen nicht vor. Wer wartet,
+stellt meist etwas Komplexeres, das an den Brain geht.
+
+| | Nachlauf (Stille bis Ende) | Deckel |
+|---|---|---|
+| Dialog (Ja? abgewartet, Follow-ups) | `silence_seconds` (2,0 s) | `RECORDING_MAX_SEC` (30 s) |
+| Kommando (Ein-Satz) | `command_silence_seconds` (1,0 s) | `command_max_seconds` (8 s) |
+
+Der Kommando-Modus wird **nicht** schon von der Ein-Satz-Einstufung scharf,
+sondern erst nach `_COMMAND_MIN_SPEECH_SEC` (0,5 s) tatsächlicher Sprache. Der
+Ein-Satz-Entscheid fällt 0,4 s nach dem Trigger und spricht auch auf den
+Ausklang des Wakewords an — ohne diese Sperre stirbt eine Aufnahme in der
+Denkpause direkt nach „Gaston" und das Kommando ist komplett weg (belegt an
+`20260730_181211`; 30 von 37 protokollierten Entscheidungen lauten
+„Ein-Satz", der Erkenner springt also leicht an).
+
+**Warum überhaupt zwei Sätze:** Bei laufendem Fernseher endete die Aufnahme
+nie — die Sprechpausen einer Störquelle sind ~1,7 s lang und setzen den
+Stille-Zähler vor der 2-s-Schwelle zurück. Ein Turn lief so 21,9 s bis zum
+Deckel (2026-08-01). Es braucht dafür keine Sprache im Hintergrund, nur
+irgendein Geräusch alle ~1,5 s: `_chunk_speech_stats` verodert die vier
+20-ms-VAD-Frames eines Chunks, ein einziger Frame genügt.
+
+**Parameter nur gegen `tools/endpoint_replay.py` ändern.** Das Werkzeug spielt
+die Endpointing-Logik über die archivierten `*_rec.wav` (siehe
+`TRIGGER_AUDIO_DIR`) und weist per STT nach, ob ein Schnitt ein Kommando
+zerschneidet. Gemessen am 2026-08-01 über die 30 Ein-Satz-Turns im Archiv:
+Median 7,0 s → 5,8 s, kein einziges der 22 ausgeführten Kommandos beschädigt.
+Zwei Fallen, die dabei beide zugeschlagen haben: den Pre-Roll muss das Replay
+überspringen (der VAD sieht ihn im Betrieb nie, sonst zählt das Wakeword als
+Sprache), und ein reiner Wortvergleich taugt nicht als Verlustkriterium —
+STT-Varianten wie „Gastro-Monitor an" / „Gastro Monitoren" sehen aus wie ein
+abgeschnittenes Kommando. Verlust wird deshalb aus der VAD-Spur bestimmt.
+
+`endpoint.log` bekommt pro Turn `mode`, `rms_p10/median/max` und
+`vad_frame_ratio` — der Rohstoff, um später zu entscheiden, ob eine
+Pegelschwelle (`vad_voice_rms_min`) oder ein Frame-Anteil-Gate den Fernseher
+vom Sprecher trennen kann. Geschrieben wird die Zeile auf **jedem** Ausgang,
+auch bei Stopp-Wort und „keine Sprache" (`_flush_endpoint`); vorher fehlten
+ausgerechnet die kaputten Aufnahmen im Log.
 
 ## Threading Model
 

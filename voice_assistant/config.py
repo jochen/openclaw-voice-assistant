@@ -303,6 +303,18 @@ class Profile:
     # Legacy-Override in *Chunks*. > 0 schlägt silence_seconds; nur für
     # Rückwärtskompatibilität. Bevorzugt silence_seconds setzen.
     silence_chunks_limit: int = 0
+    # Endpointing im KOMMANDO-Modus: greift, sobald ein Turn als Ein-Satz
+    # eingestuft wurde (der Nutzer spricht durch, ohne das "Ja?" abzuwarten).
+    # Solche Turns sind fast immer kurze Schaltbefehle für den Aktuator — da
+    # zählt Tempo, und lange Denkpausen kommen nicht vor. Gemessen über 59
+    # störungsfreie Turns im Archiv (dur ≤ 6 s): Sprechpause im Satz p90 0,44 s
+    # / max 1,68 s, Netto-Sprechzeit max 3,88 s. 1,0 s Nachlauf hätte davon 2
+    # Turns zu früh geschnitten, 8 s Deckel keinen einzigen (1,5 s Pre-Roll +
+    # 3,9 s Sprechzeit + 1,0 s Nachlauf ≈ 6,4 s).
+    # Der Dialog-Modus (Nutzer hat das "Ja?" abgewartet) behält
+    # silence_seconds / RECORDING_MAX_SEC — dort sind lange Sätze normal.
+    command_silence_seconds: float = 1.0
+    command_max_seconds: float = 8.0
 
     # Locale
     locale: LocaleConfig = field(default_factory=LocaleConfig)
@@ -520,6 +532,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         vad_voice_rms_min=float(raw.get("vad_voice_rms_min", 0.0)),
         silence_seconds=float(raw.get("silence_seconds", 2.0)),
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
+        command_silence_seconds=float(raw.get("command_silence_seconds", 1.0)),
+        command_max_seconds=float(raw.get("command_max_seconds", 8.0)),
         locale=locale,
         actuator=actuator,
         watcher=watcher,

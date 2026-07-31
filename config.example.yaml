@@ -112,6 +112,13 @@ profiles:
     #                               #   Denkpausen, aber träger. Fablab/laut: ~1.0
     # silence_chunks_limit: 0       # Legacy-Override in Chunks; > 0 schlägt silence_seconds.
     #                               #   Nur falls explizit chunk-genau nötig. 0 = aus.
+    #
+    # Kommando-Modus: greift NUR, wenn der Nutzer durchgesprochen hat, ohne das
+    # "Ja?" abzuwarten (Ein-Satz). Das sind fast immer kurze Schaltbefehle für
+    # den Aktuator — da zählt Tempo, Denkpausen kommen nicht vor. Wer das "Ja?"
+    # abwartet, bekommt weiter silence_seconds / 30 s.
+    # command_silence_seconds: 1.0  # Stille bis Aufnahme-Ende im Kommando-Modus
+    # command_max_seconds: 8.0      # harter Deckel im Kommando-Modus
 
     # Locale — all fields optional, defaults shown here (German)
     # locale:
