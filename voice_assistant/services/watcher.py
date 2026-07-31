@@ -62,9 +62,28 @@ Häufige Fehler die du erkennst:
 - Verneinung oder Einschränkung im Transkript ignoriert ("alle außer der Küche", "nicht das Badlicht")
 - "auf 10%" ist eine SETZEN-Aktion (Präposition), nicht die Aktion "auf" (ganz öffnen) — das ist KEIN Fehler
 
+Du bist STUFE 1: du greifst NIEMALS ein, du schaltest nichts. Du meldest nur.
+Aber du bist ein denkender Aufseher, kein Matcher. Zeige deinen Gedankengang
+und überlege, was DU tun würdest, um einen erkannten Fehler zu beheben — als
+VORSCHLAG, nicht als Befehl. Genauer gesagt: wenn der Aktuator etwas Falsches
+ausgeführt hat, beschreibe knapp, wie man es rückgängig machen und das
+gemeinte stattdessen tun würde (z.B. "Rollo wieder schließen, dann ganz
+öffnen"). Wenn nichts Falsches ausgeführt wurde oder es unklar ist, schreibe
+"keine". Dieser Vorschlag wird NUR angezeigt, nie ausgeführt — er dient dem
+Menschen zur Einschätzung, ob deine Korrektur-Ideen vernünftig sind.
+
 Antworte NUR als JSON:
-{"ok": true}                          — Transkript und Intent passen zusammen
-{"ok": false, "grund": "..."}         — sie passen nicht; grund in einem kurzen Satz
+{"ok": true}
+{"ok": false, "grund": "...", "gedanke": "...", "korrektur": "..."}
+
+  grund      — kurzer Satz: was passt nicht zusammen
+  gedanke    — 1 bis 3 Sätze: wie kommst du zu diesem Schluss? Was im
+               Transkript hat dich überzeugt, was im Intent widerspricht dem?
+               Das ist dein Gedankeneinblick, damit ein Mensch nachvollziehen
+               kann, ob dein Urteil schlüssig ist.
+  korrektur  — was DU vorschlagen würdest zu tun, um den Fehler zu beheben
+               (rückgängig + gemeintes tun), als freier Text; oder "keine"
+               wenn nichts Falsches ausgeführt wurde oder unklar ist
 
 Wenn du unsicher bist, antworte ok:true (lieber nichts melden als falsch alarmieren)."""
 
@@ -130,6 +149,8 @@ def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
         return {
             "art": "LLM_MISMATCH",
             "detail": result.get("grund", "Transkript und Intent passen nicht zusammen."),
+            "gedanke": (result.get("gedanke") or "").strip(),
+            "korrektur": (result.get("korrektur") or "").strip(),
         }
 
     try:
@@ -163,6 +184,9 @@ def _formatiere_alert(befund: dict) -> str:
         f'Gesagt: "{transcript}"',
         f"Befund: {detail}",
     ]
+    gedanke = befund.get("gedanke")
+    if gedanke:
+        lines.append(f"Gedanke: {gedanke}")
     if intent:
         lines.append(f"Intent: ziel='{intent.get('ziel')}' aktion='{intent.get('aktion')}'")
     if ausg:
@@ -170,6 +194,9 @@ def _formatiere_alert(befund: dict) -> str:
     gesprochen = befund.get("gesprochen")
     if gesprochen:
         lines.append(f"Gesprochen: {gesprochen}")
+    korrektur = befund.get("korrektur")
+    if korrektur and korrektur.lower() != "keine":
+        lines.append(f"Korrektur-Vorschlag: {korrektur}")
     lines.append("(Stufe 1 — nur Meldung, kein Eingriff)")
     return "\n".join(lines)
 
