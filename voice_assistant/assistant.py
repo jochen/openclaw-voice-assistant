@@ -23,6 +23,7 @@ from voice_assistant.config import (
     FOLLOWUP_BEEP_PATH,
     LAST_RECORDING_PATH,
     MAX_FOLLOWUP_ROUNDS,
+    MAX_UNKLAR_ROUNDS,
     MIN_SPEECH_CHUNKS,
     OPENCLAW_OVERALL_TIMEOUT,
     PIPER_OUT,
@@ -41,7 +42,12 @@ from voice_assistant.config import (
     load_profile,
 )
 from voice_assistant.services import speaches as speaches_mod
-from voice_assistant.services.actuator import Actuator
+from voice_assistant.services.actuator import (
+    Actuator,
+    VERDICT_AUSFUEHRBAR,
+    VERDICT_KEIN_KOMMANDO,
+    VERDICT_UNKLAR,
+)
 from voice_assistant.services.diarization import SpeachesDiarizer
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
@@ -743,6 +749,9 @@ def run() -> None:
     # Handshake ins Leere läuft, wieder auf None zurückgesetzt werden — sonst
     # sickert er in einen späteren Turn durch.
     pending_confirm: dict | None = None
+    # Wie oft in diesem Wake-Zyklus schon wegen VERDICT_UNKLAR nachgefragt
+    # wurde. Deckelt die Klärungsschleife (siehe MAX_UNKLAR_ROUNDS).
+    unklar_round = 0
 
     # Ein-Satz-Kommando: "Ja?" wird verzögert gespielt. ack_pending=True nach
     # dem Trigger, ack_deadline = Triggerzeit + _ACK_DELAY_SEC. Im
@@ -880,6 +889,11 @@ def run() -> None:
                         print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
                         trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                         trigger_audio_bundle = current_wakeword.bundle
+                        # Klärungs-Rückfragen gelten je Wake-Zyklus. Hier und
+                        # nur hier zurücksetzen: die Rückfrage selbst geht über
+                        # FOLLOWUP (ohne neuen Trigger), der Zähler muss sie
+                        # also überleben.
+                        unklar_round = 0
                         _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                         turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                         # Trigger genauso protokollieren wie den Near-Miss —
@@ -1217,7 +1231,10 @@ def run() -> None:
                         pending_reply_text[0] = None
                         state = STATE_PAUSE
                         state_start = time.time()
-                    elif _is_stop_command(text, followup_round):
+                    # unklar_round zählt hier wie eine Follow-up-Runde: das Mikro
+                    # ist ohne Wakewort offen, also muss ein einzelnes "Stopp"
+                    # reichen (das strengere Erst-Muster verlangt zwei Wörter).
+                    elif _is_stop_command(text, followup_round or unklar_round):
                         print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
                         _log_outcome("stopwort", transcript=text)
                         _flush_endpoint(text, ausgang="stopwort")
@@ -1236,9 +1253,11 @@ def run() -> None:
                     elif text:
                         # --- Aktuator-Vorlauf: Schaltkommando? Dann Brain überspringen. ---
                         intent = None
+                        verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         if actuator is not None and actuator.ready:
                             intent = actuator.classify(text)
-                        if intent is not None and actuator.is_actionable(intent):
+                            verdict, unklar_grund = actuator.verdict(intent)
+                        if verdict == VERDICT_AUSFUEHRBAR:
                             # Sprecher wird hier nur MITGESCHRIEBEN, nicht
                             # angewandt: der Aktuator antwortet mit Node-REDs
                             # fertigem Satz, eine Sprecher-Stimme braucht er
@@ -1344,6 +1363,71 @@ def run() -> None:
                                     pending_reply_text[0] = None
                                     state = STATE_PAUSE
                                     state_start = time.time()
+                        elif verdict == VERDICT_UNKLAR:
+                            # Schaltbefehl erkannt, aber nicht sicher ausführbar.
+                            # Weder ausführen noch an den Brain geben —
+                            # nachfragen. Begründung: actuator.verdict().
+                            try:
+                                act_spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                act_spk = None
+                            try:
+                                turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                pass
+                            _save_last_recording(recorded_chunks)
+                            _flush_endpoint(text, ausgang="unklar")
+                            print(
+                                f"[{now:.1f}s] 🔌 Aktuator: unklar "
+                                f"({actuator.last_latency_ms:.0f} ms) — {unklar_grund} "
+                                f"→ Rückfrage (nicht an den Brain)"
+                            )
+                            _log_actuator_turn({
+                                "phase": "abgewiesen",
+                                "request_id": str(uuid.uuid4()),
+                                "transcript": text,
+                                "speaker": act_spk,
+                                "wakeword": current_wakeword.bundle,
+                                "intent": intent,
+                                "latency_ms": round(actuator.last_latency_ms),
+                                "status": "unklar",
+                                "grund": unklar_grund,
+                                "runde": unklar_round,
+                            })
+                            _log_outcome("unklar", transcript=text, grund=unklar_grund)
+                            if unklar_round < MAX_UNKLAR_ROUNDS:
+                                # Eine Rückfrage, dann Schluss. Zweimal nach
+                                # demselben verhörten Wort zu fragen hilft
+                                # nicht — die STT hört es wieder gleich falsch.
+                                unklar_round += 1
+                                speaker.speak(
+                                    "Das habe ich nicht sicher verstanden. "
+                                    "Sag noch einmal, was ich schalten soll."
+                                )
+                                audio_source.flush()
+                                wakeword.reset()
+                                if os.path.exists(FOLLOWUP_BEEP_PATH):
+                                    audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
+                                audio_source.flush()
+                                leds.set_phase(LED_FOLLOWUP)
+                                state = STATE_FOLLOWUP
+                                state_start = time.time()
+                                recorded_chunks = []
+                                pre_roll_chunks = 0
+                                silence_counter = 0
+                                max_internal_pause = 0
+                                speech_detected = False
+                                followup_rms_sum = 0.0
+                                followup_rms_count = 0
+                                followup_vad_speech = 0
+                            else:
+                                unklar_round = 0
+                                speaker.speak("Das habe ich wieder nicht verstanden.")
+                                leds.set_phase(LED_IDLE)
+                                followup_round = 0
+                                pending_reply_text[0] = None
+                                state = STATE_PAUSE
+                                state_start = time.time()
                         else:
                             if actuator is not None and actuator.ready:
                                 print(

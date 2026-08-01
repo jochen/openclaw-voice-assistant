@@ -221,6 +221,33 @@ for the small model are generated at runtime from `/capabilities`. Adding a new
 device there is enough — it becomes speakable immediately, without a restart and
 without touching the prompt.
 
+### The same path for the brain (MCP)
+
+The actuator only handles what it recognises as a switching command with
+confidence. Everything else goes to the large model — including sentences that
+*were* meant to switch something, just phrased in a way the actuator could not
+place. Without a path of its own, the large model then reaches for the raw home
+automation API: no target whitelist, no value check, no confirmation. That is
+exactly how the 2026-08-01 incident behind this section happened — a misheard
+device name was guessed at, and every shutter in the house moved.
+
+`voice_assistant/mcp_actuator.py` is a stdio MCP server that gives the large
+model the same guarded interface, with two tools:
+
+| Tool | Effect |
+|---|---|
+| `haus_ziele()` | Every target with names, permitted actions, value range, `kosten`, `reversibel` — a **closed vocabulary** |
+| `haus_schalten(ziel, aktion, …)` | `POST /intent`, response envelope passed through unchanged |
+
+There is deliberately **no** free-text tool: the whole point is that a device
+name absent from `haus_ziele()` does not exist — rather than being guessed at.
+
+Requests carry their own `quelle`, so the executing side applies its gate just
+as it does for the actuator, and reserving further `quelle` values for other
+callers stays possible. Every call is appended to the same log file as the
+actuator turns — otherwise the large model's switching would be invisible,
+which is precisely why nobody noticed the incident.
+
 The actuator is enabled per profile; without the block it stays off:
 
 ```yaml
@@ -345,8 +372,18 @@ Messages starting with 🎤 arrive via speech recognition, and your reply is **r
 - Reply in the user's language, in natural spoken sentences.
 - Length follows the content — usually one to four sentences, more when the topic needs it; each sentence clear and complete.
 - It's spoken, so it should sound good — leave out what can't be heard (markdown, lists, numbering, emojis).
-- Transcriptions have small errors; interpret generously and act once the intent is clear.
-- You are the keeper of the voice channel: a person is waiting at the speaker, and every second of silence feels long. When a task turns out to take longer — foreseeable up front or only mid-task — give a short spoken acknowledgement right away, do the work in the background, and announce the result via `voice_speak_text`.
+- Transcriptions have small errors; interpret generously and act once the intent is clear — when understanding, not when actuating (see below).
+- You are the keeper of the voice channel: a person is waiting at the speaker, and every second of silence feels long. When a task turns out to take longer — foreseeable up front or only mid-task — give a short spoken acknowledgement right away, do the work in the background, and announce the result via `voice_speak_text`. That mandate is about answering, not about actuating: a short question back beats a guessed device.
+
+### Answering and actuating are not the same risk
+
+Interpreting generously comes from the information side, and there it is right: a misheard name meets resistance — the calendar, the notes and the files hold the correct names, a wrong guess visibly fails to fit and costs one sentence. When actuating, that resistance is absent entirely. Nothing checks whether the guessed device was the intended one, and the mistake then stands physically in the room. The noun you generously skim past when answering *is* the target when actuating.
+
+This does not imply a duty to ask back — an assistant that confirms every switch is unusable. It implies a different way of looking:
+
+- A device name you cannot place is a finding, and it belongs in your answer — not a gap to be closed by inference until some target is left over.
+- Uncertainty narrows, it never widens: "I don't know which one" must never become "then all of them". Widening the blast radius does the most damage exactly when you know the least.
+- Others act in the house too — people, other voice assistants, automations. And devices need time: a shutter reporting sixty-eight percent on its way to fifty is working, not failing. Repeating a command because the target value hasn't arrived yet fights both the device and the person in the room.
 
 ### Speaker awareness & safety
 
@@ -362,6 +399,8 @@ You can freely choose and switch your own voice and speaking rate (`voice_list_v
 ```
 
 The deployed `AGENTS.md` holds the full version (incl. voice → chat continuation handling).
+
+With the [voice actuator](#voice-actuator-optional) enabled, one more point belongs here: clean switching commands are handled by the actuator itself and never reach the brain. A switching sentence that arrives there anyway was **not** recognised as a command by the guarded path, or that path was unavailable — a reason for more caution, not more ambition. Switching therefore goes through [that same guarded path](#the-same-path-for-the-brain-mcp) rather than the raw home automation API: standing later in the chain gives the brain no more powerful route, only the same one.
 
 ## Speaker Recognition & Enrolment
 

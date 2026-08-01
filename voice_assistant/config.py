@@ -74,7 +74,11 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "Ansage bis zur nächsten Ruhepause wartet. Entweder du antwortest direkt "
     "(dann kein voice_speak_text), oder deine Antwort endet mit der kurzen "
     "Zwischenmeldung und das Ergebnis kommt ausschließlich per voice_speak_text. "
-    "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
+    "Das Mandat gilt fürs Antworten, nicht fürs Schalten: lieber eine kurze "
+    "Rückfrage als ein geratenes Gerät. "
+    "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht "
+    "weißt. Das gilt auch für Ziele: ein Gerät, das du im Transkript nicht "
+    "sicher wiedererkennst, wird nicht erraten.]"
 )
 
 
@@ -597,6 +601,10 @@ SILENCE_CHUNKS_LIMIT = 25
 MIN_SPEECH_CHUNKS = 4
 
 MAX_FOLLOWUP_ROUNDS = 3
+# Wie oft der Aktuator bei VERDICT_UNKLAR nachfragt, bevor er aufgibt. Eins:
+# eine zweite Rückfrage zum selben verhörten Wort bringt nichts, die STT hört
+# es wieder gleich falsch — sie nervt nur.
+MAX_UNKLAR_ROUNDS = 1
 FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")

@@ -221,6 +221,34 @@ des kleinen Modells entstehen zur Laufzeit aus `/capabilities`. Ein neues Gerät
 dort anlegen genügt — es ist sofort sprechbar, ohne Neustart und ohne
 Prompt-Änderung.
 
+### Derselbe Weg für den Brain (MCP)
+
+Der Aktuator erledigt nur, was er sicher als Schaltbefehl erkennt. Alles
+andere geht an das große Modell — darunter Sätze, die *doch* schalten sollen,
+nur eben in einer Form, die der Aktuator nicht zuordnen konnte. Ohne einen
+eigenen Weg greift das große Modell dann zur rohen Hausautomations-API: ohne
+Ziel-Whitelist, ohne Wertprüfung, ohne Rückfrage. Genau daraus entstand am
+2026-08-01 der Vorfall, der diese Sektion veranlasst hat — ein verhörter
+Gerätename wurde erraten und traf alle Rollos im Haus.
+
+`voice_assistant/mcp_actuator.py` ist ein stdio-MCP-Server, der dem großen
+Modell dieselbe abgesicherte Schnittstelle gibt, mit zwei Werkzeugen:
+
+| Werkzeug | Wirkung |
+|---|---|
+| `haus_ziele()` | Alle Ziele mit Namen, erlaubten Aktionen, Wertebereich, `kosten`, `reversibel` — ein **geschlossenes Vokabular** |
+| `haus_schalten(ziel, aktion, …)` | `POST /intent`, Antwort-Envelope unverändert |
+
+Es gibt bewusst **kein** Freitext-Werkzeug: der ganze Gewinn ist, dass ein
+Gerätename, der in `haus_ziele()` nicht vorkommt, nicht existiert — statt
+erraten zu werden.
+
+Gepostet wird mit einer eigenen `quelle`, damit die ausführende Seite ihr Gate
+genauso anwendet wie beim Aktuator; das Reservieren weiterer `quelle`-Werte
+für andere Aufrufer bleibt dadurch möglich. Jeder Aufruf landet in derselben
+Protokolldatei wie die Aktuator-Turns — sonst wären die Schaltvorgänge des
+großen Modells unsichtbar, und genau deshalb hat den Vorfall niemand bemerkt.
+
 Aktiviert wird der Aktuator pro Profil; ohne den Block ist er aus:
 
 ```yaml
@@ -348,8 +376,18 @@ Nachrichten mit 🎤 kommen über Spracherkennung herein, und deine Antwort wird
 - Antworte in der Sprache des Nutzers, in natürlich gesprochenen Sätzen.
 - Die Länge richtet sich nach dem Inhalt — meist ein bis vier Sätze, bei komplexen Themen mehr; jeder Satz klar und vollständig.
 - Es wird vorgelesen, also soll es gut klingen — lass weg, was man nicht hören kann (Markdown, Listen, Nummerierungen, Emojis).
-- Transkriptionen haben kleine Fehler; interpretiere großzügig und handle, sobald der Sinn klar ist.
-- Du hütest den Sprachkanal: dort wartet ein Mensch, für den jede Sekunde Stille lang ist. Wird eine Aufgabe spürbar länger — vorab absehbar oder erst mitten in der Arbeit —, gib sofort eine kurze gesprochene Rückmeldung, erledige die Arbeit im Hintergrund und sag das Ergebnis über `voice_speak_text` an.
+- Transkriptionen haben kleine Fehler; interpretiere großzügig und handle, sobald der Sinn klar ist — beim Verstehen, nicht beim Schalten (siehe unten).
+- Du hütest den Sprachkanal: dort wartet ein Mensch, für den jede Sekunde Stille lang ist. Wird eine Aufgabe spürbar länger — vorab absehbar oder erst mitten in der Arbeit —, gib sofort eine kurze gesprochene Rückmeldung, erledige die Arbeit im Hintergrund und sag das Ergebnis über `voice_speak_text` an. Das gilt fürs Antworten, nicht fürs Schalten: lieber eine kurze Rückfrage als ein geratenes Gerät.
+
+### Auskunft und Steuerung sind nicht dasselbe Risiko
+
+Großzügig zu interpretieren stammt aus dem Auskunfts-Betrieb, und dort ist es richtig: ein falsch verstandener Name stößt auf Widerstand — Kalender, Notizen und Dateien halten die richtigen Namen, ein Fehlgriff passt sichtbar nicht und kostet einen Satz. Beim Schalten fehlt dieser Widerstand vollständig. Nichts prüft nach, ob das geratene Gerät das gemeinte war, und der Fehler steht danach physisch im Raum. Das Substantiv, das beim Auskunftgeben großzügig überlesen wird, ist beim Schalten das Ziel.
+
+Daraus folgt keine Rückfragepflicht — ein Assistent, der jede Schaltung bestätigen lässt, ist unbrauchbar. Es folgt eine andere Blickrichtung:
+
+- Ein Gerätename, der sich nicht zuordnen lässt, ist ein Befund und gehört ausgesprochen — keine Lücke, die durch Schlussfolgern geschlossen wird, bis irgendein Ziel übrig bleibt.
+- Unsicherheit verengt, sie weitet nie: „ich weiß nicht welches" wird niemals zu „dann eben alle". Den Wirkungsbereich auszudehnen richtet den größten Schaden genau dann an, wenn am wenigsten bekannt ist.
+- Im Haus schalten auch andere — Menschen, andere Sprachassistenten, Automatisierungen. Und Geräte brauchen Zeit: ein Rollo, das auf dem Weg zu fünfzig Prozent gerade achtundsechzig meldet, arbeitet; es ist nicht fehlgeschlagen. Einen Befehl zu wiederholen, weil der Zielwert noch nicht dasteht, kämpft gegen das Gerät und gegen die Person im Raum.
 
 ### Sprechererkennung & Sicherheit
 
@@ -365,6 +403,8 @@ Du kannst deine Stimme und dein Tempo frei wählen und wechseln (`voice_list_voi
 ```
 
 Die ausgerollte `AGENTS.md` enthält die vollständige Fassung (inkl. Voice→Chat-Fortsetzung).
+
+Ist der [Voice-Aktuator](#voice-aktuator-optional) aktiv, gehört ein weiterer Punkt dazu: saubere Schaltbefehle erledigt er selbst, sie erreichen den Brain nie. Ein schaltender Satz, der trotzdem dort ankommt, wurde von der abgesicherten Stelle **nicht** als Kommando erkannt oder sie war nicht verfügbar — ein Grund für mehr Vorsicht, nicht für mehr Ehrgeiz. Geschaltet wird deshalb über [dieselbe abgesicherte Stelle](#derselbe-weg-für-den-brain-mcp) und nicht über die rohe Hausautomations-API: später in der Kette zu stehen gibt dem Brain keinen mächtigeren Weg, sondern denselben.
 
 ## Sprechererkennung & Enrolment
 

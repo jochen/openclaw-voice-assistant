@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Dieses Repo ist öffentlich — die READMEs sind die Vorlage für Fremde
+
+`origin` ist ein öffentliches GitHub-Repo. `README.md` (englisch) und
+`README.de.md` (deutsch) sind **inhaltlich parallel** und richten sich an
+Leute mit anderer Hardware, anderen Geräten und anderer Sprache. Wer eine der
+beiden ändert, ändert die andere mit — sonst driften sie auseinander und eine
+von beiden wird still falsch.
+
+**Verhaltensregeln aus der ausgerollten `~/.openclaw/workspace/AGENTS.md` sind
+in der Voice-Sektion der READMEs gespiegelt** (dort neutral formuliert, ohne
+Haus-Spezifika). Diese Spiegelung wird regelmäßig vergessen. Am 2026-08-01
+kostete das konkret: die AGENTS.md wurde repariert, die READMEs trugen die
+kaputte Regel als öffentliche Vorlage weiter — ausgerechnet die Fassung, die
+Fremde übernehmen. Wer am Prompt-Verhalten etwas ändert, prüft beide Seiten.
+
+Was hier **nie** hineingehört: Tokens, Ziel-ids dieser Installation
+(`kuechenrollo_links` &c. — die sind je Haus andere), Hostnamen/IPs des
+eigenen Netzes, Familien-Stimmproben (`models/wakewords/*/samples/`, eigenes
+privates Repo).
+
 ## Running the Assistant
 
 ```bash
@@ -59,6 +79,7 @@ voice_assistant/
   state.py               STATE_*, tts_lock, reply_done_event, stt_queue
   config.py              Profile-Dataclass + YAML-Loader (alt + neu)
   workers.py             Workers: start_stt, start_confirmation, start_openclaw_turn
+  mcp_actuator.py        stdio-MCP-Server: haus_ziele/haus_schalten für den Brain
   audio/
     base.py              AudioSource/AudioSink Protocols
     alsa.py              PyAudio + aplay

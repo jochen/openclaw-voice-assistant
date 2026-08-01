@@ -38,6 +38,12 @@ import urllib.request
 from voice_assistant.config import ActuatorConfig
 
 
+# Urteile von Actuator.verdict() — steuern den Dispatch in assistant.py.
+VERDICT_AUSFUEHRBAR = "ausfuehrbar"
+VERDICT_UNKLAR = "unklar"
+VERDICT_KEIN_KOMMANDO = "kein_kommando"
+
+
 # Umgangssprachliche Aktionswörter -> kanonische Aktion des Schemas. Nur für
 # das Mehrzahl-Muster unten; der normale Weg über das Modell braucht das nicht.
 _AKTIONSWORT = {
@@ -294,6 +300,12 @@ class Actuator:
         self.schema: dict | None = None
         self.request_template: dict | None = None
         self.digest: dict | None = None          # id -> {namen, typ, aktionen, wert}
+        # Rohe ziele-Liste aus /capabilities — bewahrt auch kosten/reversibel,
+        # die der Digest bewusst abwirft (die Stimme liest sie nie, siehe
+        # ACTUATOR_INTERFACE.md). Ein anderer Konsument — der MCP-Server, der
+        # dem Brain das Vokabular zugänglich macht — braucht gerade diese
+        # Felder, damit der Brain Kosten und Reversibilität reasonieren kann.
+        self.ziele: list | None = None
         self.system_prompt: str | None = None
         # [(Muster, ziel_id)] aus den capabilities — siehe _mehrzahl_muster
         self.mehrzahl_muster: list = []
@@ -398,6 +410,7 @@ class Actuator:
                 self.schema = schema
                 self.request_template = request_template
                 self.digest = digest
+                self.ziele = ziele
                 self.system_prompt = system_prompt
                 self.mehrzahl_muster = mehrzahl
                 self.version = version
@@ -608,7 +621,73 @@ class Actuator:
             return False
         return aktion in (entry.get("aktionen") or [])
 
-    def execute(self, intent: dict, request_id: str, bestaetigt: bool = False) -> dict | None:
+    def verdict(self, intent: dict | None) -> tuple[str, str | None]:
+        """(Urteil, Grund) für den Dispatch in assistant.py.
+
+        Drei Ausgänge statt der früheren zwei. Der Unterschied, um den es geht,
+        ist der zwischen "das war gar kein Schaltbefehl" und "das war einer,
+        aber ich kann ihn nicht sicher ausführen":
+
+          VERDICT_AUSFUEHRBAR   is_actionable() — der Aktuator führt aus.
+          VERDICT_UNKLAR        Das Modell sagt ist_kommando=true, aber die
+                                Ziel/Aktion-Kombination hält dem Digest nicht
+                                stand. Der Nutzer wollte schalten, wir wissen
+                                nur nicht was — also nachfragen.
+          VERDICT_KEIN_KOMMANDO Kein Schaltbefehl (oder Klassifikation gar
+                                nicht möglich) — der Brain ist zuständig.
+
+        Warum UNKLAR nicht an den Brain darf (Vorfall 2026-08-01, 12:33)
+        ----------------------------------------------------------------
+        "Gaston Türrollo 50%" kam als "Gaston Tyrolo 50%" aus der STT. Das
+        Modell machte daraus ziel=grosseszimmerlicht/aktion=setzen — ein Licht
+        kennt nur ein/aus, is_actionable() lehnte also korrekt ab. Der Satz
+        fiel damit an den Brain, und der hat, weil ihm "Tyrolo" nichts sagte,
+        geraten und per curl ALLE dreizehn Rollos auf 50% gefahren.
+
+        Genau die Absicherung, die den Aktuator zurückhält, hat den Satz also
+        an die Stelle mit den WENIGSTEN Schranken weitergereicht: der Aktuator
+        prüft Ziel und Aktion gegen den Digest und fragt bei teuren Zielen
+        nach, der Brain hat freies exec und den Home-Assistant-Token. Je
+        strenger die Prüfung hier, desto mehr landete dort — die Sicherung war
+        verkehrt herum eingebaut.
+
+        Der Grund-String geht nur in den Log (actuator_turns.log, phase
+        "abgewiesen"), nicht in die Sprachausgabe. Vor dieser Änderung stand
+        der Fall NIRGENDS: der Log kennt nur Turns, die der Aktuator selbst
+        erledigt hat, und im Journal stand die irreführende Zeile "kein
+        Kommando → Brain" — obwohl das Modell sehr wohl ein Kommando sah.
+        """
+        if not intent:
+            # classify() hat None geliefert (LLM-Fehler/Timeout). Ohne Urteil
+            # lässt sich Frage nicht von Befehl trennen; bliebe es hier
+            # hängen, wäre bei jedem Ausfall des Klassifikators auch das
+            # normale Fragen tot. Bleibt bewusst beim Brain.
+            return VERDICT_KEIN_KOMMANDO, None
+        if not intent.get("ist_kommando"):
+            return VERDICT_KEIN_KOMMANDO, None
+        if self.is_actionable(intent):
+            return VERDICT_AUSFUEHRBAR, None
+
+        ziel = intent.get("ziel")
+        aktion = intent.get("aktion")
+        with self._lock:
+            digest = self.digest
+        if digest is None:
+            return VERDICT_UNKLAR, "kein Digest geladen"
+        if not ziel:
+            return VERDICT_UNKLAR, "kein Ziel erkannt"
+        entry = digest.get(ziel)
+        if entry is None:
+            return VERDICT_UNKLAR, f"Ziel '{ziel}' unbekannt"
+        if aktion is None:
+            return VERDICT_UNKLAR, f"keine Aktion zu '{ziel}'"
+        return VERDICT_UNKLAR, (
+            f"Aktion '{aktion}' nicht möglich für '{ziel}' "
+            f"(kann: {', '.join(entry.get('aktionen') or []) or '—'})"
+        )
+
+    def execute(self, intent: dict, request_id: str, bestaetigt: bool = False,
+                quelle: str = "aktuator") -> dict | None:
         """POST /intent. Bewusst KEIN konfidenz-Feld (sicherer Default: kosten=hoch
         fragt dann immer nach, siehe ACTUATOR_V1_PLAN.md).
 
@@ -616,14 +695,27 @@ class Actuator:
         mit derselben request_id (Node-RED dedupliziert per request_id, TTL 60s).
         HTTP 4xx/5xx -> kein Retry, None (definitive fachliche oder Envelope-
         Antwort bereits durch Node-RED getroffen).
+
+        ``quelle`` kennzeichnet den Absender gegenüber dem Node-RED-Gate. Der
+        Default ``"aktuator"`` lässt den Voice-Pfad unverändert; der MCP-Server
+        für den Brain sendet ``"gaston"``. ``"brain"`` ist reserviert für einen
+        noch nicht gebauten Überwacher-Agenten und schaltet im Gate die
+        Rückfrage ab — dieser Wert darf NIEMALS gesendet werden und wird hier
+        abgewiesen, sodass die Garantie nicht vom guten Willen eines Aufrufers
+        abhängt.
         """
+        if quelle == "brain":
+            raise ValueError(
+                "quelle 'brain' ist reserviert und darf nie gesendet werden — "
+                "dieser Wert schaltet im Node-RED-Gate die Rückfrage ab."
+            )
         body = {
             "ist_kommando": True,
             "ziel": intent.get("ziel"),
             "aktion": intent.get("aktion"),
             "wert": intent.get("wert"),
             "einheit": intent.get("einheit"),
-            "quelle": "aktuator",
+            "quelle": quelle,
             "request_id": request_id,
         }
         if bestaetigt:
