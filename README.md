@@ -191,6 +191,55 @@ esphome-venv/bin/pip install esphome
 
 Wakeword detection (`openwakeword`) runs on the Pi against the audio stream.
 
+## Wake-word level gate (`wake_rms_min`)
+
+Besides the score gate, there is an optional **level gate**: the RMS of the
+loudest 300 ms window in the wake-ring buffer must clear a threshold, or the
+trigger does not fire — even when the score says yes. Its purpose is to block
+**soft false triggers** (TV, keyboard, distant talk) that slip past the score
+gate because the model scores high on that particular sound.
+
+- Off by default (`wake_rms_min: 0.0`). Leave the entry out and the profile
+  behaves exactly as before. Deliberately a separate parameter, not
+  `vad_voice_rms_min` (which is already in use for VAD/endpointing).
+- The threshold belongs in the **profile**, not in the bundle's
+  `manifest.yaml`: it depends on microphone and gain, not on the wake word.
+
+**Finding your own value** (three steps, ~10 minutes):
+
+```bash
+# 1. Record guided takes — ALL styles, especially soft/distant/turned-away:
+ow-venv/bin/python -m wakeword_studio record --speaker <name>
+# 2. Get a threshold suggestion from those takes alone (no daily archive needed):
+ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
+# 3. Put the suggested value in the profile, then restart the service:
+#      wake_rms_min: <value>
+systemctl --user restart openclaw-voice-assist.service
+```
+
+The `--nur-studio` mode proposes `round(lowest take × 0.7)` and warns if the
+difficult styles (soft, distant, turned-away, casual) are missing — without
+them every proposal comes out **too high** and costs you soft calls later. It
+delivers a safe lower bound, **not** an effectiveness figure: without a daily
+archive it cannot say how many false triggers the threshold blocks. Once you
+have one, the full run is the better source:
+
+```bash
+ow-venv/bin/python -m tools.wake_rms_replay     # with archive: recall + precision
+```
+
+> **Example, not a preset.** Our installation runs at `wake_rms_min: 300`
+> (derived from 57 everyday calls + 24 ear-checked false triggers, lowest
+> genuine call at RMS 402, on a ReSpeaker mic with ×4 gain). **Absolute RMS
+> values are tied to your microphone and amplification.** Copy our 300 onto
+> different hardware and you lose either every call (gain lower) or block
+> nothing (gain higher). Measure your own.
+
+**Signs the threshold is wrong:** calls blocked by the gate are archived as
+near-misses with `failed_on: "min_rms"` in `~/.openclaw/workspace/wake_events.log`.
+If intended calls pile up there, the threshold is too high for the current
+gain. The same signal also flags a hardware/gain change — revisit the value.
+
 ## Voice actuator (optional)
 
 Switching commands like "turn on the kitchen light" normally take the same road

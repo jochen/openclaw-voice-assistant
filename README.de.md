@@ -191,6 +191,58 @@ esphome-venv/bin/pip install esphome
 
 Wakeword-Erkennung (`openwakeword`) läuft auf dem Pi gegen den Audio-Stream.
 
+## Pegel-Gate fürs Wakewort (`wake_rms_min`)
+
+Neben dem Score-Gate gibt es ein optionales **Pegel-Gate**: der RMS des
+lautesten 300-ms-Fensters im Wake-Ringpuffer muss eine Schwelle erreichen,
+sonst feuert der Trigger nicht — selbst wenn der Score das hergibt. Sein
+Zweck ist, **leise Fehltrigger** (Fernseher, Tastatur, ferne Gespräche) zu
+blocken, die am Score-Gate vorbeikommen, weil das Modell auf das jeweilige
+Geräusch hoch scoret.
+
+- Per Default aus (`wake_rms_min: 0.0`). Eintrag weglassen, und das Profil
+  verhält sich exakt wie bisher. Bewusst ein eigener Parameter, nicht
+  `vad_voice_rms_min` (der ist schon für VAD/Endpointing in Gebrauch).
+- Die Schwelle gehört ins **Profil**, nicht ins Bundle (`manifest.yaml`): sie
+  hängt an Mikrofon und Gain, nicht am Wakewort.
+
+**Eigenen Wert bestimmen** (drei Schritte, ~10 Minuten):
+
+```bash
+# 1. Geführte Takes aufnehmen — ALLE Stile, besonders leise/fern/abgewandt:
+ow-venv/bin/python -m wakeword_studio record --speaker <name>
+# 2. Schwellenvorschlag allein aus diesen Takes (ohne Alltagsarchiv):
+ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
+# 3. Vorschlag ins Profil eintragen, dann Service neu starten:
+#      wake_rms_min: <wert>
+systemctl --user restart openclaw-voice-assist.service
+```
+
+Der Modus `--nur-studio` schlägt `round(leisester Take × 0,7)` vor und warnt,
+wen die schwierigen Stile (leise, fern, abgewandt, beiläufig) fehlen — ohne
+sie fällt jeder Vorschlag **zu hoch** aus und kostet später leise Rufe. Er
+liefert eine sichere Untergrenze, **keine** Wirksamkeitsaussage: ohne
+Alltagsarchiv kann er nicht sagen, wie viele Fehltrigger die Schwelle blockt.
+Sobald eines existiert, ist der volle Lauf die bessere Quelle:
+
+```bash
+ow-venv/bin/python -m tools.wake_rms_replay     # mit Archiv: Recall + Precision
+```
+
+> **Beispiel, kein Vorgabewert.** Unsere Installation läuft mit
+> `wake_rms_min: 300` (abgeleitet aus 57 Alltagsrufen + 24 per Ohr geprüften
+> Fehltriggern, leisester echter Ruf bei RMS 402, auf einem ReSpeaker-Mic mit
+> ×4 Gain). **Absolute RMS-Werte hängen an deinem Mikrofon und deiner
+> Verstärkung.** Übernimmst du unsere 300 auf andere Hardware, verlierst du
+> entweder alle Rufe (Gain niedriger) oder blockst nichts (Gain höher). Miss
+> deinen eigenen Wert.
+
+**Worans du merkst, dass die Schwelle falsch steht:** vom Gate geblockte Rufe
+landen als Near-Miss mit `failed_on: "min_rms"` im
+`~/.openclaw/workspace/wake_events.log`. Häufen sich dort gemeinte Rufe, ist
+die Schwelle zu hoch für den aktuellen Gain. Dasselbe Signal zeigt auch einen
+Hardware-/Gainwechsel an — dann den Wert neu bestimmen.
+
 ## Voice-Aktuator (optional)
 
 Schaltbefehle wie „Mach das Küchenlicht an" gehen normalerweise denselben Weg
