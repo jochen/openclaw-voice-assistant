@@ -68,7 +68,17 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "kümmerst und dich meldest, erledige die Arbeit im Hintergrund und sag das "
     "Ergebnis über das Tool voice_speak_text an (kurz und gesprochen "
     "zusammengefasst). "
-    "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht weißt.]"
+    "Beides zusammen ist ein Fehler: was du per voice_speak_text ansagst, darf "
+    "nicht auch noch in deiner Antwort stehen. Der Mensch hört es sonst zweimal "
+    "— das zweite Mal Minuten später, aus dem Zusammenhang gerissen, weil eine "
+    "Ansage bis zur nächsten Ruhepause wartet. Entweder du antwortest direkt "
+    "(dann kein voice_speak_text), oder deine Antwort endet mit der kurzen "
+    "Zwischenmeldung und das Ergebnis kommt ausschließlich per voice_speak_text. "
+    "Das Mandat gilt fürs Antworten, nicht fürs Schalten: lieber eine kurze "
+    "Rückfrage als ein geratenes Gerät. "
+    "Niemals etwas erfinden — entweder Tool aufrufen oder sagen was du nicht "
+    "weißt. Das gilt auch für Ziele: ein Gerät, das du im Transkript nicht "
+    "sicher wiedererkennst, wird nicht erraten.]"
 )
 
 
@@ -94,6 +104,69 @@ class LedsConfig:
     respeaker_ring_enabled: bool = False
 
 
+# --- Aktuator: Prompt-Vorlagen (sprachabhängig, deshalb hier und nicht im Code)
+#
+# Der Prompt ist die einzige Stelle, an der dieses Projekt Deutsch VORAUSSETZT,
+# und er nennt Beispiel-ids aus DIESER Installation (flurlicht, felixheizung,
+# kuechenrollo_links, …). Beides gehört nicht in ein öffentliches Repo als
+# unveränderliche Wahrheit — wer eine andere Sprache oder andere Geräte hat,
+# überschreibt `actuator.system_prompt` im Profil und ist fertig.
+#
+# Die Beispiele sind gemessen, nicht geraten (siehe tools/actuator_grammar_test.py
+# und den Docstring von actuator._build_system_prompt). Wer sie ersetzt, misst
+# neu — auch in der eigenen Sprache. Weniger Beispiele waren dabei mehrfach
+# besser als mehr.
+#
+# Platzhalter, die zur Laufzeit ersetzt werden (einfache Textersetzung, KEIN
+# str.format — die geschweiften Klammern der JSON-Beispiele bleiben deshalb
+# so stehen, wie man sie schreibt):
+#   {kontrast}      aus den capabilities erzeugte Einzelgerät-gegen-Gruppe-Paare
+#   {ziel_liste}    die Ziel-Liste
+#   {gruppen_regel} aus den capabilities erzeugte Regel(n) für Geräte-Mehrzahl
+#                   ohne Raumangabe — steht bewusst GANZ AM ENDE, hinter der
+#                   Ziel-Liste (gemessen: davor wirkt sie nicht)
+_DEFAULT_ACTUATOR_PROMPT = """Du bist der lokale Schalt-Aktuator. Wandle den gesprochenen Satz in EIN JSON-Intent. Gib NUR das JSON aus.
+aktion: ein/aus (Licht,Schalter), auf/zu (Rollo ganz oeffnen/schliessen; "hoch"=auf,"runter"=zu), setzen (Zahlenwert), aktivieren (Szene), starten (Routine).
+wert(Zahl)+einheit nur bei setzen (prozent Rollo, grad Heizung), sonst null. Kein Steuerkommando -> ist_kommando=false, ziel="", rest null.
+Waehle das passende ziel aus der Liste (id links). Aliase stehen rechts.
+EINZAHL vs MEHRZAHL: "das <Geraet>" meint EIN einzelnes Ziel. "die"/"alle <Geraete> in <Raum>" meint das Sammel-Ziel fuer diesen Raum, falls die Liste eines fuehrt.
+
+Beispiele:
+Schalte das Flurlicht ein -> {"ist_kommando":true,"aktion":"ein","ziel":"flurlicht","wert":null,"einheit":null}
+Stell die Felixheizung auf 22 Grad -> {"ist_kommando":true,"aktion":"setzen","ziel":"felixheizung","wert":22,"einheit":"grad"}
+Mach das Kuechenrollo links zu -> {"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollo_links","wert":null,"einheit":null}
+Mach alle Rollos in der Kueche zu -> {"ist_kommando":true,"aktion":"zu","ziel":"kuechenrollos","wert":null,"einheit":null}
+Mach alle Rollos zu -> {"ist_kommando":true,"aktion":"zu","ziel":"alle_rollos","wert":null,"einheit":null}
+Wohnzimmerrollo auf 70% -> {"ist_kommando":true,"aktion":"setzen","ziel":"wohnzimmerrollo","wert":70,"einheit":"prozent"}
+Rollo auf 70% -> {"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}
+Rollo zu -> {"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}
+{kontrast}Erzaehl mir einen Witz -> {"ist_kommando":false,"aktion":null,"ziel":"","wert":null,"einheit":null}
+
+Bekannte Ziele:
+{ziel_liste}
+
+{gruppen_regel}"""
+
+# Eine Zeile je Gruppe, die einen Alias "alle <Mehrzahl>" führt. Platzhalter:
+#   {einzahl_gross} {einzahl}  aus dem `typ` der Mitglieder ("rollo" -> Rollo/ROLLO)
+#   {mehrzahl}                 das Wort aus dem "alle …"-Alias
+#   {ziel}                     die id der Gruppe
+# Steht der Satz erst hinter der Ziel-Liste, trägt er — davor gewinnt die Liste.
+_DEFAULT_ACTUATOR_GRUPPEN_REGEL = (
+    '{einzahl_gross} OHNE RAUM: "{einzahl}" oder "{mehrzahl}" OHNE Raumangabe und OHNE '
+    '"alle" ist KEIN Kommando fuer {ziel}. Antworte ist_kommando=false. '
+    'Nur "alle {mehrzahl}" (mit dem Wort "alle") ist {ziel}.'
+)
+
+# Satzschablonen für die aus den capabilities erzeugten Kontrast-Beispiele.
+# Fehlt eine Aktion, wird "<aktion> {}" genommen.
+_DEFAULT_ACTUATOR_BEISPIEL_SAETZE = {
+    "ein": "Schalte {} ein", "aus": "Schalte {} aus",
+    "auf": "Mach {} auf", "zu": "Mach {} zu",
+    "aktivieren": "Aktiviere {}", "starten": "Starte {}",
+}
+
+
 @dataclass
 class ActuatorConfig:
     """Voice-Aktuator v1 — schneller lokaler Schalt-Pfad (siehe ACTUATOR_V1_PLAN.md
@@ -113,6 +186,18 @@ class ActuatorConfig:
     mqtt_host: str = ""
     mqtt_port: int = 1883
     refresh_poll_sec: int = 600
+    # Sprach-/installationsabhängig — siehe die Vorlagen oben.
+    system_prompt: str = _DEFAULT_ACTUATOR_PROMPT
+    gruppen_regel: str = _DEFAULT_ACTUATOR_GRUPPEN_REGEL
+    beispiel_saetze: dict = field(
+        default_factory=lambda: dict(_DEFAULT_ACTUATOR_BEISPIEL_SAETZE)
+    )
+    # Ziel-Typen, für die der Beispielblock im Prompt den Einzelgerät-gegen-
+    # Gruppe-Fall schon zeigt. Der erzeugte Kontrast-Block überspringt sie —
+    # ein zweites Beispiel für dieselbe Lehre hilft nicht, es schadet
+    # (gemessen, siehe actuator._kontrast_beispiel). Wer den Prompt ersetzt,
+    # pflegt diese Liste mit.
+    beispiel_typen: list = field(default_factory=lambda: ["rollo"])
 
 
 @dataclass
@@ -222,6 +307,18 @@ class Profile:
     # Legacy-Override in *Chunks*. > 0 schlägt silence_seconds; nur für
     # Rückwärtskompatibilität. Bevorzugt silence_seconds setzen.
     silence_chunks_limit: int = 0
+    # Endpointing im KOMMANDO-Modus: greift, sobald ein Turn als Ein-Satz
+    # eingestuft wurde (der Nutzer spricht durch, ohne das "Ja?" abzuwarten).
+    # Solche Turns sind fast immer kurze Schaltbefehle für den Aktuator — da
+    # zählt Tempo, und lange Denkpausen kommen nicht vor. Gemessen über 59
+    # störungsfreie Turns im Archiv (dur ≤ 6 s): Sprechpause im Satz p90 0,44 s
+    # / max 1,68 s, Netto-Sprechzeit max 3,88 s. 1,0 s Nachlauf hätte davon 2
+    # Turns zu früh geschnitten, 8 s Deckel keinen einzigen (1,5 s Pre-Roll +
+    # 3,9 s Sprechzeit + 1,0 s Nachlauf ≈ 6,4 s).
+    # Der Dialog-Modus (Nutzer hat das "Ja?" abgewartet) behält
+    # silence_seconds / RECORDING_MAX_SEC — dort sind lange Sätze normal.
+    command_silence_seconds: float = 1.0
+    command_max_seconds: float = 8.0
 
     # Locale
     locale: LocaleConfig = field(default_factory=LocaleConfig)
@@ -386,6 +483,10 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         mqtt_host=str(actuator_raw.get("mqtt_host", _dact.mqtt_host)),
         mqtt_port=int(actuator_raw.get("mqtt_port", _dact.mqtt_port)),
         refresh_poll_sec=int(actuator_raw.get("refresh_poll_sec", _dact.refresh_poll_sec)),
+        system_prompt=str(actuator_raw.get("system_prompt") or _dact.system_prompt),
+        gruppen_regel=str(actuator_raw.get("gruppen_regel") or _dact.gruppen_regel),
+        beispiel_saetze=dict(actuator_raw.get("beispiel_saetze") or _dact.beispiel_saetze),
+        beispiel_typen=list(actuator_raw.get("beispiel_typen") or _dact.beispiel_typen),
     )
 
     # --- Überwacher: separater Block, analog zu actuator ---
@@ -435,6 +536,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         vad_voice_rms_min=float(raw.get("vad_voice_rms_min", 0.0)),
         silence_seconds=float(raw.get("silence_seconds", 2.0)),
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
+        command_silence_seconds=float(raw.get("command_silence_seconds", 1.0)),
+        command_max_seconds=float(raw.get("command_max_seconds", 8.0)),
         locale=locale,
         actuator=actuator,
         watcher=watcher,
@@ -498,6 +601,10 @@ SILENCE_CHUNKS_LIMIT = 25
 MIN_SPEECH_CHUNKS = 4
 
 MAX_FOLLOWUP_ROUNDS = 3
+# Wie oft der Aktuator bei VERDICT_UNKLAR nachfragt, bevor er aufgibt. Eins:
+# eine zweite Rückfrage zum selben verhörten Wort bringt nichts, die STT hört
+# es wieder gleich falsch — sie nervt nur.
+MAX_UNKLAR_ROUNDS = 1
 FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")

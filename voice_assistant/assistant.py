@@ -23,6 +23,7 @@ from voice_assistant.config import (
     FOLLOWUP_BEEP_PATH,
     LAST_RECORDING_PATH,
     MAX_FOLLOWUP_ROUNDS,
+    MAX_UNKLAR_ROUNDS,
     MIN_SPEECH_CHUNKS,
     OPENCLAW_OVERALL_TIMEOUT,
     PIPER_OUT,
@@ -41,7 +42,12 @@ from voice_assistant.config import (
     load_profile,
 )
 from voice_assistant.services import speaches as speaches_mod
-from voice_assistant.services.actuator import Actuator
+from voice_assistant.services.actuator import (
+    Actuator,
+    VERDICT_AUSFUEHRBAR,
+    VERDICT_KEIN_KOMMANDO,
+    VERDICT_UNKLAR,
+)
 from voice_assistant.services.diarization import SpeachesDiarizer
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
@@ -80,6 +86,43 @@ from voice_assistant.workers import Workers
 
 
 _STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
+
+# Ein-Satz-Kommando: nach dem Trigger wird das "Ja?" nicht sofort gespielt,
+# sondern ACK_DELAY_SEC lang der VAD beobachtet. Wird weitergesprochen, kommt
+# gar kein "Ja?" (LED-Ring reicht als Rückmeldung). Bleibt es still, wird
+# "Ja?" gespielt wie bisher. Zusammen mit _PRE_ROLL_SEC ergibt das den
+# Ein-Satz-Betrieb: die LED quittiert sofort, der Anfang geht nicht verloren.
+_ACK_DELAY_SEC = 0.4
+# Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
+# straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
+# typisch 1–2 Chunks (~0,16 s) — 0,5 s liegt sicher darüber und ist von jedem
+# echten Kommando nach einem halben Wort erreicht.
+_COMMAND_MIN_SPEECH_SEC = 0.5
+
+# Pre-Roll: so viel Audio VOR dem Trigger wird der Aufnahme vorangestellt.
+#
+# Der Trigger fällt rund 0,4 s nach dem Ende des gesprochenen Wakeworts (die
+# openwakeword-Scores steigen erst am Wortende, dann muss der Streak noch
+# auslaufen). Wer durchspricht, hat in dieser Zeit schon das erste Wort des
+# Kommandos gesagt — es steckt im wake_ring, der bis 2026-07-28 verworfen
+# wurde. Genau das war der abgeschnittene Anfang:
+#   "Gaston Wohnzimmerrollo auf 70%"  → aufgenommen ab "…mmerrollo"
+#                                     → STT "Manolo auf 70 Prozent" → alle_rollos
+#
+# Gemessen an vier archivierten Ein-Satz-Triggern (2026-07-27 20:42–20:44,
+# wake+rec neu zusammengesetzt und gegen Speaches transkribiert):
+#   Pre-Roll 0,0 s: "Manolo auf 70 Prozent" / "Rollo auf 70%"   (Ziel verfehlt)
+#   Pre-Roll 0,4 s: "und Simarolo auf 70 Prozent"               (Schnitt im Wort)
+#   Pre-Roll 1,2 s: "Gastau wohnt in Marallo auf 70%"           (Schnitt im "Gaston")
+#   Pre-Roll 1,5 s: "Gastau, Wohnzimmerlollo auf 70%"           (vollständig)
+# Ein Schnitt MITTEN im Wakewort ist schlechter als gar keiner — deshalb
+# großzügig davor schneiden und das Wakewort mitschicken, statt es auf 100 ms
+# genau treffen zu wollen. Dass "Gaston" (oder ein Verhörer davon) mit im
+# Transkript steht, kostet nichts: gegen den echten Aktuator-Prompt gemessen
+# (16 Fälle, 11 davon mit vorangestelltem "Gastau/Gastraum/Gastronom/…") —
+# das Ziel wurde in allen Fällen richtig getroffen, eine eigene Anrede-Regel
+# im Prompt war nicht nötig. Der Brain liest es ohnehin als Anrede.
+_PRE_ROLL_SEC = 1.5
 # 'bitte' war hier drin und hat jedes höfliche Schaltkommando verschluckt:
 # "Schalt das Küchenlicht bitte aus" matchte über ANY(bitte)+CORE(aus) als
 # Abbruch, die Anfrage starb wortlos (live beobachtet 2026-07-25 22:46).
@@ -153,6 +196,26 @@ def _save_trigger_audio(audio_chunks: list, bundle: str, kind: str, trigger_id: 
             f.write(chunks_to_wav_bytes(list(audio_chunks)))
     except Exception as e:
         print(f"⚠️  Trigger-Audio ({kind}) nicht gespeichert: {e}")
+
+
+def _pre_roll(ring: deque, seconds: float) -> list:
+    """Die letzten `seconds` Sekunden des Ringpuffers als Chunk-Liste.
+
+    Ganze Chunks, nicht sample-genau — die Granularität (40 ms ReSpeaker,
+    27/80 ms ALSA) ist gegenüber _PRE_ROLL_SEC ohne Belang, und ein
+    ungeteilter Chunk hält die Aufnahme lückenlos an das an, was der
+    Hauptloop danach aus der Quelle liest.
+    """
+    want = int(RATE_OW * seconds)
+    out: list = []
+    have = 0
+    for chunk in reversed(ring):
+        out.append(chunk)
+        have += len(chunk)
+        if have >= want:
+            break
+    out.reverse()
+    return out
 
 
 def _log_wake_event(meta: dict) -> None:
@@ -255,19 +318,36 @@ def _make_leds(profile: Profile) -> LedDirector:
     return LedDirector(*sinks)
 
 
-def _is_speech_chunk(
+def _chunk_speech_stats(
     vad: webrtcvad.Vad, audio_16: np.ndarray, min_rms: float = 0.0
-) -> bool:
-    if min_rms > 0.0:
-        rms = float(np.sqrt(np.mean(audio_16.astype(np.float32) ** 2)))
-        if rms < min_rms:
-            return False
-    result = False
+) -> tuple[bool, float, int, int]:
+    """(ist_sprache, rms, sprach-frames, frames_gesamt) für einen Chunk.
+
+    Der Sprach-Entscheid verodert die 20-ms-VAD-Frames: EIN Frame von vier
+    (bei 80-ms-Chunks) genügt. Das ist bewusst empfindlich — dass es in Lärm
+    zu empfindlich ist, ist bekannt, lässt sich aber nur mit Zahlen ändern.
+    Deshalb kommen Pegel und Frame-Anteil hier mit heraus und landen im
+    endpoint.log: erst damit ist entscheidbar, ob ein Frame-Anteil-Gate
+    (z.B. 3 von 4) oder eine Pegelschwelle die Fehlauslöser trennt, ohne
+    echte Kommandos zu zerschneiden.
+    """
+    rms = float(np.sqrt(np.mean(audio_16.astype(np.float32) ** 2)))
+    frames = 0
+    speech_frames = 0
     for i in range(0, len(audio_16), VAD_FRAME_SIZE):
         frame = audio_16[i : i + VAD_FRAME_SIZE]
         if len(frame) == VAD_FRAME_SIZE:
-            result |= vad.is_speech(frame.tobytes(), RATE_OW)
-    return result
+            frames += 1
+            speech_frames += vad.is_speech(frame.tobytes(), RATE_OW)
+    if min_rms > 0.0 and rms < min_rms:
+        return False, rms, speech_frames, frames
+    return speech_frames > 0, rms, speech_frames, frames
+
+
+def _is_speech_chunk(
+    vad: webrtcvad.Vad, audio_16: np.ndarray, min_rms: float = 0.0
+) -> bool:
+    return _chunk_speech_stats(vad, audio_16, min_rms)[0]
 
 
 # Endet ein Transkript "sauber" (Satzzeichen) oder offen (Konjunktion/Füllwort)?
@@ -288,6 +368,29 @@ def _ends_clean(text: str) -> bool:
         return True
     last = re.sub(r"[^\wäöüß]", "", t.split()[-1].lower())
     return last not in _OPEN_TAIL
+
+
+def _signal_stats(rms: list[float], speech_frames: int, total_frames: int) -> dict:
+    """Pegel- und VAD-Kennzahlen einer Aufnahme fürs endpoint.log.
+
+    rms_p10 ist der Ruhepegel der Aufnahme (Grundrauschen bzw. Lücken zwischen
+    den Sätzen einer Störquelle), rms_max der lauteste Moment — bei einem
+    echten Ruf der Sprecher selbst. Das Verhältnis der beiden ist die Zahl,
+    an der sich entscheiden lässt, ob eine Pegelschwelle den Fernseher vom
+    Sprecher trennen kann. vad_frame_ratio zeigt, wie knapp der ODER-Entscheid
+    über die 20-ms-Frames jeweils ausging.
+    """
+    if not rms:
+        return {}
+    s = sorted(rms)
+    return {
+        "rms_p10": round(s[len(s) // 10], 1),
+        "rms_median": round(s[len(s) // 2], 1),
+        "rms_max": round(s[-1], 1),
+        "vad_frame_ratio": (
+            round(speech_frames / total_frames, 3) if total_frames else None
+        ),
+    }
 
 
 def _log_endpoint(meta: dict) -> None:
@@ -467,12 +570,19 @@ def run() -> None:
     _silence_override = profile.silence_chunks_limit  # > 0 = explizit in Chunks
     _chunk_sec = 0.0                                  # beim ersten Chunk gemessen
     _silence_limit = _silence_override or SILENCE_CHUNKS_LIMIT  # Fallback bis Messung
+    # Kommando-Modus (Ein-Satz): eigener, deutlich kürzerer Nachlauf. Wird wie
+    # _silence_limit erst beim ersten Chunk in Chunks aufgelöst.
+    _command_silence_limit = _silence_limit
+    # So viel Sprache muss in der Aufnahme stecken, bevor der straffe
+    # Kommando-Nachlauf greifen darf (Sperre gegen den Wakeword-Ausklang).
+    _command_min_speech_chunks = 1
     print(
         f"✅ WebRTC VAD ready "
         f"(aggressiveness={profile.vad_aggressiveness}, "
         f"rms_min={_vad_rms_min:.0f}, "
         f"silence_seconds={_silence_seconds:.2f}"
-        f"{f', override={_silence_override} chunks' if _silence_override else ''})"
+        f"{f', override={_silence_override} chunks' if _silence_override else ''}, "
+        f"kommando={profile.command_silence_seconds:.2f}s/{profile.command_max_seconds:.0f}s)"
     )
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
@@ -584,6 +694,17 @@ def run() -> None:
     max_internal_pause = 0                  # längste Pause, die durch Sprache wieder aufging
     speech_detected = False
     endpoint_meta: dict = {}                # Endpointing-Telemetrie der aktuellen Aufnahme
+    # Endpointing-Parameter des LAUFENDEN Turns. Start immer im Dialog-Modus;
+    # die Ein-Satz-Entscheidung nach _ACK_DELAY_SEC schaltet ggf. auf Kommando.
+    turn_mode = "dialog"
+    turn_silence_limit = _silence_limit
+    turn_max_sec = RECORDING_MAX_SEC
+    turn_ein_satz = False                   # Ein-Satz erkannt → Kommando-Modus scharf machen
+    turn_speech_chunks = 0                  # Chunks mit Sprache seit Aufnahmebeginn
+    # Pegel/VAD-Verlauf der laufenden Aufnahme (Rohstoff fürs Nachtunen).
+    turn_rms: list[float] = []
+    turn_frames_speech = 0
+    turn_frames_total = 0
     wake_hits = 0                           # aufeinanderfolgende Frames über Threshold
     # Ein einzelner Frame unter Threshold beendet den Streak NICHT (echte
     # "Gaston"-Rufe tauchen mitten im Wort kurz ab und wurden als 2+1-Near-Miss
@@ -614,6 +735,10 @@ def run() -> None:
     wake_ring_samples = 0
     _wake_ring_max = int(RATE_OW * 3.0)
     trigger_audio_id: str | None = None    # verbindet wake- und rec-Clip eines Triggers
+    # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
+    # stehen (anders als trigger_audio_id), damit der AUSGANG des Turns noch auf
+    # den Trigger bezogen protokolliert werden kann. Siehe _log_outcome().
+    turn_audio: str | None = None
     trigger_audio_bundle = ""
     followup_round = 0                     # aktuelle Follow-up-Runde (0 = kein Follow-up aktiv)
     followup_rms_sum = 0.0
@@ -624,6 +749,61 @@ def run() -> None:
     # Handshake ins Leere läuft, wieder auf None zurückgesetzt werden — sonst
     # sickert er in einen späteren Turn durch.
     pending_confirm: dict | None = None
+    # Wie oft in diesem Wake-Zyklus schon wegen VERDICT_UNKLAR nachgefragt
+    # wurde. Deckelt die Klärungsschleife (siehe MAX_UNKLAR_ROUNDS).
+    unklar_round = 0
+
+    # Ein-Satz-Kommando: "Ja?" wird verzögert gespielt. ack_pending=True nach
+    # dem Trigger, ack_deadline = Triggerzeit + _ACK_DELAY_SEC. Im
+    # STATE_RECORDING wird nach Ablauf entschieden: Sprache erkannt → kein
+    # "Ja?", Still → "Ja?" spielen. ack_path wird vom Trigger-Pfad gesetzt.
+    ack_pending = False
+    ack_deadline = 0.0
+    ack_path = ""
+    # Wie viele der recorded_chunks aus dem Pre-Roll stammen (also VOR dem
+    # Trigger aufgenommen wurden) — die haben den VAD nie gesehen und dürfen
+    # bei den Sprach-Gates nicht mitzählen.
+    pre_roll_chunks = 0
+
+    def _log_outcome(ausgang: str, **extra) -> None:
+        """Protokolliert, was aus einem Trigger geworden ist — einmal je Trigger.
+
+        Das ist der Rohstoff für die selbstlabelnde Triage (tools/wake_triage.py):
+        ein Trigger, aus dem ein ausgeführtes Schaltkommando wurde, war
+        garantiert ein echter Ruf; einer, den der Nutzer mit einem Stopp-Wort
+        abgebrochen hat, garantiert ein Fehltrigger. Beides steht sonst nirgends
+        in einer Form, die sich auf den Wake-Clip beziehen lässt — der
+        Aktuator-Log kennt die Audio-Datei nicht, und das Journal ist kein
+        Datenformat.
+
+        Nur der erste Turn nach dem Wakeword zählt (Follow-ups haben keinen
+        eigenen Trigger), und nur einmal: turn_audio wird danach geleert.
+        """
+        nonlocal turn_audio
+        if turn_audio is None:
+            return
+        _log_wake_event({"result": "outcome", "audio": turn_audio,
+                         "ausgang": ausgang, **extra})
+        turn_audio = None
+
+    def _flush_endpoint(transcript: str | None = None, **extra) -> None:
+        """Schreibt die Endpointing-Telemetrie des Turns — auf JEDEM Ausgang.
+
+        Vorher hing das am normalen Pfad: ein mit Stopp-Wort abgebrochener
+        oder als "keine Sprache" verworfener Turn schrieb gar keine Zeile.
+        Damit fehlten ausgerechnet die kaputten Aufnahmen im endpoint.log —
+        der Fernseh-Vorfall vom 2026-08-01 stand nirgends darin, obwohl er
+        21,9 s lief. Genau die sind aber die Fälle, gegen die getunt wird.
+        """
+        nonlocal endpoint_meta
+        if not endpoint_meta:
+            return
+        if transcript is not None:
+            extra.setdefault("transcript", transcript)
+            extra.setdefault("ends_clean", _ends_clean(transcript))
+        endpoint_meta.update(extra)
+        _log_endpoint(endpoint_meta)
+        endpoint_meta = {}
 
     _cleanup_trigger_audio()
 
@@ -641,10 +821,22 @@ def run() -> None:
                 _chunk_sec = len(audio_16) / RATE_OW
                 if not _silence_override:
                     _silence_limit = max(1, round(_silence_seconds / _chunk_sec))
+                # Nie geduldiger als der Dialog-Modus: wer silence_chunks_limit
+                # (Legacy, in Chunks) kurz stellt, würde sonst mit einem
+                # Kommando LÄNGER warten als mit einer normalen Anfrage.
+                _command_silence_limit = min(
+                    _silence_limit,
+                    max(1, round(profile.command_silence_seconds / _chunk_sec)),
+                )
+                _command_min_speech_chunks = max(
+                    1, round(_COMMAND_MIN_SPEECH_SEC / _chunk_sec)
+                )
                 print(
                     f"📏 Endpointing: chunk={_chunk_sec * 1000:.0f}ms, "
                     f"silence_limit={_silence_limit} chunks "
-                    f"≈ {_silence_limit * _chunk_sec:.2f}s"
+                    f"≈ {_silence_limit * _chunk_sec:.2f}s, "
+                    f"kommando={_command_silence_limit} chunks "
+                    f"≈ {_command_silence_limit * _chunk_sec:.2f}s"
                 )
 
             # --- LISTENING ---
@@ -697,7 +889,13 @@ def run() -> None:
                         print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
                         trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                         trigger_audio_bundle = current_wakeword.bundle
+                        # Klärungs-Rückfragen gelten je Wake-Zyklus. Hier und
+                        # nur hier zurücksetzen: die Rückfrage selbst geht über
+                        # FOLLOWUP (ohne neuen Trigger), der Zähler muss sie
+                        # also überleben.
+                        unklar_round = 0
                         _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                        turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                         # Trigger genauso protokollieren wie den Near-Miss —
                         # ein Sweep braucht beide Klassen im selben Log.
                         _log_wake_event({
@@ -714,23 +912,38 @@ def run() -> None:
                             "beam": float(beam) if beam is not None else None,
                             "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
                         })
+                        # Ein-Satz-Kommando: LED SOFORT, kein play_wav.
+                        # Pre-Roll aus dem Ring VOR dem clear() abgreifen — er
+                        # trägt den Anfang eines durchgesprochenen Kommandos
+                        # (siehe _PRE_ROLL_SEC). Und KEIN flush: was seit dem
+                        # letzten gelesenen Chunk in der Quelle liegt, schließt
+                        # die Lücke zwischen Pre-Roll und Aufnahme.
+                        # "Ja?" kommt verzögert (siehe STATE_RECORDING, ack_pending).
+                        pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
                         wake_ring.clear()
                         wake_ring_samples = 0
-                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
-                        if os.path.exists(ack_path):
-                            print("🔊 Playing acknowledgement...")
-                            audio_sink.play_wav(ack_path)
-                        voice_controller.set_default_voice(current_wakeword.tts_voice)
                         leds.set_phase(LED_RECORDING)
+                        voice_controller.set_default_voice(current_wakeword.tts_voice)
                         near_miss_until = 0.0
                         wakeword.reset()
-                        audio_source.flush()
                         state = STATE_RECORDING
                         state_start = time.time()
-                        recorded_chunks = []
+                        recorded_chunks = list(pre_roll)
+                        pre_roll_chunks = len(pre_roll)
                         silence_counter = 0
                         max_internal_pause = 0
                         speech_detected = False
+                        turn_mode = "dialog"
+                        turn_silence_limit = _silence_limit
+                        turn_max_sec = RECORDING_MAX_SEC
+                        turn_ein_satz = False
+                        turn_speech_chunks = 0
+                        turn_rms = []
+                        turn_frames_speech = 0
+                        turn_frames_total = 0
+                        ack_pending = True
+                        ack_deadline = now + _ACK_DELAY_SEC
+                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     elif wake_hits >= 1:
                         # Wakeword-Name mitloggen: current_wakeword wurde von den
                         # Frames dieses Streaks gesetzt → erlaubt False-Positive-
@@ -783,6 +996,7 @@ def run() -> None:
                     trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                     trigger_audio_bundle = current_wakeword.bundle
                     _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                    turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                     _log_wake_event({
                         "result": "trigger",
                         "via": "timeout",
@@ -796,23 +1010,33 @@ def run() -> None:
                         "beam": float(beam) if beam is not None else None,
                         "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
                     })
+                    # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
+                    # kein play_wav, Pre-Roll statt flush, "Ja?" verzögert.
+                    pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
                     wake_ring.clear()
                     wake_ring_samples = 0
-                    ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
-                    if os.path.exists(ack_path):
-                        print("🔊 Spiele Ja? ...")
-                        audio_sink.play_wav(ack_path)
-                    voice_controller.set_default_voice(current_wakeword.tts_voice)
                     leds.set_phase(LED_RECORDING)
+                    voice_controller.set_default_voice(current_wakeword.tts_voice)
                     near_miss_until = 0.0
                     wakeword.reset()
-                    audio_source.flush()
                     state = STATE_RECORDING
                     state_start = time.time()
-                    recorded_chunks = []
+                    recorded_chunks = list(pre_roll)
+                    pre_roll_chunks = len(pre_roll)
                     silence_counter = 0
                     max_internal_pause = 0
                     speech_detected = False
+                    turn_mode = "dialog"
+                    turn_silence_limit = _silence_limit
+                    turn_max_sec = RECORDING_MAX_SEC
+                    turn_ein_satz = False
+                    turn_speech_chunks = 0
+                    turn_rms = []
+                    turn_frames_speech = 0
+                    turn_frames_total = 0
+                    ack_pending = True
+                    ack_deadline = now + _ACK_DELAY_SEC
+                    ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     wake_hits = 0
                     wake_peak = 0.0
                     wake_announced = False
@@ -821,37 +1045,111 @@ def run() -> None:
             # --- RECORDING ---
             elif state == STATE_RECORDING:
                 recorded_chunks.append(audio_16.copy())
-                if _is_speech_chunk(vad, audio_16, _vad_rms_min):
+                _is_speech, _rms, _sf, _tf = _chunk_speech_stats(
+                    vad, audio_16, _vad_rms_min
+                )
+                turn_rms.append(_rms)
+                turn_frames_speech += _sf
+                turn_frames_total += _tf
+                if _is_speech:
                     if speech_detected:
                         max_internal_pause = max(max_internal_pause, silence_counter)
                     speech_detected = True
                     silence_counter = 0
+                    turn_speech_chunks += 1
                 elif speech_detected:
                     silence_counter += 1
 
-                timeout = (now - state_start) > RECORDING_MAX_SEC
-                stop = speech_detected and silence_counter >= _silence_limit
+                # Ein-Satz-Kommando: "Ja?" verzögert spielen. Nach _ACK_DELAY_SEC
+                # entscheiden: Sprache erkannt → User spricht weiter → kein "Ja?"
+                # (LED-Ring reicht). Still → "Ja?" spielen wie bisher.
+                # play_wav blockiert ~0,6s — währenddessen läuft Audio weiter in
+                # den Puffer, der nächste Loop-Durchlauf holt es ab. KEIN flush.
+                if ack_pending and now >= ack_deadline:
+                    ack_pending = False
+                    # Diese Entscheidung ist die einzige verlässliche Auskunft
+                    # darüber, ob durchgesprochen wurde — aus dem Wake-Clip
+                    # allein ist sie NICHT rekonstruierbar (er endet, bevor das
+                    # nächste Wort beginnt; eine Tail-RMS-Heuristik traf gegen
+                    # diese Wahrheit nur 6 von 9). Deshalb mitschreiben: erst
+                    # damit lässt sich messen, ob Ein-Satz-Rufe schlechter
+                    # triggern als Rufe mit Pause (tools/wake_triage.py).
+                    _log_wake_event({
+                        "result": "ack",
+                        "bundle": current_wakeword.bundle,
+                        "ein_satz": speech_detected,
+                        "audio": (f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
+                                  if trigger_audio_id else None),
+                    })
+                    if speech_detected:
+                        # Ein-Satz heißt in der Praxis: kurzer, knapper
+                        # Schaltbefehl, der bewusst am Brain vorbeigeht — da
+                        # zählt Tempo, und Denkpausen kommen nicht vor. Der
+                        # straffe Nachlauf greift aber erst, wenn genug
+                        # Sprache da war (siehe Sperre oben). Er begrenzt
+                        # zugleich den Schaden, wenn die Einstufung von
+                        # Störgeräusch kam (Fernseher, Vorfall 2026-08-01):
+                        # so ein Turn endet nach Sekunden statt am Deckel.
+                        turn_ein_satz = True
+                        print(f"[{now:.1f}s] ⚡ Ein-Satz erkannt — kein Ja?")
+                    elif os.path.exists(ack_path):
+                        print(f"[{now:.1f}s] 🔊 Playing acknowledgement...")
+                        audio_sink.play_wav(ack_path)
+
+                # Kommando-Modus wird NICHT schon von der Ein-Satz-Einstufung
+                # scharf, sondern erst, wenn wirklich gesprochen wurde. Grund:
+                # der Ein-Satz-Entscheid springt auch auf den Ausklang des
+                # Wakewords an (belegt an 20260730_181211: "Gaston", 2,0 s
+                # Pause, dann erst das Kommando — trotzdem ein_satz=true; 30
+                # von 37 protokollierten Entscheidungen lauten "Ein-Satz").
+                # Ohne diese Sperre stirbt so eine Aufnahme mitten in der
+                # Pause und das Kommando ist komplett weg. Mit ihr verhält
+                # sich der Fall wie bisher, bis genug Sprache da war.
+                if (
+                    turn_ein_satz
+                    and turn_mode == "dialog"
+                    and turn_speech_chunks >= _command_min_speech_chunks
+                ):
+                    turn_mode = "kommando"
+                    turn_silence_limit = _command_silence_limit
+                    turn_max_sec = profile.command_max_seconds
+                    print(
+                        f"[{now:.1f}s] ⚡ Kommando-Modus: "
+                        f"{turn_silence_limit * _chunk_sec:.1f}s Nachlauf, "
+                        f"max {turn_max_sec:.0f}s"
+                    )
+
+                timeout = (now - state_start) > turn_max_sec
+                stop = speech_detected and silence_counter >= turn_silence_limit
 
                 if stop or timeout:
                     reason = "silence" if stop else "timeout"
+                    pre_roll_sec = pre_roll_chunks * _chunk_sec
                     dur = len(recorded_chunks) * _chunk_sec
                     print(
                         f"[{now:.1f}s] ⏹  Recording stopped ({reason}), "
-                        f"{dur:.1f}s audio"
+                        f"{dur:.1f}s audio (davon {pre_roll_sec:.1f}s Pre-Roll)"
                     )
+                    ack_pending = False  # egal ob gespielt oder nicht — Turn ist vorbei
                     endpoint_meta = {
                         "phase": "recording",
                         "reason": reason,
                         "dur_s": round(dur, 2),
-                        "silence_limit": _silence_limit,
-                        "silence_seconds": round(_silence_limit * _chunk_sec, 2),
+                        "pre_roll_s": round(pre_roll_sec, 2),
+                        "mode": turn_mode,
+                        "silence_limit": turn_silence_limit,
+                        "silence_seconds": round(turn_silence_limit * _chunk_sec, 2),
+                        "max_seconds": turn_max_sec,
                         "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
                         "followup_round": followup_round,
+                        **_signal_stats(turn_rms, turn_frames_speech, turn_frames_total),
                     }
                     if trigger_audio_id is not None:
                         _save_trigger_audio(recorded_chunks, trigger_audio_bundle, "rec", trigger_audio_id)
                         trigger_audio_id = None
-                    if speech_detected and len(recorded_chunks) >= MIN_SPEECH_CHUNKS:
+                    # Der Pre-Roll zählt für MIN_SPEECH_CHUNKS nicht mit — sonst
+                    # wäre das Gate allein durch ihn immer erfüllt.
+                    if speech_detected and (len(recorded_chunks) - pre_roll_chunks) >= MIN_SPEECH_CHUNKS:
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         turn_stt_q = queue.Queue()
@@ -862,6 +1160,8 @@ def run() -> None:
                         workers.start_mood(recorded_chunks.copy(), turn_mood_q)
                     else:
                         print(f"[{now:.1f}s] ⚠️  No speech detected")
+                        _log_outcome("keine_sprache")
+                        _flush_endpoint(ausgang="keine_sprache")
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
@@ -880,6 +1180,7 @@ def run() -> None:
                             turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
+                        _flush_endpoint(text, ausgang="handshake")
                         confirm_intent = pending_confirm["intent"]
                         confirm_request_id = pending_confirm["request_id"]
                         confirm_resp = None
@@ -930,8 +1231,13 @@ def run() -> None:
                         pending_reply_text[0] = None
                         state = STATE_PAUSE
                         state_start = time.time()
-                    elif _is_stop_command(text, followup_round):
+                    # unklar_round zählt hier wie eine Follow-up-Runde: das Mikro
+                    # ist ohne Wakewort offen, also muss ein einzelnes "Stopp"
+                    # reichen (das strengere Erst-Muster verlangt zwei Wörter).
+                    elif _is_stop_command(text, followup_round or unklar_round):
                         print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
+                        _log_outcome("stopwort", transcript=text)
+                        _flush_endpoint(text, ausgang="stopwort")
                         # Diarization- und Mood-Resultat verwerfen damit Queues nicht überlaufen
                         try:
                             turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
@@ -947,9 +1253,11 @@ def run() -> None:
                     elif text:
                         # --- Aktuator-Vorlauf: Schaltkommando? Dann Brain überspringen. ---
                         intent = None
+                        verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         if actuator is not None and actuator.ready:
                             intent = actuator.classify(text)
-                        if intent is not None and actuator.is_actionable(intent):
+                            verdict, unklar_grund = actuator.verdict(intent, text)
+                        if verdict == VERDICT_AUSFUEHRBAR:
                             # Sprecher wird hier nur MITGESCHRIEBEN, nicht
                             # angewandt: der Aktuator antwortet mit Node-REDs
                             # fertigem Satz, eine Sprecher-Stimme braucht er
@@ -965,13 +1273,7 @@ def run() -> None:
                             except queue.Empty:
                                 pass
                             _save_last_recording(recorded_chunks)
-                            if endpoint_meta:
-                                endpoint_meta.update({
-                                    "transcript": text,
-                                    "ends_clean": _ends_clean(text),
-                                })
-                                _log_endpoint(endpoint_meta)
-                                endpoint_meta = {}
+                            _flush_endpoint(text, ausgang="aktuator")
                             request_id = str(uuid.uuid4())
                             resp = actuator.execute(intent, request_id)
                             ziel = intent.get("ziel")
@@ -989,6 +1291,15 @@ def run() -> None:
                                 "grund": (resp or {}).get("grund"),
                                 "gesprochen": (resp or {}).get("gesprochen"),
                             })
+                            # Ein ausgefuehrtes Schaltkommando ist der stärkste
+                            # freie Beleg, dass der Trigger ein echter Ruf war —
+                            # ein Fehltrigger erzeugt so gut wie nie ein gültiges
+                            # Intent, das die Haussteuerung auch ausführt.
+                            _log_outcome(
+                                "aktuator",
+                                status=(resp or {}).get("status", "keine_antwort"),
+                                ziel=ziel, aktion=aktion, transcript=text,
+                            )
                             if overseer is not None:
                                 overseer.check_turn({
                                     "ts": datetime.now().isoformat(timespec="seconds"),
@@ -1036,6 +1347,7 @@ def run() -> None:
                                     state = STATE_FOLLOWUP
                                     state_start = time.time()
                                     recorded_chunks = []
+                                    pre_roll_chunks = 0
                                     silence_counter = 0
                                     max_internal_pause = 0
                                     speech_detected = False
@@ -1051,6 +1363,71 @@ def run() -> None:
                                     pending_reply_text[0] = None
                                     state = STATE_PAUSE
                                     state_start = time.time()
+                        elif verdict == VERDICT_UNKLAR:
+                            # Schaltbefehl erkannt, aber nicht sicher ausführbar.
+                            # Weder ausführen noch an den Brain geben —
+                            # nachfragen. Begründung: actuator.verdict().
+                            try:
+                                act_spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                act_spk = None
+                            try:
+                                turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            except queue.Empty:
+                                pass
+                            _save_last_recording(recorded_chunks)
+                            _flush_endpoint(text, ausgang="unklar")
+                            print(
+                                f"[{now:.1f}s] 🔌 Aktuator: unklar "
+                                f"({actuator.last_latency_ms:.0f} ms) — {unklar_grund} "
+                                f"→ Rückfrage (nicht an den Brain)"
+                            )
+                            _log_actuator_turn({
+                                "phase": "abgewiesen",
+                                "request_id": str(uuid.uuid4()),
+                                "transcript": text,
+                                "speaker": act_spk,
+                                "wakeword": current_wakeword.bundle,
+                                "intent": intent,
+                                "latency_ms": round(actuator.last_latency_ms),
+                                "status": "unklar",
+                                "grund": unklar_grund,
+                                "runde": unklar_round,
+                            })
+                            _log_outcome("unklar", transcript=text, grund=unklar_grund)
+                            if unklar_round < MAX_UNKLAR_ROUNDS:
+                                # Eine Rückfrage, dann Schluss. Zweimal nach
+                                # demselben verhörten Wort zu fragen hilft
+                                # nicht — die STT hört es wieder gleich falsch.
+                                unklar_round += 1
+                                speaker.speak(
+                                    "Das habe ich nicht sicher verstanden. "
+                                    "Sag noch einmal, was ich schalten soll."
+                                )
+                                audio_source.flush()
+                                wakeword.reset()
+                                if os.path.exists(FOLLOWUP_BEEP_PATH):
+                                    audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
+                                audio_source.flush()
+                                leds.set_phase(LED_FOLLOWUP)
+                                state = STATE_FOLLOWUP
+                                state_start = time.time()
+                                recorded_chunks = []
+                                pre_roll_chunks = 0
+                                silence_counter = 0
+                                max_internal_pause = 0
+                                speech_detected = False
+                                followup_rms_sum = 0.0
+                                followup_rms_count = 0
+                                followup_vad_speech = 0
+                            else:
+                                unklar_round = 0
+                                speaker.speak("Das habe ich wieder nicht verstanden.")
+                                leds.set_phase(LED_IDLE)
+                                followup_round = 0
+                                pending_reply_text[0] = None
+                                state = STATE_PAUSE
+                                state_start = time.time()
                         else:
                             if actuator is not None and actuator.ready:
                                 print(
@@ -1074,15 +1451,9 @@ def run() -> None:
                                 mood_label = f"a{mood.get('arousal', 0):.2f} v{mood.get('valence', 0):.2f} d{mood.get('dominance', 0):.2f}"
                             else:
                                 mood_label = ""
-                            if endpoint_meta:
-                                endpoint_meta.update({
-                                    "speaker": spk_label,
-                                    "transcript": text,
-                                    "ends_clean": _ends_clean(text),
-                                })
-                                _log_endpoint(endpoint_meta)
-                                endpoint_meta = {}
+                            _flush_endpoint(text, speaker=spk_label, ausgang="brain")
                             print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
+                            _log_outcome("brain", transcript=text)
                             # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
                             # last_speaker nur bei positiver ID überschreiben — ein
                             # nicht zuordenbarer Kurz-Follow-up (spk=None) soll den
@@ -1106,6 +1477,8 @@ def run() -> None:
                             )
                     else:
                         print(f"[{now:.1f}s] ⚠️  Empty transcription")
+                        _log_outcome("leer")
+                        _flush_endpoint(ausgang="leer")
                         try:
                             turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
@@ -1156,9 +1529,23 @@ def run() -> None:
                         state = STATE_FOLLOWUP
                         state_start = time.time()
                         recorded_chunks = []
+                        pre_roll_chunks = 0
                         silence_counter = 0
                         max_internal_pause = 0
                         speech_detected = False
+                        # Follow-ups sind Dialog, kein Kommando: der Nutzer
+                        # antwortet auf eine Rückfrage und darf überlegen.
+                        # Explizit zurücksetzen — sonst schleppt ein
+                        # vorangegangener Ein-Satz-Turn seinen straffen
+                        # Nachlauf in die Folgerunde.
+                        turn_mode = "dialog"
+                        turn_silence_limit = _silence_limit
+                        turn_max_sec = RECORDING_MAX_SEC
+                        turn_ein_satz = False
+                        turn_speech_chunks = 0
+                        turn_rms = []
+                        turn_frames_speech = 0
+                        turn_frames_total = 0
                         followup_rms_sum = 0.0
                         followup_rms_count = 0
                         followup_vad_speech = 0
@@ -1174,7 +1561,13 @@ def run() -> None:
                 rms = float(np.sqrt(np.mean((audio_16.astype(np.float32) / 32768.0) ** 2)))
                 followup_rms_sum += rms
                 followup_rms_count += 1
-                if _is_speech_chunk(vad, audio_16, _vad_rms_min):
+                _is_speech, _rms_abs, _sf, _tf = _chunk_speech_stats(
+                    vad, audio_16, _vad_rms_min
+                )
+                turn_rms.append(_rms_abs)
+                turn_frames_speech += _sf
+                turn_frames_total += _tf
+                if _is_speech:
                     if speech_detected:
                         max_internal_pause = max(max_internal_pause, silence_counter)
                     speech_detected = True
@@ -1183,8 +1576,8 @@ def run() -> None:
                 elif speech_detected:
                     silence_counter += 1
 
-                timeout = (now - state_start) > RECORDING_MAX_SEC
-                stop = speech_detected and silence_counter >= _silence_limit
+                timeout = (now - state_start) > turn_max_sec
+                stop = speech_detected and silence_counter >= turn_silence_limit
 
                 if stop or timeout:
                     avg_rms = followup_rms_sum / followup_rms_count if followup_rms_count else 0.0
@@ -1203,12 +1596,15 @@ def run() -> None:
                         "phase": "followup",
                         "reason": "silence" if stop else "timeout",
                         "dur_s": round(dur, 2),
-                        "silence_limit": _silence_limit,
-                        "silence_seconds": round(_silence_limit * _chunk_sec, 2),
+                        "mode": turn_mode,
+                        "silence_limit": turn_silence_limit,
+                        "silence_seconds": round(turn_silence_limit * _chunk_sec, 2),
+                        "max_seconds": turn_max_sec,
                         "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
                         "avg_rms": round(avg_rms, 4),
                         "vad_ratio": round(vad_ratio, 2),
                         "followup_round": followup_round,
+                        **_signal_stats(turn_rms, turn_frames_speech, turn_frames_total),
                     }
                     # VAD-Anteil-Gate: echte Äußerungen liegen bei >= 50 %
                     # Sprachanteil, Halluzinations-Aufnahmen (Hintergrund-
@@ -1228,6 +1624,7 @@ def run() -> None:
                         workers.start_mood(recorded_chunks.copy(), turn_mood_q)
                     else:
                         print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech (VAD {vad_ratio:.0%})")
+                        _flush_endpoint(ausgang="followup_zu_wenig_sprache")
                         leds.set_phase(LED_IDLE)
                         pending_confirm = None
                         followup_round = 0

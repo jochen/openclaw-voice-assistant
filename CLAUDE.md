@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Dieses Repo ist öffentlich — die READMEs sind die Vorlage für Fremde
+
+`origin` ist ein öffentliches GitHub-Repo. `README.md` (englisch) und
+`README.de.md` (deutsch) sind **inhaltlich parallel** und richten sich an
+Leute mit anderer Hardware, anderen Geräten und anderer Sprache. Wer eine der
+beiden ändert, ändert die andere mit — sonst driften sie auseinander und eine
+von beiden wird still falsch.
+
+**Verhaltensregeln aus der ausgerollten `~/.openclaw/workspace/AGENTS.md` sind
+in der Voice-Sektion der READMEs gespiegelt** (dort neutral formuliert, ohne
+Haus-Spezifika). Diese Spiegelung wird regelmäßig vergessen. Am 2026-08-01
+kostete das konkret: die AGENTS.md wurde repariert, die READMEs trugen die
+kaputte Regel als öffentliche Vorlage weiter — ausgerechnet die Fassung, die
+Fremde übernehmen. Wer am Prompt-Verhalten etwas ändert, prüft beide Seiten.
+
+Was hier **nie** hineingehört: Tokens, Ziel-ids dieser Installation
+(`kuechenrollo_links` &c. — die sind je Haus andere), Hostnamen/IPs des
+eigenen Netzes, Familien-Stimmproben (`models/wakewords/*/samples/`, eigenes
+privates Repo).
+
 ## Running the Assistant
 
 ```bash
@@ -14,6 +34,20 @@ already running inside it. Der frühere separate venv `~/ow-venv` wurde aufgelö
 liegen jetzt im Projekt-venv (`pip install` immer via `ow-venv/bin/python -m pip`).
 
 Override the profile: `GASTON_PROFILE=openclaw python -m voice_assistant`
+
+Im Regelbetrieb läuft er als User-Unit, nicht von Hand:
+
+```bash
+systemctl --user restart openclaw-voice-assist.service
+journalctl --user -fu openclaw-voice-assist.service
+```
+
+Der Mic-Stream ist exklusiv — wer den Assistenten von Hand startet oder
+Aufnahmen macht (`wakeword_studio record`), stoppt vorher die Unit.
+
+Das kleine Klassifikations-LLM des Aktuators und die Speaches-Container
+liegen in einem eigenen Repo (`openclaw-voice-stack`, compose je Host,
+`restart: unless-stopped`) — nicht hier, und nicht von Hand gestartet.
 
 Der alte Monolith `voice_assistant.py` wurde in ein Package refaktoriert und
 liegt übergangsweise als `voice_assistant_legacy.py` weiter im Repo (zum
@@ -45,6 +79,7 @@ voice_assistant/
   state.py               STATE_*, tts_lock, reply_done_event, stt_queue
   config.py              Profile-Dataclass + YAML-Loader (alt + neu)
   workers.py             Workers: start_stt, start_confirmation, start_openclaw_turn
+  mcp_actuator.py        stdio-MCP-Server: haus_ziele/haus_schalten für den Brain
   audio/
     base.py              AudioSource/AudioSink Protocols
     alsa.py              PyAudio + aplay
@@ -90,6 +125,33 @@ Aktiviert wird er per Profil-Block `actuator:` (Default `enabled: false` — ohn
 den Block verhält sich ein Profil wie vor dem Einbau). In dieser Installation
 liegt die ausführende Seite auf Node-RED (noderedpi4), **das ist aber keine
 Voraussetzung**.
+
+Der System-Prompt des Klassifikations-LLM steht als `actuator.system_prompt`
+in der Profil-Config (Default: `config.py:_DEFAULT_ACTUATOR_PROMPT`, deutsch).
+Er ist die einzige sprachabhängige Stelle des Projekts — für Englisch wird er
+dort ersetzt, der Code selbst enthält keine einzige feste Ziel-id. Ziel-Liste,
+Kontrast-Beispiele und die Regel für Geräte-Mehrzahl ohne Raumangabe werden bei
+jedem `refresh()` aus `/capabilities` erzeugt und über die Platzhalter
+`{ziel_liste}`, `{kontrast}`, `{gruppen_regel}` eingesetzt.
+
+**Prompt-Änderungen nur gegen `tools/actuator_grammar_test.py`.** Das Test-Set
+liegt im Repo, weil eine frühere Messung ("20/20") nur in einem Scratchpad
+stand und einen Tag später weder reproduzierbar noch gültig war. Wiederholen
+nach jeder Änderung an den capabilities — die Zahl gilt immer nur für eine
+capabilities-Version. Stand: **31/32 bei capabilities `9b429c57`**, Messreihe
+im Docstring des Werkzeugs.
+
+**Ein Gruppen-Ziel braucht seinen Beleg im Satz (Regel A, 2026-08-02).** Wählt
+das Klassifikations-Modell eine Gruppe, muss das Gruppenwort auch gesagt
+worden sein — sonst Rückfrage statt Schalten. Die Belege entstehen bei jedem
+`refresh()` aus den `namen` der Gruppe, im Code steht keine id.
+
+Daraus folgt eine Pflicht bei der Datenpflege: **eine Gruppe braucht alle
+Formen, in denen Menschen sie aussprechen** (`["Küchenrollos", "die Rollos in
+der Küche", "alle Rollos in der Küche"]`), nicht nur ihr Kompositum. Mit
+einem einzigen Namen lehnt Regel A völlig legitime Sätze ab — gemessen, siehe
+die Messreihe. Zweites Werkzeug dafür: `tools/gruppenbeleg_replay.py` spielt
+die Regel über die echten Turns in `actuator_turns.log`.
 
 **Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
 implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige
@@ -166,11 +228,56 @@ Fünf Zustände in der Hauptschleife (`voice_assistant/assistant.py`):
 
 1. **LISTENING** — WakewordEngine bekommt jeden 16-kHz-Chunk; triggert bei Score über
    dem Wakeword-Threshold (Config > manifest.yaml > Default 0.65)
-2. **RECORDING** — Chunks werden gesammelt; endet bei Stille (25 stille Chunks
-   nach Sprache) oder nach 15 s Timeout
+2. **RECORDING** — Chunks werden gesammelt; endet bei Stille nach Sprache oder
+   am Deckel. Zwei Parametersätze, siehe „Endpointing" unten
 3. **PROCESSING** — wartet auf STT-Ergebnis aus `state.stt_queue`
 4. **WAITING** — wartet auf `state.reply_done_event` (openclaw_worker setzt es)
 5. **PAUSE** — 1 s Totzone bevor es zurück in LISTENING geht
+
+### Endpointing: Dialog vs. Kommando
+
+Wann eine Aufnahme endet, hängt davon ab, ob der Nutzer das „Ja?" abgewartet
+hat. Wer durchspricht (Ein-Satz), meint fast immer einen kurzen Schaltbefehl
+für den Aktuator — da zählt Tempo und Denkpausen kommen nicht vor. Wer wartet,
+stellt meist etwas Komplexeres, das an den Brain geht.
+
+| | Nachlauf (Stille bis Ende) | Deckel |
+|---|---|---|
+| Dialog (Ja? abgewartet, Follow-ups) | `silence_seconds` (2,0 s) | `RECORDING_MAX_SEC` (30 s) |
+| Kommando (Ein-Satz) | `command_silence_seconds` (1,0 s) | `command_max_seconds` (8 s) |
+
+Der Kommando-Modus wird **nicht** schon von der Ein-Satz-Einstufung scharf,
+sondern erst nach `_COMMAND_MIN_SPEECH_SEC` (0,5 s) tatsächlicher Sprache. Der
+Ein-Satz-Entscheid fällt 0,4 s nach dem Trigger und spricht auch auf den
+Ausklang des Wakewords an — ohne diese Sperre stirbt eine Aufnahme in der
+Denkpause direkt nach „Gaston" und das Kommando ist komplett weg (belegt an
+`20260730_181211`; 30 von 37 protokollierten Entscheidungen lauten
+„Ein-Satz", der Erkenner springt also leicht an).
+
+**Warum überhaupt zwei Sätze:** Bei laufendem Fernseher endete die Aufnahme
+nie — die Sprechpausen einer Störquelle sind ~1,7 s lang und setzen den
+Stille-Zähler vor der 2-s-Schwelle zurück. Ein Turn lief so 21,9 s bis zum
+Deckel (2026-08-01). Es braucht dafür keine Sprache im Hintergrund, nur
+irgendein Geräusch alle ~1,5 s: `_chunk_speech_stats` verodert die vier
+20-ms-VAD-Frames eines Chunks, ein einziger Frame genügt.
+
+**Parameter nur gegen `tools/endpoint_replay.py` ändern.** Das Werkzeug spielt
+die Endpointing-Logik über die archivierten `*_rec.wav` (siehe
+`TRIGGER_AUDIO_DIR`) und weist per STT nach, ob ein Schnitt ein Kommando
+zerschneidet. Gemessen am 2026-08-01 über die 30 Ein-Satz-Turns im Archiv:
+Median 7,0 s → 5,8 s, kein einziges der 22 ausgeführten Kommandos beschädigt.
+Zwei Fallen, die dabei beide zugeschlagen haben: den Pre-Roll muss das Replay
+überspringen (der VAD sieht ihn im Betrieb nie, sonst zählt das Wakeword als
+Sprache), und ein reiner Wortvergleich taugt nicht als Verlustkriterium —
+STT-Varianten wie „Gastro-Monitor an" / „Gastro Monitoren" sehen aus wie ein
+abgeschnittenes Kommando. Verlust wird deshalb aus der VAD-Spur bestimmt.
+
+`endpoint.log` bekommt pro Turn `mode`, `rms_p10/median/max` und
+`vad_frame_ratio` — der Rohstoff, um später zu entscheiden, ob eine
+Pegelschwelle (`vad_voice_rms_min`) oder ein Frame-Anteil-Gate den Fernseher
+vom Sprecher trennen kann. Geschrieben wird die Zeile auf **jedem** Ausgang,
+auch bei Stopp-Wort und „keine Sprache" (`_flush_endpoint`); vorher fehlten
+ausgerechnet die kaputten Aufnahmen im Log.
 
 ## Threading Model
 
