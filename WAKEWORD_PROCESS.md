@@ -3,6 +3,12 @@
 Wiederholender Prozess um die Treffer-Quote des Wakeword-Modells zu erhöhen:
 weniger verlorene Rufe (Recall) UND weniger Fehltrigger (Precision).
 
+> **Zum Weitermachen: erst den Abschnitt „Stand" ganz unten lesen.** Dort steht,
+> welche Fäden offen sind, welcher gerade der aktive ist und was ausdrücklich
+> NICHT als nächstes ansteht. Alles davor ist das Wie und Warum — bleibt gültig,
+> ändert sich selten. Der Rest dieser Datei erklärt es; der „Stand" sagt, wo wir
+> stehen.
+
 ## Ziel
 
 Der Schwellen-Weg ist ausgereizt — FPs und echte Rufe überlappen im Peak-Bereich
@@ -207,9 +213,13 @@ offen und erst zu messen, wenn das Pegel-Gate scharf ist.
 2. **Triagieren** — `ow-venv/bin/python -m tools.wake_triage --seit N --auch-trigger`
    läuft über ungelabelte Files. Die Selbst-Labels stehen sofort, die STT
    klassifiziert nur den Rest, UNKLAR-Fälle bleiben übrig.
-3. **Per Ohr entscheiden** — UNKLAR-Fälle mit `aplay` anhören (wake_triage
-   schlägt den Pfad vor). Label in `wake_triage.jsonl` eintragen. Der Stapel
-   ist klein: auf dem Bestand blieben nach den Selbst-Labels 2 von 56 übrig.
+3. **Per Ohr entscheiden** — `tools/review_audio.py`: `export` legt die Clips
+   bereit (Wake + Folgeaufnahme in einer Datei, Pre-Roll entfernt), man
+   sortiert sie in `positiv/` bzw. `negativ/`, `import` liest das als harte
+   Labels nach `wake_review.jsonl` zurück und meldet jede Abweichung vom
+   automatischen Urteil. Ein Ohr-Urteil sticht Selbst-Label und STT.
+   Mit `--liste` nur die Clips, an denen eine konkrete Messung hängt — das
+   sind meist ein paar Dutzend statt hundert.
 4. **Trainieren** — synthetische TTS-Samples + echtes Validierungs-Set +
    Negativ-Korpus → neues Modell. Siehe `Wakeword_Studio_Spec.md`.
 5. **Validieren** — gegen Validierungs-Gate prüfen: Recall ≥ 0.9 gegen echte
@@ -220,7 +230,11 @@ offen und erst zu messen, wenn das Pegel-Gate scharf ist.
 
 ## Was NICHT zu tun ist
 
-- Schwellen weiter justieren — ausgereizt.
+- An den **Score**-Schwellen weiter justieren — ausgereizt, die Begründung mit
+  Messwerten steht an jedem Parameter in `models/wakewords/gaston/manifest.yaml`.
+  (Das **Pegel**-Gate `wake_rms_min` ist davon ausgenommen: eine andere
+  Dimension, siehe „Pegel als zweite Dimension". Es wird gegen
+  `tools/wake_rms_replay.py` geändert, nicht nach Gefühl.)
 - FPs als „egal" abtun — sie sind der wertvollste Teil des Datensatzes.
 - Die Folgeaufnahme als Fehltrigger-Indikator fehlinterpretieren — sie ist der
   BELEG für einen echten Ruf, nicht der Fehltrigger selbst.
@@ -234,44 +248,71 @@ offen und erst zu messen, wenn das Pegel-Gate scharf ist.
 > zu erheben — die Datei sagt, **wo der Prozess steht und was als naechstes
 > ansteht**, nicht was gerade in den Logs liegt.
 
-**Wo der Prozess steht (2026-08-02):**
+**Wo der Prozess steht (2026-08-02, abends):**
 
-Schritt 1 (Sammeln) hat geliefert, Schritt 2 (Triagieren) ist automatisiert.
-Schritt 3 der alten Reihenfolge — „Bilanz lesen" — ist **abgearbeitet und
-hat die Frage nicht beantwortet**, siehe „Ein-Satz gegen Pause" oben: p =
-0.17, und die Messung ist per Konstruktion auf die durchgekommenen Rufe
-verzerrt. Passives Weitersammeln behebt das nicht, es vergrößert nur n auf
-einer Größe, die die Frage ohnehin nicht trennscharf beantworten kann.
+Es laufen drei Faeden nebeneinander. Der aktive ist Nummer 1.
 
-Bestand 2026-08-02 (Vergleich 2026-07-28 in Klammern): 384 (~250) archivierte
-Clips, 137 (54) Trigger, 110 (61) Near-Misses, 46 (5) `ack`-Entscheidungen.
-Nach den Selbst-Labels: **36 (22) verlorene echte Rufe, 66 (33) Rauschen,
-8 (2) offen zum Anhoeren.** Positiv- und Negativ-Korpus haben sich damit
-beide ungefaehr verdoppelt — fuer Schritt 4/5 ist genug Material da.
+**Faden 1 — Pegel-Gate ist SCHARF und wird beobachtet.** `wake_rms_min: 300`
+steht im Profil `gastonllm`, der Service laeuft damit seit dem 2026-08-02
+abends. Das ist die einzige Aenderung am Laufzeitverhalten aus dieser Runde.
+Details und Messung: Abschnitte „Pegel-Gate (`wake_rms_min`)" und „Pegel als
+zweite Dimension" oben.
 
-**Was als naechstes ansteht, in dieser Reihenfolge:**
+Die offene Frage ist rein empirisch: **stimmt die Schwelle im Alltag?**
 
-1. **Kontrollierter Vergleich statt Alltagsstatistik.** Die Frage
-   „triggert Ein-Satz schlechter?" braucht beide Formen vom selben Sprecher
-   in derselben Session, gegen dasselbe Modell gescort — dann faellt der
-   Survivorship-Bias weg, weil auch die Nicht-Trigger gezaehlt werden.
-   `wakeword_studio record` nimmt heute NUR isolierte Takes auf
-   (`VARIATIONS` in `recorder.py`, alle 10 Eintraege isoliert). Es braucht
-   Ein-Satz-Takes („Gaston, schalte das Tischlicht ein") als eigene
-   Variationen und im Scoring die Trennung beider Gruppen. Das ist die
-   kleinste Aenderung, die die Frage wirklich entscheidet — und dieselbe
-   Aenderung liefert bei Bedarf gleich die Trainingsdaten.
-2. **Die 8 UNKLAR-Faelle anhoeren** (`wake_triage` schlaegt den `aplay`-Pfad
-   vor). Kleiner Stapel, macht den Datensatz vollstaendig.
-3. **Danach erst Schritt 4 (Trainieren).** Das Modell wurde auf 30 000
-   synthetischen Einzelwort-Samples trainiert (`piper-sample-generator`,
-   siehe `models/wakewords/gaston/manifest.yaml`) und kennt „Gaston" nur
-   isoliert, mit Endsilbenloesung und fallender Intonation. Ob der Satzfluss
-   wirklich das Problem ist, sagt Schritt 1 — vorher nicht danach trainieren.
+    grep min_rms ~/.openclaw/workspace/wake_events.log
+
+Jeder geblockte Ruf steht dort mit gemessenem Pegel. Beim Scharfschalten:
+0 Eintraege (der Betrieb begann gerade erst). Zu pruefen ist:
+- Sind darunter Rufe, die Jochen gemeint hat? → Schwelle zu hoch, senken.
+- Bleibt die Liste leer, waehrend Fehltrigger weiter durchkommen? → Schwelle
+  zu niedrig fuer diesen Raum, der Sweep in `tools/wake_rms_replay.py` zeigt,
+  was 350 oder 400 kosten wuerden.
+- **Erst mit ein paar Tagen Betrieb ist das entscheidbar.** Vorher nicht am
+  Wert drehen.
+
+**Faden 2 — Verifier: gemessen, NICHT deploy-reif, liegt bewusst still.**
+`tools/verifier_probe.py`, Messreihe im Docstring. FP-Achse traegt
+hoch-signifikant (44 → 9 ueber 104 Clips, p < 0,001), Recall-Achse nicht
+(12/16 → 15/16, McNemar p = 0,25). Eine Achse von zweien reicht nicht.
+
+**Dieser Faden wird erst wieder angefasst, wenn Faden 1 ausgewertet ist** —
+gut moeglich, dass das Pegel-Gate den Verifier ueberfluessig macht: ein
+Parameter statt eines sprecherspezifischen Modells. Wenn doch weiter:
+(a) Kreuzvalidierung ueber die Tagespartitionen, damit alle 55 harten Rufe
+Testfall werden statt 16; (b) die Ohr-Labels einhaengen — `verifier_probe`
+liest `wake_review.jsonl` noch NICHT, obwohl zwei der 24 Urteile die Messung
+direkt betreffen (ein geretteter und ein unterdrueckter echter Ruf).
+
+**Faden 3 — Ein-Satz-Aufnahmen: offen, ruht.** Siehe „Ein-Satz gegen Pause".
+Die Alltagsstatistik kann die Frage prinzipiell nicht beantworten
+(Survivorship-Bias). Es braucht einen kontrollierten Vergleich: beide Formen
+vom selben Sprecher in derselben Session. `wakeword_studio record` nimmt
+heute NUR isolierte Takes auf (`VARIATIONS` in `recorder.py`, alle 10
+Eintraege isoliert) — es muesste Ein-Satz-Takes fuehren („Gaston, schalte das
+Tischlicht ein") und im Scoring beide Gruppen trennen. Dieselbe Aenderung
+liefert bei Bedarf gleich die Trainingsdaten.
+
+**Bestand 2026-08-02 abends** (2026-07-28 in Klammern): 391 (~250) archivierte
+Clips. Labels: 106 echter_ruf, 104 rauschen, 54 unklar. Davon **24 per Ohr
+entschieden** (`wake_review.jsonl`, 2 echter_ruf / 22 rauschen) — die staerkste
+Quelle. Fuer Schritt 4/5 (Trainieren/Validieren) ist genug Material da; es
+fehlt nicht an Daten, sondern an der Entscheidung, was trainiert werden soll.
+
+**Kleinere offene Punkte:**
+- Die UNKLAR-Faelle per Ohr entscheiden — jetzt mit
+  `tools/review_audio.py --klasse unklar` statt `aplay` von Hand.
+- Die ~78 weichen `rauschen`-Labels (STT-geraten, „kein Text erkannt") per
+  Ohr pruefen, falls die FP-Zahlen belastbarer werden sollen. 16 Minuten
+  Hoerzeit fuer alle.
+- `--nur-studio` schlaegt die Schwelle aus dem leisesten Take vor; bei uns
+  haben die kritischen Stile `leise` und `fern` nur je EINEN Take. Fuer die
+  eigene Anlage war das durch 57 Alltagsrufe abgesichert, fuer einen Fremden
+  ist es duenn — eine Warnung bei n=1 je kritischem Stil waere sinnvoll.
 
 **Was NICHT als naechstes ansteht:** weiter passiv sammeln und die
-Ein-Satz-Bilanz nochmal lesen. Das war die Empfehlung vom 2026-07-28, sie ist
-mit dieser Messung erledigt.
+Ein-Satz-Bilanz nochmal lesen. Das war die Empfehlung vom 2026-07-28 und ist
+mit der Messung vom 2026-08-02 erledigt.
 
 **Was NICHT mehr zu versuchen ist:** an den Schwellen drehen. Die Begruendung
 mit Messwerten steht in `models/wakewords/gaston/manifest.yaml` an jedem
