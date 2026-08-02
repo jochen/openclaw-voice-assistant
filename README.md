@@ -561,6 +561,101 @@ WLED (mode: local) and ReSpeaker LED ring (mode: respeaker) are mutually exclusi
 | 4 | Purple | Waiting for OpenClaw |
 | 5 | Green | Speaking reply |
 
+## Measurement tools — measure parameters, don't guess them
+
+Every parameter that noticeably changes behaviour has a tool that proves its
+effect against recorded real data. **Parameters are changed only against their
+tool**, and the measured number lives in the tool's docstring — not in a chat,
+not in someone's head. Several of these tools appear in their respective
+sections above (actuator, wakeword, endpointing); this lists them all, ordered
+by how soon you can use them.
+
+Two lessons shaped this discipline, both learned the hard way:
+
+- A measurement that existed only in a scratchpad was, one day later, neither
+  reproducible nor valid. Numbers that aren't committed alongside the tool are
+  worthless tomorrow.
+- A tool once printed its conclusion as fixed text instead of computing it —
+  asserting an effect for four days that its own numbers contradicted. A tool
+  must *calculate* its verdict from the current data, not state it.
+
+Most of these tools need **a few days of operation** before they yield
+anything, because they build on the trigger archive and `wake_events.log`.
+On day one they look broken — they aren't, they're just waiting for material.
+
+Raw data lives under `~/.openclaw/workspace/`: `wake_events.log` (one line per
+wake decision), `endpoint.log` (one per recording), `actuator_turns.log` (one
+per switched turn the actuator handled itself), and `voice/triggers/` (the
+archived wake/record/near-miss WAVs).
+
+**Day one — needs only a microphone:**
+
+- `wakeword_studio record` — guided real recordings of the wake word in varied
+  styles (distance, tempo, loudness, angle). Also scores each take against the
+  model. The foundation for everything below.
+  ```bash
+  ow-venv/bin/python -m wakeword_studio record --speaker <name>
+  ```
+- `wake_rms_replay --nur-studio` — suggests a level-gate threshold from those
+  takes alone, no daily archive needed (see the level-gate section above).
+  ```bash
+  ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
+  ```
+
+**After a few days of operation (once the archive exists):**
+
+- `wake_triage` — sorts archived wake/near-miss clips into REAL CALL /
+  NOISE / UNCLEAR, from self-labels (actions) first, STT second. Lists the
+  UNCLEAR cases for listening. Needs trigger archive + `wake_events.log` + STT.
+  ```bash
+  ow-venv/bin/python -m tools.wake_triage --seit 3 --auch-trigger
+  ```
+- `endpoint_replay` — replays the endpointing logic over the archived
+  recordings and shows where a different silence/ceiling setting would have
+  cut a recording — proving via STT whether spoken material was lost.
+  Needs trigger archive + `wake_events.log` + STT.
+  ```bash
+  ow-venv/bin/python -m tools.endpoint_replay --stt
+  ```
+- `wake_rms_replay` (full) — measures the level gate against the archive:
+  real calls lost (the price) vs. false triggers blocked (the gain), with a
+  threshold sweep and Fisher exact test. Needs archive + labelled clips.
+  ```bash
+  ow-venv/bin/python -m tools.wake_rms_replay
+  ```
+- `actuator_watch` — reads `actuator_turns.log` and spots discrepancies
+  (intent vs. executed, status problems). Needs `actuator_turns.log`.
+  ```bash
+  ow-venv/bin/python -m tools.actuator_watch --seit 3
+  ```
+- `gruppenbeleg_replay` — replays the group-target rule (rule A) over the real
+  switched turns. Needs `actuator_turns.log`.
+  ```bash
+  ow-venv/bin/python -m tools.gruppenbeleg_replay
+  ```
+- `actuator_grammar_test` — the test set for the classifier prompt; re-measure
+  after every capability change. Needs the capabilities endpoint.
+  ```bash
+  ow-venv/bin/python -m tools.actuator_grammar_test
+  ```
+
+**With some manual work:**
+
+- `review_audio` — exports clips (wake + trailing recording concatenated) for
+  listening, and reads back the sorting as hard ear labels (`wake_review.jsonl`).
+  An ear judgement outranks every automatic classification. Needs trigger
+  archive + `wake_events.log`.
+  ```bash
+  ow-venv/bin/python -m tools.review_audio export
+  ow-venv/bin/python -m tools.review_audio import
+  ```
+- `verifier_probe` — cross-checks the wake-word model on both axes (recall and
+  precision) against the archive plus studio takes. Needs archive + studio
+  takes.
+  ```bash
+  ow-venv/bin/python -m tools.verifier_probe
+  ```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
