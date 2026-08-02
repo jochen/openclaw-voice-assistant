@@ -34,11 +34,17 @@ from voice_assistant.services.actuator import (  # noqa: E402
     VERDICT_KEIN_KOMMANDO,
     VERDICT_UNKLAR,
     Actuator,
+    _gruppen_beleg,
 )
 
 # Ausschnitt aus einem echten /capabilities-Digest (Version eaf5c0b3).
 # Wichtig ist allein der Unterschied: ein Licht kann ein/aus, ein Rollo
 # zusaetzlich setzen. Genau daran ist der Vorfall gescheitert.
+#
+# `alle_rollos` ist eine Gruppe (mit `mitglieder`) — fuer Regel A. Ihre
+# Namen reduzieren sich auf den Beleg {"rollos"}: "alle" ist ein Stopwort,
+# "rollos" ist >=4 Zeichen. Genau dieser Beleg entscheidet, ob ein Satz die
+# Gruppe rechtfertigt. "Tyrol" und "Rollo" (Einzahl) sind NICHT "rollos".
 DIGEST = {
     "grosseszimmerlicht": {
         "namen": ["Licht im großen Zimmer"],
@@ -52,15 +58,38 @@ DIGEST = {
         "aktionen": ["auf", "zu", "setzen"],
         "wert": {"einheit": "prozent", "min": 0, "max": 100},
     },
+    "alle_rollos": {
+        "namen": ["alle Rollos"],
+        "typ": "rollo",
+        "aktionen": ["auf", "zu", "setzen"],
+        "wert": {"einheit": "prozent", "min": 0, "max": 100},
+        "mitglieder": ["wohnzimmerrollo", "tuerrollo"],
+    },
+    # Gruppe, deren Namen nur Funktions-/Kurzwoerter liefern -> leere Beleg-
+    # Menge. Fuer sie entfaellt die Pruefung (nicht ablehnen), siehe Regel A.
+    "leere_gruppe": {
+        "namen": ["alle"],
+        "typ": "szene",
+        "aktionen": ["aktivieren"],
+        "wert": None,
+        "mitglieder": ["tuerrollo"],
+    },
 }
 
 
 def _actuator() -> Actuator:
-    """Actuator ohne refresh(): Digest von Hand gesetzt, kein Netz noetig."""
+    """Actuator ohne refresh(): Digest von Hand gesetzt, kein Netz noetig.
+
+    gruppen_beleg wird hier aus DEMSELBEN Hand-Digest gebaut wie in refresh(),
+    damit Regel A offline greift. Leere Mengen fallen raus (wie in refresh())."""
     cfg = ActuatorConfig(enabled=True, base_url="http://127.0.0.1:0",
                          token_file="/nonexistent")
     act = Actuator(cfg)
     act.digest = dict(DIGEST)
+    act.gruppen_beleg = {
+        zid: beleg for zid, z in DIGEST.items()
+        if z.get("mitglieder") and (beleg := _gruppen_beleg(z))
+    }
     act.system_prompt = "(Test)"
     return act
 
@@ -147,6 +176,89 @@ class TestVerdict(unittest.TestCase):
                     verdict == VERDICT_AUSFUEHRBAR,
                     self.act.is_actionable(intent),
                 )
+
+
+class TestRegelAGruppenbeleg(unittest.TestCase):
+    """Regel A: ein Gruppen-Ziel muss im Satz belegt sein, sonst UNKLAR.
+
+    Anlass 2026-08-02: 'Gastau Tyrol auf 40%' -> alle_rollos war laut Digest
+    legal, verdict() sah nichts Falsches, neun Rollos fuhren. Ein unbekanntes
+    Wort darf nie zu einer Gruppe werden. Siehe actuator.verdict() Docstring.
+    """
+
+    def setUp(self) -> None:
+        self.act = _actuator()
+
+    def test_gruppe_ohne_beleg_ist_unklar(self) -> None:
+        """Der Vorfall: "Tyrol" ist kein Beleg fuer alle_rollos ({rollos})."""
+        intent = {"ist_kommando": True, "ziel": "alle_rollos",
+                  "aktion": "setzen", "wert": 40, "einheit": "prozent"}
+        verdict, grund = self.act.verdict(intent, "Gastau Tyrol auf 40%")
+        self.assertEqual(verdict, VERDICT_UNKLAR)
+        self.assertIn("alle_rollos", grund)
+        self.assertIn("rollos", grund)  # Beleg-Menge im Grund genannt
+
+    def test_gruppe_mit_beleg_ist_ausfuehrbar(self) -> None:
+        """Enthaelt der Satz das Gruppenwort, ist die Gruppe gerechtfertigt."""
+        intent = {"ist_kommando": True, "ziel": "alle_rollos",
+                  "aktion": "zu", "wert": None, "einheit": None}
+        self.assertEqual(
+            self.act.verdict(intent, "Mach die Rollos zu")[0], VERDICT_AUSFUEHRBAR
+        )
+
+    def test_einzelziel_ist_unberuehrt(self) -> None:
+        """Regel A greift NUR bei Gruppen (mitglieder). Ein Einzelziel wird
+        auch dann ausgefuehrt, wenn sein Wort gar nicht im Satz steht — dafuer
+        ist is_actionable()+Schema zustaendig, nicht der Beleg."""
+        intent = {"ist_kommando": True, "ziel": "tuerrollo",
+                  "aktion": "setzen", "wert": 40, "einheit": "prozent"}
+        self.assertEqual(
+            self.act.verdict(intent, "irgendwas ganz anderes")[0], VERDICT_AUSFUEHRBAR
+        )
+
+    def test_leere_beleg_menge_ablehnt_nicht(self) -> None:
+        """Eine Gruppe, deren Namen nur Funktions-/Kurzwoerter liefern, hat
+        eine leere Beleg-Menge. Fuer sie entfaellt die Pruefung — nicht
+        ablehnen, sonst sperrt man eine legitime Szene ohne Grund."""
+        intent = {"ist_kommando": True, "ziel": "leere_gruppe",
+                  "aktion": "aktivieren", "wert": None, "einheit": None}
+        # "leere_gruppe" ist in gruppen_beleg NICHT (Menge leer -> rausgefallen),
+        # also wird die Pruefung uebersprungen und ausgefuehrt.
+        self.assertNotIn("leere_gruppe", self.act.gruppen_beleg)
+        self.assertEqual(
+            self.act.verdict(intent, "nix passendes")[0], VERDICT_AUSFUEHRBAR
+        )
+
+    def test_einzahl_ist_kein_beleg_fuer_die_gruppe(self) -> None:
+        """Der teure Fall: "Rollo auf 70%" (Einzahl) darf nicht alle_rollos
+        rechtfertigen. "rollo" != "rollos" — exakter Tokenvergleich, kein
+        Praeffix. Genau das, was die ROLLO-OHNE-RAUM-Regel im Prompt verhindert."""
+        intent = {"ist_kommando": True, "ziel": "alle_rollos",
+                  "aktion": "setzen", "wert": 70, "einheit": "prozent"}
+        self.assertEqual(
+            self.act.verdict(intent, "Rollo auf 70%")[0], VERDICT_UNKLAR
+        )
+
+    def test_mehrzahl_pfad_wird_nicht_gebrochen(self) -> None:
+        """Die lokale Mehrzahl-Regel (_mehrzahl_gruppe) baut ihr Intent aus
+        einem Muster, das das Gruppenwort IM SATZ fordert (z.B. "Rollos
+        runter"). Ihr Treffer enthaelt "rollos" -> Beleg ist erbracht. Regel A
+        darf diesen Weg nicht plötzlich ablehnen."""
+        # So wie _mehrzahl_gruppe es liefern wuerde:
+        intent = {"ist_kommando": True, "aktion": "zu", "ziel": "alle_rollos",
+                  "wert": None, "einheit": None}
+        self.assertEqual(
+            self.act.verdict(intent, "Rollos runter")[0], VERDICT_AUSFUEHRBAR
+        )
+
+    def test_ohne_transkript_wird_pruefung_uebersprungen(self) -> None:
+        """transcript=None (Offline ohne Text) -> Pruefung uebersprungen, nicht
+        abgelehnt. So bleiben aeltere Tests und der classify-Ausfallpfad gruen."""
+        intent = {"ist_kommando": True, "ziel": "alle_rollos",
+                  "aktion": "setzen", "wert": 40, "einheit": "prozent"}
+        self.assertEqual(
+            self.act.verdict(intent)[0], VERDICT_AUSFUEHRBAR
+        )
 
 
 if __name__ == "__main__":

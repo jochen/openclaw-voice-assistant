@@ -56,6 +56,8 @@ _ALERT_ARTEN = {"LLM_MISMATCH", "EXEC_DIFFERS"}
 # System-Prompt für die semantische Prüfung. Kurz, geschlossen, deutsch.
 _LLM_SYSTEM_PROMPT = """Du bist der Aufseher eines Sprach-Aktuators. Du bekommst das gesprochene Transkript und den Intent den der Aktuator daraus gebildet hat. Prüfe OB SIE ZUSAMMENPASSEN.
 
+Das erste Wort im Transkript ist fast immer das verhörte Wakewort und gehört NICHT zum Befehl. Die Aufnahme beginnt seit dem Pre-Roll vor dem Wakewort, die STT nimmt es also mit und versteht es selten richtig: "Gastau", "Gastro", "Gastronom", "Gestern", "Das da" usf. Streiche es, bevor du den Rest beurteilst — es ist kein Hinweis auf ein falsches Ziel.
+
 Häufige Fehler die du erkennst:
 - Transkript sagt "aus", Intent sagt "ein" (oder umgekehrt)
 - Transkript nennt ein anderes Ziel als der Intent ("Küchenlicht" gesagt, "Wohnzimmerlicht" klassifiziert)

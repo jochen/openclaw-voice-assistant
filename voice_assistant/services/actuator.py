@@ -62,6 +62,55 @@ _AKTIONSTEIL = (
 _ALLE_ALIAS = re.compile(r"^alle\s+(\w+)$", re.IGNORECASE)
 
 
+# --- Regel A: Gruppen-Beleg (siehe verdict) --------------------------------
+# Funktionswörter, die aus den Gruppennamen nicht als Beleg taugen — sie stehen
+# für "alle"/"ganzes Haus"/Lage, nicht für das Gerät selbst. Wer sie zuließe,
+# hätte einen Beleg, ohne dass das Gruppenwort je fiel. Umlaute absichtlich
+# erhalten (Normalisierung unten berührt sie nicht).
+_BELEG_STOPWORTE = frozenset({
+    "alle", "ganze", "ganzen", "haus", "oben", "unten", "überall",
+    "eine", "einem", "einen", "diese", "dieser",
+})
+
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _gruppen_beleg(ziel: dict) -> set[str]:
+    """Beleg-Menge einer Gruppe: Tokens aus allen ihren `namen`.
+
+    - kleingeschrieben, an Nicht-Wortzeichen gespalten
+    - Tokens kürzer als 4 Zeichen verworfen (Artikel, Präpositionen, "auf", "zu")
+    - Funktionswörter aus _BELEG_STOPWORTE verworfen ("alle", "haus", …)
+
+    Bleibt die Menge leer, entfällt die Prüfung für diese Gruppe — nicht
+    ablehnen (siehe verdict). Im Code steht KEINE id und kein Gerätewort; alles
+    kommt aus den capabilities, wie bei _mehrzahl_muster.
+    """
+    tokens: set[str] = set()
+    for name in (ziel.get("namen") or []):
+        for tok in _TOKEN_RE.findall(name.lower()):
+            if len(tok) < 4:
+                continue
+            if tok in _BELEG_STOPWORTE:
+                continue
+            tokens.add(tok)
+    return tokens
+
+
+def _gruppe_im_satz(transcript: str, beleg: set[str]) -> bool:
+    """True, sobald ein Beleg-Token der Gruppe im Transkript vorkommt.
+
+    Vergleich EXAKT auf Token-Ebene, nicht per Stamm/Präfix: ein Präfix wie
+    "roll" ließe die Einzahl ("Rollo auf 70%") als Beleg für alle_rollos
+    durchgehen — genau der teure Fehler, den die ROLLO-OHNE-RAUM-Regel im Prompt
+    verhindert. Lieber einmal zu viel nachfragen.
+    """
+    if not transcript:
+        return False
+    satz_tokens = set(_TOKEN_RE.findall(transcript.lower()))
+    return bool(satz_tokens & beleg)
+
+
 def _mehrzahl_muster(digest: dict) -> list[tuple, ]:
     """[(Muster, ziel_id)] für "‹Mehrzahl› ‹Aktion›" ohne Raumangabe.
 
@@ -309,6 +358,9 @@ class Actuator:
         self.system_prompt: str | None = None
         # [(Muster, ziel_id)] aus den capabilities — siehe _mehrzahl_muster
         self.mehrzahl_muster: list = []
+        # Regel A: id -> Beleg-Menge (Tokens der Gruppennamen). Nur Gruppen
+        # (mit `mitglieder`) mit nicht-leerer Menge. Siehe verdict().
+        self.gruppen_beleg: dict[str, set[str]] = {}
         self.version: str | None = None
         # Letzte classify()-Latenz in ms — fürs Logging in assistant.py.
         self.last_latency_ms: float = 0.0
@@ -397,6 +449,12 @@ class Actuator:
                     f'- {z["id"]}: {al}  (aktionen: {",".join(z.get("aktionen", []))}){rng}'
                 )
             mehrzahl = _mehrzahl_muster(digest)
+            # Regel A: Beleg-Mengen je Gruppe (nicht-leere). Wie mehrzahl_muster
+            # bei jedem refresh() neu, keine id im Code.
+            gruppen_beleg = {
+                zid: beleg for zid, z in digest.items()
+                if z.get("mitglieder") and (beleg := _gruppen_beleg(z))
+            }
             system_prompt = _build_system_prompt(
                 self.cfg.system_prompt,
                 "\n".join(lines),
@@ -413,6 +471,7 @@ class Actuator:
                 self.ziele = ziele
                 self.system_prompt = system_prompt
                 self.mehrzahl_muster = mehrzahl
+                self.gruppen_beleg = gruppen_beleg
                 self.version = version
 
             print(f"🔌 Aktuator: capabilities aktualisiert — {len(ids)} Ziele, Version {version}")
@@ -621,8 +680,13 @@ class Actuator:
             return False
         return aktion in (entry.get("aktionen") or [])
 
-    def verdict(self, intent: dict | None) -> tuple[str, str | None]:
+    def verdict(self, intent: dict | None,
+                transcript: str | None = None) -> tuple[str, str | None]:
         """(Urteil, Grund) für den Dispatch in assistant.py.
+
+        ``transcript`` ist der STT-Text desselben Turns, gebraucht für Regel A
+        (Gruppen-Beleg). Ohne ihn (None, z.B. in Offline-Tests ohne Text) wird
+        die Gruppen-Prüfung übersprungen — im Betrieb steht er immer.
 
         Drei Ausgänge statt der früheren zwei. Der Unterschied, um den es geht,
         ist der zwischen "das war gar kein Schaltbefehl" und "das war einer,
@@ -656,6 +720,28 @@ class Actuator:
         der Fall NIRGENDS: der Log kennt nur Turns, die der Aktuator selbst
         erledigt hat, und im Journal stand die irreführende Zeile "kein
         Kommando → Brain" — obwohl das Modell sehr wohl ein Kommando sah.
+
+        Regel A — Gruppen-Beleg (Vorfall 2026-08-02, Anlass siehe Auftrag)
+        ----------------------------------------------------------------
+        Wählt das Modell ein Ziel mit `mitglieder` (Gruppe), muss der
+        gesprochene Satz das Gruppenwort auch enthalten. Fehlt es, ist das
+        LOCH nicht "nicht ausführbar", sondern "ausführbar, aber breiteres
+        Ziel als gesagt": 'Gastau Tyrol auf 40%' -> alle_rollos war legal
+        laut Digest, verdict() sah nichts Falsches, neun Rollos fuhren. Ein
+        unbekanntes Wort ("Tyrol", "Tyrolo", "Manolo") darf nie zu einer
+        Gruppe werden.
+
+        Geprüft wird gegen die Beleg-Menge der Gruppe (_gruppen_beleg, bei
+        jedem refresh()): Tokens ihrer `namen`, ≥4 Zeichen, ohne
+        Funktionswörter. Vergleich EXAKT auf Token-Ebene — kein Stamm/Präfix,
+        sonst ließe "roll" die Einzahl ("Rollo auf 70%") als Beleg für
+        alle_rollos durch. Bleibt die Menge leer, entfällt die Prüfung für
+        diese Gruppe (nicht ablehnen).
+
+        Der Weg über die lokale Mehrzahl-Regel (_mehrzahl_gruppe) trägt sein
+        Gruppenwort per Konstruktion im Muster — sein Treffer enthält das
+        Wort, also ist der Beleg stets erbracht, und Regel A lehnt ihn nicht
+        ab. Getestet siehe tests/test_actuator_verdict.py.
         """
         if not intent:
             # classify() hat None geliefert (LLM-Fehler/Timeout). Ohne Urteil
@@ -666,6 +752,20 @@ class Actuator:
         if not intent.get("ist_kommando"):
             return VERDICT_KEIN_KOMMANDO, None
         if self.is_actionable(intent):
+            # Regel A: Gruppen-Ziel muss im Satz belegt sein. Prüfung NUR
+            # bei Gruppen (mitglieder) mit nicht-leerer Beleg-Menge und nur,
+            # wenn ein Transkript vorliegt. Einzelziele sind unberührt.
+            ziel = intent.get("ziel")
+            with self._lock:
+                digest = self.digest
+                gruppen_beleg = self.gruppen_beleg
+            if transcript is not None and ziel in (gruppen_beleg or {}):
+                beleg = gruppen_beleg[ziel]
+                if not _gruppe_im_satz(transcript, beleg):
+                    return VERDICT_UNKLAR, (
+                        f"Gruppen-Ziel '{ziel}' im Satz nicht belegt "
+                        f"(braucht eines von: {', '.join(sorted(beleg))})"
+                    )
             return VERDICT_AUSFUEHRBAR, None
 
         ziel = intent.get("ziel")

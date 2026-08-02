@@ -33,6 +33,35 @@ Aufnahme beginnt seither vor dem Wakewort, das Transkript traegt es also mit,
 oft verhoert als Gastau/Gastraum/Gastronom.
 
 wert=None in der Erwartung heisst: Wert wird nicht geprueft.
+
+Seit Regel A (2026-08-02) misst dieses Werkzeug das AUSGEFÜHRTE Kommando, nicht
+nur classify(): verdict(intent, satz) entscheidet mit. Ein Gruppen-Ziel, dessen
+Gruppenwort im Satz nicht belegt ist, wird zu UNKLAR und zaehlt als "kein
+ausgeführtes Kommando". Der Denominator wuchs dadurch um die Vorfallsaetze
+2026-08-01/02 — die Baseline 28/29 (capabilities eaf5c0b3, nur classify) ist
+nicht mehr derselbe Zaehler; beide Zahlen sind getrennt zu betrachten.
+
+Messreihe (jede Zahl gilt NUR fuer ihre capabilities-Version):
+
+    28/29  eaf5c0b3  vor Regel A, nur classify gemessen
+    30/32  eaf5c0b3  mit Regel A. Zwei Durchfaller: "Rollo auf 70%"
+                     (praeexistierend) und "Mach alle Rollos in der Kueche zu"
+                     — letzteres ein Fehlalarm von Regel A, weil die Gruppe
+                     kuechenrollos nur EINEN Namen fuehrte
+    31/32  9b429c57  nachdem kuechenrollos/esstischrollos zerlegte Aliase
+                     bekamen ("die Rollos in der Kueche", …), im Stil der
+                     laengst gepflegten Beleuchtungs-Gruppen. Einziger
+                     Durchfaller bleibt "Rollo auf 70%"
+
+Der Fehlalarm war also keine Schwaeche von Regel A, sondern duenne Daten: die
+Belege entstehen aus `namen`, und mit einem einzigen Kompositum-Namen kann
+kein Satz sie erbringen, der die Gruppe zerlegt ausspricht. Wer eine Gruppe
+anlegt, gibt ihr die Formen, in denen Menschen sie aussprechen.
+
+Zweite Messung zur selben Aenderung: tools/gruppenbeleg_replay.py auf den
+echten Turns — 8 -> 7 Gruppen-Turns, die kuenftig nachfragen, davon sechs
+berechtigt (verhoerte oder unsinnige Saetze, die bisher still ALLE Rollos
+geschaltet haben).
 """
 
 from __future__ import annotations
@@ -48,7 +77,10 @@ if os.path.exists(_VENV) and os.path.realpath(sys.executable) != os.path.realpat
     os.execv(_VENV, [_VENV, "-m", "tools.actuator_grammar_test", *sys.argv[1:]])
 
 from voice_assistant.config import load_profile  # noqa: E402
-from voice_assistant.services.actuator import Actuator  # noqa: E402
+from voice_assistant.services.actuator import (  # noqa: E402
+    Actuator,
+    VERDICT_AUSFUEHRBAR,
+)
 
 # (Satz, ziel, aktion, wert) — ziel=None bedeutet: darf KEIN Kommando sein.
 TESTS: list[tuple[str, str | None, str | None, int | None]] = [
@@ -103,6 +135,15 @@ TESTS: list[tuple[str, str | None, str | None, int | None]] = [
     ("Gastronom, den Wohnzimmer Roller auf 70%", "wohnzimmerrollo", "setzen", 70),
     ("Gaston, alle Rollos auf", "alle_rollos", "auf", None),
     ("Gaston, erzaehl mir einen Witz", None, None, None),
+
+    # --- Vorfaelle 2026-08-01/02: STT verhoert "Türrollo" zu "Tyrolo"/"Tyrol".
+    # Das Modell rät ein beliebiges (Gruppen-)Ziel. Oben nur classify() gemessen,
+    # hier geht es um das AUSGEFÜHRTE Kommando: ein Gruppen-Ziel ohne Beleg im
+    # Satz wird via verdict() zu UNKLAR und darf NICHT ausgeführt werden.
+    # "Türrollo auf 40%" muss das Einzelziel tuerrollo bleiben (mit Beleg).
+    ("Gastau Tyrol auf 40%", None, None, None),
+    ("Gastau Tyrolo auf 40%", None, None, None),
+    ("Türrollo auf 40%", "tuerrollo", "setzen", 40),
 ]
 
 
@@ -144,11 +185,22 @@ def main() -> int:
     fehler: list[str] = []
     for satz, ziel, aktion, wert in TESTS:
         got = akt.classify(satz)
+        # Seit Regel A (2026-08-02) misst dieses Werkzeug das AUSGEFÜHRTE
+        # Kommando, nicht nur classify(): ein Gruppen-Ziel ohne Beleg im Satz
+        # wird via verdict() zu UNKLAR und damit NICHT ausgeführt. Ein Fall
+        # "passt", wenn die ausführbare Wirkung der Erwartung entspricht:
+        #   ziel=None  → darf NICHT ausgeführt werden (kein Kommando ODER
+        #                verdict UNKLAR, z.B. Gruppe ohne Beleg).
+        #   ziel=X     → classify liefert X/aktion[/wert] UND verdict sagt
+        #                AUSFUEHRBAR (Beleg erbracht bzw. Einzelziel).
+        verdict, _ = akt.verdict(got, satz) if got is not None else (None, None)
+        ausgefuehrt = verdict == VERDICT_AUSFUEHRBAR
         if ziel is None:
-            gut = not _ist_kommando(got)
-            soll = "kein Kommando"
+            gut = not ausgefuehrt
+            soll = "kein ausgeführtes Kommando"
         else:
-            gut = (_ist_kommando(got)
+            gut = (ausgefuehrt
+                   and _ist_kommando(got)
                    and got.get("ziel") == ziel
                    and got.get("aktion") == aktion
                    and (wert is None or got.get("wert") == wert))
@@ -156,7 +208,9 @@ def main() -> int:
         if not gut:
             fehler.append(satz)
         if not gut or args.zeige_alle:
-            print(f"{'✓' if gut else '✗'} {satz:<44} soll {soll:<26} ist {_kurz(got)}")
+            vd = "AUSF" if ausgefuehrt else ("UNKL" if verdict else "—")
+            print(f"{'✓' if gut else '✗'} {satz:<44} soll {soll:<26} "
+                  f"classify={_kurz(got):<22} verdict={vd}")
 
     ok = len(TESTS) - len(fehler)
     print(f"\n{ok}/{len(TESTS)} korrekt")

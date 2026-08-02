@@ -138,7 +138,20 @@ jedem `refresh()` aus `/capabilities` erzeugt und über die Platzhalter
 liegt im Repo, weil eine frühere Messung ("20/20") nur in einem Scratchpad
 stand und einen Tag später weder reproduzierbar noch gültig war. Wiederholen
 nach jeder Änderung an den capabilities — die Zahl gilt immer nur für eine
-capabilities-Version.
+capabilities-Version. Stand: **31/32 bei capabilities `9b429c57`**, Messreihe
+im Docstring des Werkzeugs.
+
+**Ein Gruppen-Ziel braucht seinen Beleg im Satz (Regel A, 2026-08-02).** Wählt
+das Klassifikations-Modell eine Gruppe, muss das Gruppenwort auch gesagt
+worden sein — sonst Rückfrage statt Schalten. Die Belege entstehen bei jedem
+`refresh()` aus den `namen` der Gruppe, im Code steht keine id.
+
+Daraus folgt eine Pflicht bei der Datenpflege: **eine Gruppe braucht alle
+Formen, in denen Menschen sie aussprechen** (`["Küchenrollos", "die Rollos in
+der Küche", "alle Rollos in der Küche"]`), nicht nur ihr Kompositum. Mit
+einem einzigen Namen lehnt Regel A völlig legitime Sätze ab — gemessen, siehe
+die Messreihe. Zweites Werkzeug dafür: `tools/gruppenbeleg_replay.py` spielt
+die Regel über die echten Turns in `actuator_turns.log`.
 
 **Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
 implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige

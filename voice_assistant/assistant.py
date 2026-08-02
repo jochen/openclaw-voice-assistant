@@ -1256,7 +1256,7 @@ def run() -> None:
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         if actuator is not None and actuator.ready:
                             intent = actuator.classify(text)
-                            verdict, unklar_grund = actuator.verdict(intent)
+                            verdict, unklar_grund = actuator.verdict(intent, text)
                         if verdict == VERDICT_AUSFUEHRBAR:
                             # Sprecher wird hier nur MITGESCHRIEBEN, nicht
                             # angewandt: der Aktuator antwortet mit Node-REDs
