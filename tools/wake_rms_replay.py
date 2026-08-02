@@ -5,6 +5,7 @@ Aufruf (Projekt-venv wird selbst gesucht):
     ow-venv/bin/python -m tools.wake_rms_replay
     ow-venv/bin/python -m tools.wake_rms_replay --schwelle 300
     ow-venv/bin/python -m tools.wake_rms_replay --von 100 --bis 700 --schritt 50
+    ow-venv/bin/python -m tools.wake_rms_replay --nur-studio   # ohne Archiv
 
 Was hier gemessen wird
 ---------------------
@@ -56,6 +57,35 @@ Bekannte Schwächen (ehrlich)
    Befund steht und fällt mit dem ausbleibenden Recall-Verlust, nicht mit der
    genauen Blockquote.
 
+Modus ``--nur-studio``: Schwelle ohne Alltagsarchiv
+---------------------------------------------------
+Der normale Lauf braucht ``wake_triage.jsonl`` und ``wake_review.jsonl`` —
+Ergebnisse aus Wochen Betrieb plus Handarbeit am Ohr. Am Tag eins sind beide
+leer; ein Fremder kann die Schwelle so nicht herleiten. ``--nur-studio``
+verzichtet auf beides und arbeitet allein aus geführten Takes
+(``wakeword_studio record``, ~10 Minuten).
+
+Vorschlag: **round(leisester Take × 0,7)**. Dieser Faktor ist nicht erfunden,
+sondern nachgerechnet: hier liegt der leiseste Studio-Take bei 427, ×0,7 = 299
+— praktisch exakt die 300, die aus dem *vollen* Datensatz (57 Alltagsrufe +
+24 belegte Fehltrigger, leisester echter Ruf 402) abgeleitet wurde. 0,7 bildet
+den Sicherheitsabstand ab, den wir dort von Hand gewählt haben (25 % unter dem
+leisesten beobachteten Ruf).
+
+Zwei Grenzen, die der Modus offen ausgibt (siehe ``_run_nur_studio``):
+
+1. STIL-ABDECKUNG. Die Untergrenze entsteht durch die *schwierigen* Varianten
+   — ``leise``, ``fern``, ``abgewandt``, ``beilaeufig`` (Slug im Dateinamen
+   ``<ts>_<stil>.wav``, Liste in ``wakeword_studio/recorder.py:VARIATIONS``).
+   Wer nur ``normal``/``laut`` aufgenommen hat, bekommt eine zu hohe Schwelle
+   und verliert später leise Rufe. Fehlen diese Stile, fordert der Modus zum
+   Nachaufnehmen auf statt eine Zahl aus unvollständigen Daten zu raten.
+2. NEGATIVSEITE FEHLT PRINZIPIELL. Ohne Archiv lässt sich nur sagen „diese
+   Schwelle kostet keinen deiner Takes" — NICHT, wie viele Fehltrigger sie
+   blockt. Der Modus liefert eine sichere Untergrenze, keine
+   Wirksamkeitsaussage. Sobald ein Archiv existiert, ist der volle Lauf
+   (ohne ``--nur-studio``) die bessere Quelle.
+
 Messreihe (2026-08-02)
 ----------------------
 Bestand: 77 echte Rufe (57 aus dem Alltagsarchiv + 20 geführte Studio-Takes
@@ -70,6 +100,10 @@ einem echten Ruf das Wakewort, beim Fehltrigger das auslösende Geräusch.
 
 Unter den Studio-Takes sind absichtlich schwierige — „leise" (427),
 „abgewandt" (675), „fern" (1129). Keiner fällt unter 400.
+
+``--nur-studio`` am selben Bestand: leisester Take 427 × 0,7 = 299 ≈ 300.
+Vorschlag ohne jedes Alltagsarchiv deckt sich also mit der aus dem vollen
+Datensatz abgeleiteten Schwelle. Vier kritische Stile alle vorhanden.
 
 Stand der Capabilities/Archive zum Messzeitpunkt: siehe ``--verbose``.
 """
@@ -194,6 +228,25 @@ def _clip_rms(pfad: str) -> float | None:
     return loudest_window_rms(audio, rate=RATE_OW, window_ms=300)
 
 
+# Stile, die die Untergrenze des Pegels setzen — die schwierigen, nicht die
+# lauten. Wer nur 'normal'/'laut' aufgenommen hat, bekommt eine zu hohe
+# Schwelle und verliert später leise Rufe. Slug steckt im Dateinamen
+# '<ts>_<stil>.wav'; die Liste der geführten Varianten steht in
+# wakeword_studio/recorder.py:VARIATIONS.
+KRITISCHE_STILE = ("leise", "fern", "abgewandt", "beilaeufig")
+
+
+def _stil_aus_datei(name: str) -> str:
+    """Stil-Slug aus '<ts>_<stil>.wav' → z.B. '20260706-173008_leise' → 'leise'.
+
+    Timestamp nutzt Bindestrich, Stil und Timestamp sind durch genau einen
+    Unterstrich getrennt — rsplit zerlegt robuster gegen etwaige weitere '_'
+    im (hypothetischen) Slugged-Stil. 'fern-laut' bleibt dank rsplit am
+    Bindestrich unangetastet als eigener Stil erhalten.
+    """
+    return os.path.splitext(name)[0].rsplit("_", 1)[-1]
+
+
 def _sweep_print(schwelle: float, echt_pos: list[float], rausch_pos: list[float]):
     verloren = sum(1 for r in echt_pos if r < schwelle)
     geblockt = sum(1 for r in rausch_pos if r < schwelle)
@@ -209,8 +262,120 @@ def _sweep_print(schwelle: float, echt_pos: list[float], rausch_pos: list[float]
           f"{geblockt:>2}/{len(rausch_pos):<3}     p={p:.2e} {sterne}".rstrip())
 
 
+def _run_nur_studio(args) -> int:
+    """Schwellenvorschlag allein aus geführten Studio-Takes, ohne Alltagsarchiv.
+
+    Warum es diesen Modus gibt: der normale Lauf braucht ``wake_triage.jsonl``
+    und ``wake_review.jsonl`` — Ergebnisse aus Wochen Betrieb plus Handarbeit
+    am Ohr. Am Tag eins sind beide leer; ein Fremder kann die Schwelle so nicht
+    herleiten. Etwa 10 Minuten ``wakeword_studio record`` (mit allen Stilen!)
+    liefern genug Positiv-Beispiele für eine sichere UNTENGRENZE.
+
+    Vorschlag: round(leisester Take × 0,7). Der Faktor ist nicht erfunden:
+    hier liegt der leiseste Studio-Take bei 427, ×0,7 = 299 — praktisch exakt
+    die 300, die aus dem VOLLEN Datensatz (57 Alltagsrufe + 24 belegte
+    Fehltrigger, leisester echter Ruf 402) abgeleitet wurde. 0,7 bildet den
+    Sicherheitsabstand ab, den wir dort von Hand gewählt haben (25 % unter dem
+    leisesten beobachteten Ruf).
+
+    ZWEI WARNUNGEN, die dieser Modus ausgeben muss (und die nicht überspielt
+    werden dürfen):
+
+    1. STIL-ABDECKUNG. Die Untergrenze entsteht durch die schwierigen Varianten
+       (leise, fern, abgewandt, beilaeufig). Wer nur 'normal'/'laut'
+       aufgenommen hat, bekommt eine zu hohe Schwelle und verliert später leise
+       Rufe. Fehlen diese Stile, wird das benennt und zum Nachaufnehmen
+       aufgefordert — statt eine Zahl aus unvollständigen Daten zu raten.
+    2. DIE NEGATIVSEITE FEHLT PRINZIPIELL. Ohne Archiv lässt sich nur sagen
+       „diese Schwelle kostet keinen deiner Takes" — NICHT, wie viele
+       Fehltrigger sie blockt. Der Modus liefert eine sichere Untergrenze,
+       keine Wirksamkeitsaussage. Sobald ein Archiv existiert, ist der volle
+       Lauf (ohne --nur-studio) die bessere Quelle.
+    """
+    studioclips = _studio_samples()
+    if not studioclips:
+        print("Keine Studio-Takes gefunden unter "
+              f"{os.path.join(WAKEWORDS_DIR, '<bundle>', 'samples', '*')}.")
+        print("Etwa 10 Minuten aufnehmen:  "
+              "ow-venv/bin/python -m wakeword_studio record --speaker <name>")
+        print("Wichtig: ALLE Stile, besonders leise/fern/abgewandt/beilaeufig —")
+        print("         nur aus ihnen entsteht die Untergrenze.")
+        return 1
+
+    # (basename, pfad, stil, rms) — Stil aus dem Dateinamen.
+    daten: list[tuple[str, str, str, float | None]] = []
+    for pfad in studioclips:
+        name = os.path.basename(pfad)
+        daten.append((name, pfad, _stil_aus_datei(name), _clip_rms(pfad)))
+
+    vals = [(n, s, r) for n, _, s, r in daten if r is not None]
+    if not vals:
+        print("Keine lesbaren Studio-Takes — Format prüfen (16-kHz mono int16).")
+        return 1
+
+    print("=" * 72)
+    print("PEGEL-GATE — NUR-STUDIO (kein Alltagsarchiv, keine Labels nötig)")
+    print("=" * 72)
+    print(f"Takes: {len(vals)}  |  Fenster: 300 ms (identisch zum Live-Gate)")
+    print()
+
+    # Je Stil min/median — die Streuung zeigt, ob die schwierigen Stile da sind.
+    print(f"{'Stil':<12} {'n':>3}  {'min':>6}  {'median':>7}")
+    print("-" * 36)
+    stile = sorted(set(s for _, s, _ in vals))
+    for stil in stile:
+        rs = sorted(r for _, s, r in vals if s == stil)
+        if not rs:
+            continue
+        print(f"{stil:<12} {len(rs):>3}  {rs[0]:6.0f}  {rs[len(rs)//2]:7.0f}")
+
+    # Leisester Take insgesamt + Dateiname.
+    leisester = min(vals, key=lambda x: x[2])
+    print(f"\nLeisester Take: {leisester[2]:.0f} RMS  ({leisester[0]})")
+
+    # Warnung 1: fehlende kritische Stile.
+    vorhandene = set(stile)
+    fehlen = [s for s in KRITISCHE_STILE if s not in vorhandene]
+    if fehlen:
+        print(f"\n⚠️  FEHLENDE STILE: {', '.join(fehlen)}.")
+        print("    Die Untergrenze entsteht aus den schwierigen Varianten —")
+        print("    ohne sie ist jeder Vorschlag zu HOCH und kostet später")
+        print("    leise Rufe. Bitte nachaufnehmen:")
+        print("      ow-venv/bin/python -m wakeword_studio record --speaker <name>")
+        print("    und dabei gezielt die fehlenden Stile ansagen.")
+        # Trotzdem Vorschlag anzeigen, aber als unzuverlässig markieren.
+        vorschlag = round(leisester[2] * 0.7)
+        print(f"\nVorschlag (UNZUVERLÄSSIG, Stile fehlen): {vorschlag}")
+        print(f"  wake_rms_min: {vorschlag}")
+        return 0
+
+    vorschlag = round(leisester[2] * 0.7)
+    print(f"\nVorschlag: leisester Take × 0,7 = {leisester[2]:.0f} × 0,7 = {vorschlag}")
+    print("Herleitung des Faktors: siehe Docstring (0,7 ≙ 25 % Sicherheitsabstand,")
+    print("nachgerechnet am vollen Datensatz: 427 × 0,7 = 299 ≈ die 300 aus")
+    print("57 Alltagsrufen + 24 belegten Fehltriggern).")
+    print(f"\nKonfigzeile (ins Profil, nicht ins Bundle):")
+    print(f"  wake_rms_min: {vorschlag}")
+
+    # Warnung 2: Negativseite fehlt.
+    print("\n⚠️  DIESE ZAHL IST NUR EINE UNTENGRENZE.")
+    print("    Sie garantiert: die Schwelle kostet keinen deiner Takes.")
+    print("    Sie sagt NICHT, wie viele Fehltrigger sie blockt — dafür fehlt")
+    print("    das Alltagsarchiv. Sobald du eines hast, ist der volle Lauf")
+    print("    die bessere Quelle:")
+    print("      ow-venv/bin/python -m tools.wake_rms_replay")
+    print()
+    print("Absolute RMS-Werte sind gain-abhängig (ReSpeaker ×4). Ändert sich")
+    print("Hardware/Gain, verschiebt sich die Skala — siehe Docstring.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--nur-studio", action="store_true",
+                    help="Schwellenvorschlag allein aus Studio-Takes, OHNE "
+                         "Alltagsarchiv/Labels (für den ersten Tag oder fremde "
+                         "Installation — siehe Docstring)")
     ap.add_argument("--schwelle", type=float, default=300.0,
                     help="Pegel-Schwelle (Default 300, siehe Docstring)")
     ap.add_argument("--von", type=float, default=100.0, dest="von",
@@ -223,8 +388,13 @@ def main() -> int:
                     help="je Clip: Klasse, Quelle, RMS (zum Nachvollziehen)")
     args = ap.parse_args()
 
+    if args.nur_studio:
+        return _run_nur_studio(args)
+
     if not os.path.isdir(TRIGGER_AUDIO_DIR):
         print(f"Kein Trigger-Archiv unter {TRIGGER_AUDIO_DIR}")
+        print("(Am ersten Tag fehlt es. Für einen Schwellenvorschlag ohne "
+              "Archiv: --nur-studio)")
         return 1
 
     labels = labels_fuer_clips()
