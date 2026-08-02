@@ -219,7 +219,7 @@ systemctl --user restart openclaw-voice-assist.service
 ```
 
 Der Modus `--nur-studio` schlägt `round(leisester Take × 0,7)` vor und warnt,
-wen die schwierigen Stile (leise, fern, abgewandt, beiläufig) fehlen — ohne
+wenn die schwierigen Stile (leise, fern, abgewandt, beiläufig) fehlen — ohne
 sie fällt jeder Vorschlag **zu hoch** aus und kostet später leise Rufe. Er
 liefert eine sichere Untergrenze, **keine** Wirksamkeitsaussage: ohne
 Alltagsarchiv kann er nicht sagen, wie viele Fehltrigger die Schwelle blockt.
@@ -237,7 +237,7 @@ ow-venv/bin/python -m tools.wake_rms_replay     # mit Archiv: Recall + Precision
 > entweder alle Rufe (Gain niedriger) oder blockst nichts (Gain höher). Miss
 > deinen eigenen Wert.
 
-**Worans du merkst, dass die Schwelle falsch steht:** vom Gate geblockte Rufe
+**Woran du merkst, dass die Schwelle falsch steht:** vom Gate geblockte Rufe
 landen als Near-Miss mit `failed_on: "min_rms"` im
 `~/.openclaw/workspace/wake_events.log`. Häufen sich dort gemeinte Rufe, ist
 die Schwelle zu hoch für den aktuellen Gain. Dasselbe Signal zeigt auch einen
