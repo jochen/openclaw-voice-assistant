@@ -18,11 +18,34 @@ HÄTTE Regel A ihn durchgelassen oder künftig nachgefragt?
 
 Interessant ist die Zahl der **bereits ausgeführten Gruppen-Turns, die künftig
 nachfragen würden** — das ist der Anteil des Vorfall-Typs, der bisher unsichtbar
-ablief. Jeder einzelne Satz wird gelistet, damit Jochen die Trade-offs sieht:
-Regel A ist bewusst konservativ ("lieber einmal zu viel nachfragen als das Haus
-schalten"), und einige legitime Turns werden ebenfalls nachfragen — z.B. eine
-Raumgruppe, deren einziger Beleg das Kompositum ihres Namens ist, während der
-Satz die einzelnen Wörter bringt. Das ist der Preis, nicht ein Bug.
+ablief. Jeder einzelne Satz wird gelistet.
+
+Zählen reicht nicht, die Fälle einzeln lesen
+---------------------------------------------
+Auf capabilities eaf5c0b3 sah die Rohzahl bedenklich aus: 8 von 17 Gruppen-Turns
+würden künftig nachfragen. Die Einzelfälle sagten das Gegenteil — sechs davon
+SOLLTEN nachfragen ("Manolo auf 70 Prozent", "macht alle alles zu", "und selber
+rolle zu", "Rollo auf 70%", …): verhörte oder unsinnige Sätze, die bisher still
+ALLE Rollos geschaltet haben. Plus der auslösende Vorfall ("Gastau Tyrol auf
+40%"). Die Quote allein hätte entweder beruhigt oder erschreckt, je nach
+Vorwissen; erst die Sätze zeigen, dass Regel A genau das trifft, was es treffen
+soll. Deshalb listet dieses Werkzeug jeden Satz, nicht nur die Summe.
+
+Dünne Daten, keine Schwäche der Regel
+-------------------------------------
+Der achte Fall war KEIN Fehlalarm der Regel, sondern dünne Daten: die Gruppe
+kuechenrollos führte nur ihr Kompositum als Namen, also war ihr Beleg
+{küchenrollos} — kein Satz, der die Gruppe zerlegt ausspricht ("Rollos in der
+Küche"), konnte ihn erbringen. Abhilfe auf der Node-RED-Seite (nicht hier):
+kuechenrollos und esstischrollos bekamen zerlegte Aliase ("die Rollos in der
+Küche", "alle Rollos in der Küche"), capabilities eaf5c0b3 -> 9b429c57. Seither
+ist der Beleg {küche, küchenrollos, rollos} und der Fall geht durch. Damit fiel
+die Zahl 8 -> 7, der Grammatik-Test 30/32 -> 31/32.
+
+Merkregel für die Datenpflege: eine Gruppe braucht alle Formen, in denen
+Menschen sie aussprechen, nicht nur ihr Kompositum. Die Beleuchtungs-Gruppen
+pflegen das längst ("die Beleuchtung in der Küche", "alle Lichter in der
+Küche"); die Rollo-Gruppen standen hinten an.
 
 Nur LESEN: das Log wird nie verändert, nichts wird gepostet, nichts geschaltet.
 
