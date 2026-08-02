@@ -73,6 +73,7 @@ import sys
 import time
 from collections import Counter
 from datetime import datetime
+from math import comb
 
 # --- venv-Re-Exec wie in voice_assistant/__main__.py -----------------------
 _VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -247,6 +248,23 @@ def _sprechfluss(meta: dict) -> str:
     return "ein_satz" if meta["ein_satz"] else "pause"
 
 
+def _fisher_zweiseitig(a: int, na: int, b: int, nb: int) -> float:
+    """p-Wert von Fishers exaktem Test für 2×2, zweiseitig.
+
+    Von Hand statt scipy: das Werkzeug soll im schlanken Projekt-venv laufen,
+    und die Fallzahlen hier sind klein genug, dass die Summe über alle Tafeln
+    exakt und sofort durchläuft.
+    """
+    k, n = a + b, na + nb
+    if not (0 < k < n) or na == 0 or nb == 0:
+        return 1.0
+    def tafel(x: int) -> float:
+        return comb(na, x) * comb(nb, k - x) / comb(n, k)
+    beob = tafel(a)
+    return min(1.0, sum(p for x in range(max(0, k - nb), min(na, k) + 1)
+                        if (p := tafel(x)) <= beob + 1e-12))
+
+
 def _lade_triage() -> dict[str, dict]:
     out: dict[str, dict] = {}
     if not os.path.exists(TRIAGE_PATH):
@@ -402,9 +420,38 @@ def main() -> int:
             print(f"    {label:<16} n={len(g):>3}   "
                   f"kurze Streaks (<3 Frames): {kurz}/{len(hits)}"
                   f"{f'   Peak-Median {sorted(peaks)[len(peaks) // 2]:.2f}' if peaks else ''}")
-        print("    Deutlich mehr kurze Streaks beim Durchsprechen heißt: das Modell")
-        print("    kennt das Wort nur isoliert gesprochen — Ein-Satz-Aufnahmen ins")
-        print("    Nachtraining aufnehmen (siehe WAKEWORD_PROCESS.md).")
+        # Das Fazit stand hier bis 2026-08-02 als fester Text und las sich wie
+        # ein Befund, obwohl es nur die Leseanleitung war — es behauptete den
+        # Ein-Satz-Nachteil auch dann, wenn die Zahlen ihn widerlegten.
+        # Deshalb: Richtung UND Belastbarkeit aus den Daten, nichts fest.
+        anteile = {}
+        for fluss in ("ein_satz", "pause"):
+            h = [r["hits"] for r in trig
+                 if r["sprechfluss"] == fluss and r.get("hits")]
+            if h:
+                anteile[fluss] = (sum(1 for x in h if x < 3), len(h))
+        if len(anteile) == 2:
+            (ke, ne), (kp, np_) = anteile["ein_satz"], anteile["pause"]
+            p = _fisher_zweiseitig(ke, ne, kp, np_)
+            print(f"    Fisher exact (zweiseitig): p = {p:.3f}"
+                  f"{'' if p < 0.05 else '  → nicht belastbar'}")
+            if p >= 0.05:
+                print("    Kein Unterschied nachgewiesen. Die Frage aus")
+                print("    WAKEWORD_PROCESS.md bleibt offen — NICHT als 'erledigt'")
+                print("    oder als 'widerlegt' notieren, n ist schlicht zu klein.")
+            elif ke / ne > kp / np_:
+                print("    Durchsprechen landet häufiger auf kurzen Streaks: das")
+                print("    Modell kennt das Wort nur isoliert — Ein-Satz-Aufnahmen")
+                print("    ins Nachtraining (siehe WAKEWORD_PROCESS.md).")
+            else:
+                print("    Umgekehrte Richtung: Durchsprechen triggert NICHT")
+                print("    schlechter. Recall-Problem liegt woanders.")
+        print("    ⚠️  Verzerrung: gemessen wird nur an TRIGGERN — also an den")
+        print("        Rufen, die durchgekommen sind. Wenn Durchsprechen Rufe")
+        print("        verliert, fehlen genau die hier im Nenner. Diese Tabelle")
+        print("        kann die Frage darum nicht abschliessend beantworten;")
+        print("        das kann nur ein kontrollierter Vergleich isoliert/im")
+        print("        Satz über 'wakeword_studio record'.")
 
     nm = [r for r in zeilen if r["art"] == "nearmiss"]
     # --- Wiederkehrer: gleiches Transkript mehrfach = wiederkehrende Quelle ---

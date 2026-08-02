@@ -82,6 +82,7 @@ from voice_assistant.state import (
 )
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
 from voice_assistant.wakeword.respeaker import RespeakerWakeword
+from voice_assistant.wake_rms import loudest_window_rms
 from voice_assistant.workers import Workers
 
 
@@ -448,6 +449,87 @@ def _required_peak(
     return min_peak_short if wake_hits < 3 else min_peak
 
 
+def _wake_level_rms(wake_ring: deque) -> float:
+    """RMS des lautesten 300-ms-Fensters im wake_ring zum Trigger-Zeitpunkt.
+
+    Identisch zur Offline-Rechnung in tools/wake_rms_replay.py — beide
+    importieren loudest_window_rms aus voice_assistant/wake_rms.py. Sonst
+    misst das Replay etwas anderes als das Gate tut.
+
+    Der wake_ring liegt zum Trigger-Zeitpunkt bereits vor (er wird direkt
+    danach für _save_trigger_audio benutzt) und ist 16-kHz mono int16. Er
+    wird hier als zusammenhängender Sample-Strom betrachtet, unabhängig von
+    der Chunk-Granularität der Quelle.
+    """
+    if not wake_ring:
+        return 0.0
+    samples = np.concatenate(list(wake_ring)) if len(wake_ring) > 1 else wake_ring[0]
+    return loudest_window_rms(samples, rate=RATE_OW, window_ms=300)
+
+
+def _level_gate_ok(wake_ring: deque, rms_min: float) -> tuple[bool, float]:
+    """(pegel_reicht, gemessener_rms) fürs Pegel-Gate.
+
+    rms_min <= 0.0 ⇒ Gate aus, immer (True, 0.0) — ein Profil ohne den
+    Eintrag verhält sich exakt wie bisher. Der gemessene rms-Wert geht auch
+    bei Bestehen ins Near-Miss-Log, damit ein später zu hoch gesetzter Wert
+    anhand der geblockten echten Rufe sichtbar wird (failed_on: min_rms).
+    """
+    if rms_min <= 0.0:
+        return True, 0.0
+    rms = _wake_level_rms(wake_ring)
+    return rms >= rms_min, rms
+
+
+def _archive_level_blocked_nearmiss(
+    wake_ring: deque,
+    bundle: str,
+    wake_hits: int,
+    wake_peak: float,
+    current_min_hits: int,
+    current_min_peak: float,
+    current_min_peak_short: float,
+    current_min_peak_single: float,
+    current_threshold: float,
+    recent_scores: deque,
+    beam,
+    rms_measured: float,
+) -> str:
+    """Pegel-Block als Near-Miss archivieren + loggen (statt zu triggern).
+
+    Der Score-Gate hat den Strecke bestanden, der Pegel aber nicht — der
+    lauteste 300-ms-Abschnitt im wake_ring blieb unter wake_rms_min. Genau
+    dieser Fall (leise Fehltrigger, die am Score-Gate vorbeikommen) ist der
+    Beobachtungsgegenstand; ließe man ihn still fallen, wäre ein zu hoch
+    gesetzter Schwellwert unsichtbar. failed_on="min_rms" + der gemessene
+    rms-Wert machen ihn im wake_events.log und im Archiv greifbar.
+
+    wake_ring wird (wie beim score-bedienten Near-Miss) NICHT geleert —
+    folgt kurz darauf der echte Ruf, behält der seinen 3-Sekunden-Kontext.
+    Gibt die nm_id zurück (für Konsolen-Ausgabe durch den Aufrufer).
+    """
+    nm_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _save_trigger_audio(list(wake_ring), bundle, "nearmiss", nm_id)
+    _log_wake_event({
+        "result": "nearmiss",
+        "bundle": bundle,
+        "hits": wake_hits,
+        "peak": round(wake_peak, 3),
+        "required_peak": round(
+            _required_peak(wake_hits, current_min_peak, current_min_peak_short,
+                           current_min_peak_single), 3
+        ),
+        "min_hits": current_min_hits,
+        "threshold": current_threshold,
+        "failed_on": "min_rms",
+        "rms": round(rms_measured, 1),
+        "scores": [round(s, 3) for s in recent_scores],
+        "beam": float(beam) if beam is not None else None,
+        "audio": f"{nm_id}_{bundle}_nearmiss.wav",
+    })
+    return nm_id
+
+
 def _format_wake_scores(scores: deque, threshold: float) -> str:
     """Formatiert den Score-Verlauf eines Wakeword-Events als Einzeiler.
 
@@ -563,6 +645,9 @@ def run() -> None:
     print("🔧 Initialising WebRTC VAD...")
     vad = webrtcvad.Vad(profile.vad_aggressiveness)
     _vad_rms_min = profile.vad_voice_rms_min
+    # Pegel-Gate fürs Wakeword (0 = aus). Eigener Parameter, nicht
+    # _vad_rms_min wiederverwendet — siehe config.Profile.wake_rms_min.
+    _wake_rms_min = profile.wake_rms_min
     # Endpointing zeitbasiert: silence_seconds gilt auf jedem Profil gleich.
     # Die reale Chunk-Länge variiert je Quelle (ALSA-16k=80ms, 48k-resample≈27ms,
     # ReSpeaker=40ms), darum wird das Chunk-Limit erst beim ersten Audio aufgelöst.
@@ -584,6 +669,15 @@ def run() -> None:
         f"{f', override={_silence_override} chunks' if _silence_override else ''}, "
         f"kommando={profile.command_silence_seconds:.2f}s/{profile.command_max_seconds:.0f}s)"
     )
+    # Pegel-Gate beim Start ausweisen. Ein stiller Filter, der Rufe verwirft,
+    # gehört ins Log — sonst rätselt man bei einem verlorenen Ruf, ob das Gate
+    # an war. (rms_min oben ist der VAD-Wert fürs Endpointing, nicht dieser.)
+    if _wake_rms_min > 0:
+        print(f"🔊 Pegel-Gate aktiv: wake_rms_min={_wake_rms_min:.0f} "
+              f"(lautestes 300-ms-Fenster; darunter Near-Miss statt Trigger, "
+              f"failed_on=min_rms)")
+    else:
+        print("🔊 Pegel-Gate aus (wake_rms_min=0)")
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
     # --- Services zusammenstecken ---
@@ -886,64 +980,87 @@ def run() -> None:
                         wake_hits, wake_peak, current_min_hits,
                         current_min_peak, current_min_peak_short, current_min_peak_single,
                     ):
-                        print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
-                        trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        trigger_audio_bundle = current_wakeword.bundle
-                        # Klärungs-Rückfragen gelten je Wake-Zyklus. Hier und
-                        # nur hier zurücksetzen: die Rückfrage selbst geht über
-                        # FOLLOWUP (ohne neuen Trigger), der Zähler muss sie
-                        # also überleben.
-                        unklar_round = 0
-                        _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
-                        turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
-                        # Trigger genauso protokollieren wie den Near-Miss —
-                        # ein Sweep braucht beide Klassen im selben Log.
-                        _log_wake_event({
-                            "result": "trigger",
-                            "bundle": trigger_audio_bundle,
-                            "hits": wake_hits,
-                            "peak": round(wake_peak, 3),
-                            "required_peak": round(
-                                _required_peak(wake_hits, current_min_peak, current_min_peak_short, current_min_peak_single), 3
-                            ),
-                            "min_hits": current_min_hits,
-                            "threshold": current_threshold,
-                            "scores": [round(s, 3) for s in recent_scores],
-                            "beam": float(beam) if beam is not None else None,
-                            "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
-                        })
-                        # Ein-Satz-Kommando: LED SOFORT, kein play_wav.
-                        # Pre-Roll aus dem Ring VOR dem clear() abgreifen — er
-                        # trägt den Anfang eines durchgesprochenen Kommandos
-                        # (siehe _PRE_ROLL_SEC). Und KEIN flush: was seit dem
-                        # letzten gelesenen Chunk in der Quelle liegt, schließt
-                        # die Lücke zwischen Pre-Roll und Aufnahme.
-                        # "Ja?" kommt verzögert (siehe STATE_RECORDING, ack_pending).
-                        pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
-                        wake_ring.clear()
-                        wake_ring_samples = 0
-                        leds.set_phase(LED_RECORDING)
-                        voice_controller.set_default_voice(current_wakeword.tts_voice)
-                        near_miss_until = 0.0
-                        wakeword.reset()
-                        state = STATE_RECORDING
-                        state_start = time.time()
-                        recorded_chunks = list(pre_roll)
-                        pre_roll_chunks = len(pre_roll)
-                        silence_counter = 0
-                        max_internal_pause = 0
-                        speech_detected = False
-                        turn_mode = "dialog"
-                        turn_silence_limit = _silence_limit
-                        turn_max_sec = RECORDING_MAX_SEC
-                        turn_ein_satz = False
-                        turn_speech_chunks = 0
-                        turn_rms = []
-                        turn_frames_speech = 0
-                        turn_frames_total = 0
-                        ack_pending = True
-                        ack_deadline = now + _ACK_DELAY_SEC
-                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                        # Pegel-Gate (wake_rms_min): ZUSTÄTZLICHE Bedingung, die
+                        # Score-Logik bleibt unberührt. 0.0 = aus (Default), dann
+                        # verhält sich das Profil exakt wie bisher. Bestand der
+                        # Streak das Score-Gate, nicht aber den Pegel, feuert der
+                        # Trigger NICHT — stattdessen Near-Miss mit
+                        # failed_on="min_rms" + gemessenem rms (siehe
+                        # _archive_level_blocked_nearmiss). Rechnung identisch zum
+                        # Replay (tools/wake_rms_replay.py) via voice_assistant.wake_rms.
+                        _level_ok, _lvl_rms = _level_gate_ok(wake_ring, _wake_rms_min)
+                        if not _level_ok:
+                            nm_id = _archive_level_blocked_nearmiss(
+                                wake_ring, current_wakeword.bundle,
+                                wake_hits, wake_peak,
+                                current_min_hits, current_min_peak,
+                                current_min_peak_short, current_min_peak_single,
+                                current_threshold, recent_scores, beam, _lvl_rms,
+                            )
+                            print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] "
+                                  f"(Pegel {round(_lvl_rms):.0f} < {_wake_rms_min:.0f})"
+                                  f"{beam_str}")
+                            leds.set_phase(LED_NEAR_MISS)
+                            near_miss_until = now + 0.6
+                        else:
+                            print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
+                            trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            trigger_audio_bundle = current_wakeword.bundle
+                            # Klärungs-Rückfragen gelten je Wake-Zyklus. Hier und
+                            # nur hier zurücksetzen: die Rückfrage selbst geht über
+                            # FOLLOWUP (ohne neuen Trigger), der Zähler muss sie
+                            # also überleben.
+                            unklar_round = 0
+                            _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                            turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
+                            # Trigger genauso protokollieren wie den Near-Miss —
+                            # ein Sweep braucht beide Klassen im selben Log.
+                            _log_wake_event({
+                                "result": "trigger",
+                                "bundle": trigger_audio_bundle,
+                                "hits": wake_hits,
+                                "peak": round(wake_peak, 3),
+                                "required_peak": round(
+                                    _required_peak(wake_hits, current_min_peak, current_min_peak_short, current_min_peak_single), 3
+                                ),
+                                "min_hits": current_min_hits,
+                                "threshold": current_threshold,
+                                "scores": [round(s, 3) for s in recent_scores],
+                                "beam": float(beam) if beam is not None else None,
+                                "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
+                            })
+                            # Ein-Satz-Kommando: LED SOFORT, kein play_wav.
+                            # Pre-Roll aus dem Ring VOR dem clear() abgreifen — er
+                            # trägt den Anfang eines durchgesprochenen Kommandos
+                            # (siehe _PRE_ROLL_SEC). Und KEIN flush: was seit dem
+                            # letzten gelesenen Chunk in der Quelle liegt, schließt
+                            # die Lücke zwischen Pre-Roll und Aufnahme.
+                            # "Ja?" kommt verzögert (siehe STATE_RECORDING, ack_pending).
+                            pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
+                            wake_ring.clear()
+                            wake_ring_samples = 0
+                            leds.set_phase(LED_RECORDING)
+                            voice_controller.set_default_voice(current_wakeword.tts_voice)
+                            near_miss_until = 0.0
+                            wakeword.reset()
+                            state = STATE_RECORDING
+                            state_start = time.time()
+                            recorded_chunks = list(pre_roll)
+                            pre_roll_chunks = len(pre_roll)
+                            silence_counter = 0
+                            max_internal_pause = 0
+                            speech_detected = False
+                            turn_mode = "dialog"
+                            turn_silence_limit = _silence_limit
+                            turn_max_sec = RECORDING_MAX_SEC
+                            turn_ein_satz = False
+                            turn_speech_chunks = 0
+                            turn_rms = []
+                            turn_frames_speech = 0
+                            turn_frames_total = 0
+                            ack_pending = True
+                            ack_deadline = now + _ACK_DELAY_SEC
+                            ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     elif wake_hits >= 1:
                         # Wakeword-Name mitloggen: current_wakeword wurde von den
                         # Frames dieses Streaks gesetzt → erlaubt False-Positive-
@@ -992,51 +1109,75 @@ def run() -> None:
                 if wake_hits >= 25 and wake_peak >= current_min_peak:
                     beam = getattr(audio_source, "beam_angle", None)
                     beam_str = f"  LED {beam:.0f} ({beam * 30:.0f}°)" if beam is not None else ""
-                    print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)} (Timeout){beam_str}")
-                    trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    trigger_audio_bundle = current_wakeword.bundle
-                    _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
-                    turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
-                    _log_wake_event({
-                        "result": "trigger",
-                        "via": "timeout",
-                        "bundle": trigger_audio_bundle,
-                        "hits": wake_hits,
-                        "peak": round(wake_peak, 3),
-                        "required_peak": round(current_min_peak, 3),
-                        "min_hits": current_min_hits,
-                        "threshold": current_threshold,
-                        "scores": [round(s, 3) for s in recent_scores],
-                        "beam": float(beam) if beam is not None else None,
-                        "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
-                    })
-                    # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
-                    # kein play_wav, Pre-Roll statt flush, "Ja?" verzögert.
-                    pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
-                    wake_ring.clear()
-                    wake_ring_samples = 0
-                    leds.set_phase(LED_RECORDING)
-                    voice_controller.set_default_voice(current_wakeword.tts_voice)
-                    near_miss_until = 0.0
-                    wakeword.reset()
-                    state = STATE_RECORDING
-                    state_start = time.time()
-                    recorded_chunks = list(pre_roll)
-                    pre_roll_chunks = len(pre_roll)
-                    silence_counter = 0
-                    max_internal_pause = 0
-                    speech_detected = False
-                    turn_mode = "dialog"
-                    turn_silence_limit = _silence_limit
-                    turn_max_sec = RECORDING_MAX_SEC
-                    turn_ein_satz = False
-                    turn_speech_chunks = 0
-                    turn_rms = []
-                    turn_frames_speech = 0
-                    turn_frames_total = 0
-                    ack_pending = True
-                    ack_deadline = now + _ACK_DELAY_SEC
-                    ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                    # Pegel-Gate auch hier (siehe Streak-Ende-Pfad oben): ein
+                    # Timeout-Trigger ist score-seitig bestanden, kann aber am
+                    # Pegel scheitern. Gleiche Behandlung — Near-Miss statt Trigger.
+                    # Dieser zweite Weg darf nicht vergessen werden: ein Streak
+                    # von 25 Frames (~2 s) entsteht eher am Fernseher als an
+                    # einem gesprochenen Wakewort — ohne die Prüfung hätte das
+                    # Gate ein Loch, das ausgerechnet Dauergeräusch nutzt.
+                    # Der Reset (wake_hits/wake_peak/…) steht gemeinsam am Ende
+                    # dieses Blocks und gilt für beide Zweige.
+                    _level_ok, _lvl_rms = _level_gate_ok(wake_ring, _wake_rms_min)
+                    if not _level_ok:
+                        _archive_level_blocked_nearmiss(
+                            wake_ring, current_wakeword.bundle,
+                            wake_hits, wake_peak,
+                            current_min_hits, current_min_peak,
+                            current_min_peak_short, current_min_peak_single,
+                            current_threshold, recent_scores, beam, _lvl_rms,
+                        )
+                        print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] "
+                              f"(Timeout, Pegel {round(_lvl_rms):.0f} < {_wake_rms_min:.0f})"
+                              f"{beam_str}")
+                        leds.set_phase(LED_NEAR_MISS)
+                        near_miss_until = now + 0.6
+                    else:
+                        print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)} (Timeout){beam_str}")
+                        trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        trigger_audio_bundle = current_wakeword.bundle
+                        _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                        turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
+                        _log_wake_event({
+                            "result": "trigger",
+                            "via": "timeout",
+                            "bundle": trigger_audio_bundle,
+                            "hits": wake_hits,
+                            "peak": round(wake_peak, 3),
+                            "required_peak": round(current_min_peak, 3),
+                            "min_hits": current_min_hits,
+                            "threshold": current_threshold,
+                            "scores": [round(s, 3) for s in recent_scores],
+                            "beam": float(beam) if beam is not None else None,
+                            "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
+                        })
+                        # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
+                        # kein play_wav, Pre-Roll statt flush, "Ja?" verzögert.
+                        pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
+                        wake_ring.clear()
+                        wake_ring_samples = 0
+                        leds.set_phase(LED_RECORDING)
+                        voice_controller.set_default_voice(current_wakeword.tts_voice)
+                        near_miss_until = 0.0
+                        wakeword.reset()
+                        state = STATE_RECORDING
+                        state_start = time.time()
+                        recorded_chunks = list(pre_roll)
+                        pre_roll_chunks = len(pre_roll)
+                        silence_counter = 0
+                        max_internal_pause = 0
+                        speech_detected = False
+                        turn_mode = "dialog"
+                        turn_silence_limit = _silence_limit
+                        turn_max_sec = RECORDING_MAX_SEC
+                        turn_ein_satz = False
+                        turn_speech_chunks = 0
+                        turn_rms = []
+                        turn_frames_speech = 0
+                        turn_frames_total = 0
+                        ack_pending = True
+                        ack_deadline = now + _ACK_DELAY_SEC
+                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                     wake_hits = 0
                     wake_peak = 0.0
                     wake_announced = False

@@ -279,6 +279,28 @@ vom Sprecher trennen kann. Geschrieben wird die Zeile auf **jedem** Ausgang,
 auch bei Stopp-Wort und „keine Sprache" (`_flush_endpoint`); vorher fehlten
 ausgerechnet die kaputten Aufnahmen im Log.
 
+### Pegel-Gate (`wake_rms_min`)
+
+Neben dem Score-Gate gibt es ein Pegel-Gate: der RMS des lautesten 300-ms-
+Fensters im `wake_ring` muss eine Schwelle erreichen, sonst feuert der
+Trigger nicht. Blockt leise Fehltrigger, die am Score-Gate vorbeikommen. Per
+Profil-Parameter `wake_rms_min`, Default `0.0` = **aus** — ohne den Eintrag
+verhält sich ein Profil wie bisher. Bewusst ein eigener Parameter, nicht
+`vad_voice_rms_min` (der ist fürs VAD/Endpointing in Gebrauch). Unterschreitet
+der Pegel die Schwelle, wird der Streak als Near-Miss mit `failed_on: "min_rms"`
+und dem gemessenen `rms` archiviert, nicht getriggert — sonst verschwände
+genau das, was man beobachten müsste. Die Schwelle gehört ins Profil, nicht
+ins Bundle (`manifest.yaml`), denn sie hängt an Mikrofon und Gain.
+
+**Änderungen an dieser Schwelle nur gegen `tools/wake_rms_replay.py`.** Das
+Replay spielt die Pegelregel über das Archiv und zeigt, was sie geändert
+hätte — analog zu `endpoint_replay.py` und `actuator_grammar_test.py`. Die
+Rechnung ist in Replay und Live identisch (beide importieren
+`loudest_window_rms` aus `voice_assistant/wake_rms.py`). Messreihe und
+Begründung für 300: Docstring des Werkzeugs. Bekannte Schwäche: absolute
+RMS-Werte sind gain-abhängig (ReSpeaker ×4) — ändert sich Hardware/Gain,
+verschiebt sich die Skala.
+
 ## Threading Model
 
 - STT läuft in eigenem Thread, Ergebnis über `state.stt_queue`.

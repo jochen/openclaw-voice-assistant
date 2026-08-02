@@ -191,6 +191,55 @@ esphome-venv/bin/pip install esphome
 
 Wakeword detection (`openwakeword`) runs on the Pi against the audio stream.
 
+## Wake-word level gate (`wake_rms_min`)
+
+Besides the score gate, there is an optional **level gate**: the RMS of the
+loudest 300 ms window in the wake-ring buffer must clear a threshold, or the
+trigger does not fire — even when the score says yes. Its purpose is to block
+**soft false triggers** (TV, keyboard, distant talk) that slip past the score
+gate because the model scores high on that particular sound.
+
+- Off by default (`wake_rms_min: 0.0`). Leave the entry out and the profile
+  behaves exactly as before. Deliberately a separate parameter, not
+  `vad_voice_rms_min` (which is already in use for VAD/endpointing).
+- The threshold belongs in the **profile**, not in the bundle's
+  `manifest.yaml`: it depends on microphone and gain, not on the wake word.
+
+**Finding your own value** (three steps, ~10 minutes):
+
+```bash
+# 1. Record guided takes — ALL styles, especially soft/distant/turned-away:
+ow-venv/bin/python -m wakeword_studio record --speaker <name>
+# 2. Get a threshold suggestion from those takes alone (no daily archive needed):
+ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
+# 3. Put the suggested value in the profile, then restart the service:
+#      wake_rms_min: <value>
+systemctl --user restart openclaw-voice-assist.service
+```
+
+The `--nur-studio` mode proposes `round(lowest take × 0.7)` and warns if the
+difficult styles (soft, distant, turned-away, casual) are missing — without
+them every proposal comes out **too high** and costs you soft calls later. It
+delivers a safe lower bound, **not** an effectiveness figure: without a daily
+archive it cannot say how many false triggers the threshold blocks. Once you
+have one, the full run is the better source:
+
+```bash
+ow-venv/bin/python -m tools.wake_rms_replay     # with archive: recall + precision
+```
+
+> **Example, not a preset.** Our installation runs at `wake_rms_min: 300`
+> (derived from 57 everyday calls + 24 ear-checked false triggers, lowest
+> genuine call at RMS 402, on a ReSpeaker mic with ×4 gain). **Absolute RMS
+> values are tied to your microphone and amplification.** Copy our 300 onto
+> different hardware and you lose either every call (gain lower) or block
+> nothing (gain higher). Measure your own.
+
+**Signs the threshold is wrong:** calls blocked by the gate are archived as
+near-misses with `failed_on: "min_rms"` in `~/.openclaw/workspace/wake_events.log`.
+If intended calls pile up there, the threshold is too high for the current
+gain. The same signal also flags a hardware/gain change — revisit the value.
+
 ## Voice actuator (optional)
 
 Switching commands like "turn on the kitchen light" normally take the same road
@@ -511,6 +560,101 @@ WLED (mode: local) and ReSpeaker LED ring (mode: respeaker) are mutually exclusi
 | 2 | Orange | STT / Confirmation |
 | 4 | Purple | Waiting for OpenClaw |
 | 5 | Green | Speaking reply |
+
+## Measurement tools — measure parameters, don't guess them
+
+Every parameter that noticeably changes behaviour has a tool that proves its
+effect against recorded real data. **Parameters are changed only against their
+tool**, and the measured number lives in the tool's docstring — not in a chat,
+not in someone's head. Several of these tools appear in their respective
+sections above (actuator, wakeword, endpointing); this lists them all, ordered
+by how soon you can use them.
+
+Two lessons shaped this discipline, both learned the hard way:
+
+- A measurement that existed only in a scratchpad was, one day later, neither
+  reproducible nor valid. Numbers that aren't committed alongside the tool are
+  worthless tomorrow.
+- A tool once printed its conclusion as fixed text instead of computing it —
+  asserting an effect for four days that its own numbers contradicted. A tool
+  must *calculate* its verdict from the current data, not state it.
+
+Most of these tools need **a few days of operation** before they yield
+anything, because they build on the trigger archive and `wake_events.log`.
+On day one they look broken — they aren't, they're just waiting for material.
+
+Raw data lives under `~/.openclaw/workspace/`: `wake_events.log` (one line per
+wake decision), `endpoint.log` (one per recording), `actuator_turns.log` (one
+per switched turn the actuator handled itself), and `voice/triggers/` (the
+archived wake/record/near-miss WAVs).
+
+**Day one — needs only a microphone:**
+
+- `wakeword_studio record` — guided real recordings of the wake word in varied
+  styles (distance, tempo, loudness, angle). Also scores each take against the
+  model. The foundation for everything below.
+  ```bash
+  ow-venv/bin/python -m wakeword_studio record --speaker <name>
+  ```
+- `wake_rms_replay --nur-studio` — suggests a level-gate threshold from those
+  takes alone, no daily archive needed (see the level-gate section above).
+  ```bash
+  ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
+  ```
+
+**After a few days of operation (once the archive exists):**
+
+- `wake_triage` — sorts archived wake/near-miss clips into REAL CALL /
+  NOISE / UNCLEAR, from self-labels (actions) first, STT second. Lists the
+  UNCLEAR cases for listening. Needs trigger archive + `wake_events.log` + STT.
+  ```bash
+  ow-venv/bin/python -m tools.wake_triage --seit 3 --auch-trigger
+  ```
+- `endpoint_replay` — replays the endpointing logic over the archived
+  recordings and shows where a different silence/ceiling setting would have
+  cut a recording — proving via STT whether spoken material was lost.
+  Needs trigger archive + `wake_events.log` + STT.
+  ```bash
+  ow-venv/bin/python -m tools.endpoint_replay --stt
+  ```
+- `wake_rms_replay` (full) — measures the level gate against the archive:
+  real calls lost (the price) vs. false triggers blocked (the gain), with a
+  threshold sweep and Fisher exact test. Needs archive + labelled clips.
+  ```bash
+  ow-venv/bin/python -m tools.wake_rms_replay
+  ```
+- `actuator_watch` — reads `actuator_turns.log` and spots discrepancies
+  (intent vs. executed, status problems). Needs `actuator_turns.log`.
+  ```bash
+  ow-venv/bin/python -m tools.actuator_watch --seit 3
+  ```
+- `gruppenbeleg_replay` — replays the group-target rule (rule A) over the real
+  switched turns. Needs `actuator_turns.log`.
+  ```bash
+  ow-venv/bin/python -m tools.gruppenbeleg_replay
+  ```
+- `actuator_grammar_test` — the test set for the classifier prompt; re-measure
+  after every capability change. Needs the capabilities endpoint.
+  ```bash
+  ow-venv/bin/python -m tools.actuator_grammar_test
+  ```
+
+**With some manual work:**
+
+- `review_audio` — exports clips (wake + trailing recording concatenated) for
+  listening, and reads back the sorting as hard ear labels (`wake_review.jsonl`).
+  An ear judgement outranks every automatic classification. Needs trigger
+  archive + `wake_events.log`.
+  ```bash
+  ow-venv/bin/python -m tools.review_audio export
+  ow-venv/bin/python -m tools.review_audio import
+  ```
+- `verifier_probe` — cross-checks the wake-word model on both axes (recall and
+  precision) against the archive plus studio takes. Needs archive + studio
+  takes.
+  ```bash
+  ow-venv/bin/python -m tools.verifier_probe
+  ```
 
 ## License
 

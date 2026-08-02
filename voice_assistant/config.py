@@ -299,6 +299,17 @@ class Profile:
     # Nützlich in Lärm-Umgebungen (Fablab): Hintergrundrauschen-RMS messen,
     # dann Schwelle knapp darüber setzen (z.B. 900 wenn Rauschen ca. 724 RMS).
     vad_voice_rms_min: float = 0.0
+    # Pegel-Gate fürs WAKEWORD (nicht VAD!). 0 = deaktiviert. RMS des lautesten
+    # 300-ms-Fensters im wake_ring zum Trigger-Zeitpunkt; unterschreitet der
+    # Pegel diese Schwelle, feuert der Trigger NICHT. Blockt leise Fehltrigger
+    # (Fernseher, Tastatur, ferne Gespräche), die am Score-Gate vorbeikommen.
+    # BEWUSST ein eigener Parameter, nicht vad_voice_rms_min wiederverwendet —
+    # der ist schon fürs VAD/Endpointing in Gebrauch (assistant.py:_chunk_speech_stats,
+    # recorder.py). Absolute RMS-Werte sind gain-abhängig (ReSpeaker ×4); ändert
+    # sich Hardware/Gain, verschiebt sich die Skala. Änderungen an dieser
+    # Schwelle NUR gegen tools/wake_rms_replay.py (siehe WAKEWORD_PROCESS.md).
+    # Messreihe und Begründung 300: Docstring von tools/wake_rms_replay.py.
+    wake_rms_min: float = 0.0
     # Endpointing: Stille-Dauer (Sekunden) bis die Aufnahme beendet wird.
     # ZEITBASIERT — gilt identisch auf allen Profilen, egal wie lang ein
     # Audio-Chunk je nach Quelle real ist (ALSA-16k=80ms, ALSA-48k-resample≈27ms,
@@ -534,6 +545,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         tts_prefix=str(raw.get("tts_prefix", "")),
         vad_aggressiveness=int(raw.get("vad_aggressiveness", 3)),
         vad_voice_rms_min=float(raw.get("vad_voice_rms_min", 0.0)),
+        wake_rms_min=float(raw.get("wake_rms_min", 0.0)),
         silence_seconds=float(raw.get("silence_seconds", 2.0)),
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
         command_silence_seconds=float(raw.get("command_silence_seconds", 1.0)),
