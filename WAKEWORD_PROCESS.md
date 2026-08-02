@@ -61,8 +61,43 @@ bloß das Wort „Stopp".
   protokollierten ack-Entscheidung) und Wiederkehrer. Dedupliziert via
   `wake_triage.jsonl`.
 - `wakeword_studio record` — geführte echte Aufnahmen (eigenes Package).
+- `review_audio.py` — Clips zum Anhören exportieren und die Sortierung als
+  **harte Ohr-Labels** zurücklesen (`wake_review.jsonl`). Ein Ohr-Urteil
+  sticht jede Regel und jede STT — es ist die stärkste Label-Quelle.
+- `wake_rms_replay.py` — Pegel-Gate gegen das Archiv messen (siehe unten).
 - Trigger-Archiv: `~/.openclaw/workspace/voice/triggers/`
-- Labels: `~/.openclaw/workspace/wake_triage.jsonl`
+- Labels (stärkste Quelle zuerst): `~/.openclaw/workspace/wake_review.jsonl`
+  (Ohr) > Selbst-Labels (`wake_triage.py`) > `wake_triage.jsonl` (STT).
+
+## Pegel-Gate (`wake_rms_min`)
+
+Neben dem Score-Gate gibt es ein **Pegel-Gate**: der RMS des lautesten
+300-ms-Fensters im `wake_ring` muss eine Schwelle erreichen, sonst feuert der
+Trigger nicht — selbst wenn der Score das hergibt. Es blockt leise
+Fehltrigger (Fernseher, Tastatur, ferne Gespräche), die am Score-Gate
+vorbeikommen, weil das Modell auf das jeweilige Geräusch hoch scoret.
+
+- Per Profil-Parameter `wake_rms_min` (Default `0.0` = **aus**). Ohne den
+  Eintrag verhält sich ein Profil exakt wie bisher. Bewusst ein eigener
+  Parameter, nicht `vad_voice_rms_min` wiederverwendet — der ist schon fürs
+  VAD/Endpointing in Gebrauch.
+- Die Schwelle gehört ins **Profil**, nicht ins Bundle (`manifest.yaml`): sie
+  hängt an Mikrofon und Gain, nicht am Wakewort.
+- Unterschreitet der Pegel die Schwelle, wird der Streak **nicht** getriggert,
+  sondern als Near-Miss archiviert und geloggt mit `failed_on: "min_rms"` und
+  dem gemessenen `rms`-Wert. Sonst verschwände genau das, was man beobachten
+  müsste — und ein zu hoch gesetzter Wert wäre unsichtbar.
+- **Änderungen an dieser Schwelle nur gegen `tools/wake_rms_replay.py`.** Das
+  Replay spielt die Pegelregel über das Archiv und zeigt, was sie geändert
+  hätte — analog zu `endpoint_replay.py` und `actuator_grammar_test.py`. Die
+  Rechnung (lautestes 300-ms-Fenster) ist in Replay und Live identisch, beide
+  importieren `loudest_window_rms` aus `voice_assistant/wake_rms.py`.
+- Bekannte Schwäche: **absolute RMS-Werte sind gain-abhängig** (ReSpeaker
+  verstärkt ×4). Ändert sich Hardware oder Gain, verschiebt sich die ganze
+  Skala und die Schwelle stimmt nicht mehr. Woran man das merkt: steigt der
+  Anteil geblockter echter Rufe im Near-Miss-Log (`failed_on: min_rms`), ist
+  die Schwelle zu hoch für die aktuelle Verstärkung. Messreihe und
+  Begründung für 300: Docstring von `tools/wake_rms_replay.py`.
 
 ## Was sich von selbst labelt
 
@@ -99,11 +134,72 @@ Tail-RMS-Heuristik traf gegen die echte Entscheidung nur 6 von 9 Fällen.
 
 Das ist die Datenbasis für eine offene Frage: „Gaston" im Satzfluss wird
 schneller und unbetont gesprochen, das Modell kennt nur die isolierte Form
-(30 000 synthetische Einzelwort-Samples). Erste Zahlen: Ein-Satz-Trigger
-landen bei 25 % auf einem 1-Frame-Streak, Rufe mit Pause bei 3 % — und kurze
-Streaks müssen am Gate einen höheren Peak erreichen. Bestätigt sich das über
-mehr Daten, gehören Ein-Satz-Aufnahmen ins Nachtraining, nicht nur isolierte
-Takes.
+(30 000 synthetische Einzelwort-Samples). Bestätigt sich das, gehören
+Ein-Satz-Aufnahmen ins Nachtraining, nicht nur isolierte Takes.
+
+**Es geht dabei ausschließlich um die Aussprache, nicht um eine Störung durch
+das Folgewort.** openwakeword ist kausal — was nach „Gaston" gesagt wird, kann
+den Score am Wakewort nicht mehr drücken; gemessen sind die Scores bis zum
+Gipfel bitidentisch, ob Sprache oder Stille folgt. Wer eine Erklärung dafür
+sucht, dass Ein-Satz-Rufe schlechter ankommen, muss sie in der Aussprache
+suchen, nicht im Signalweg.
+
+**Die Frage ist offen — und diese Tabelle kann sie nicht schließen.**
+Gemessen am 2026-08-02 über alle 46 protokollierten ack-Entscheidungen:
+durchgesprochen 13/35 kurze Streaks (37 %), mit Pause 7/11 (64 %),
+Peak-Median beide 0.94, Fisher exakt p = 0.17. Kein Unterschied
+nachgewiesen — und die Richtung zeigt, wenn überhaupt, gegen die Hypothese.
+
+Zwei Gründe, warum das trotzdem kein Freispruch ist:
+
+1. **Survivorship-Bias, prinzipiell.** Die Tabelle zählt nur TRIGGER, denn
+   nur dort steht der Sprechfluss fest (ein Near-Miss erzeugt kein `ack`).
+   Verliert Durchsprechen Rufe, fehlen genau diese Rufe im Nenner. Die
+   Messung sieht die Überlebenden und schätzt Durchsprechen darum zu gut.
+2. n = 11 in der Pause-Gruppe trägt keine Aussage in beide Richtungen.
+
+**Die frühere Zahl „25 % gegen 3 % (n=12 bzw. 35)" ist ungültig** und war es
+schon, als sie notiert wurde. Am 2026-07-28 existierten erst 5 `ack`-Zeilen —
+aus denen konnte n=12/35 nicht stammen. Sie kam aus der Tail-RMS-Heuristik,
+die im Absatz darüber mit 6 von 9 Treffern als untauglich verworfen wird;
+ihre Gruppengrößen sind gegenüber den echten Labels gerade vertauscht (sie
+las lauten Ausklang als Pause statt als Weitersprechen). Eine Zahl aus einem
+im selben Dokument verworfenen Verfahren hat vier Tage lang als
+Entscheidungsgrundlage gedient — deshalb steht sie hier als Warnung statt
+gelöscht zu werden.
+
+## Pegel als zweite Dimension (2026-08-02)
+
+„An den Schwellen ist nichts mehr zu holen" galt immer für den **Score**. Der
+**Pegel** ist davon unabhängig — und er trennt.
+
+Anlass war das Anhören der Fehltrigger: sie waren durchweg leise, die echten
+Rufe darunter hörbar lauter. Gemessen (RMS des lautesten 300-ms-Fensters):
+
+| Schwelle | echte Rufe verloren | Fehltrigger geblockt | Fisher |
+|---|---|---|---|
+| 300 | **0 / 77** | 10 / 24 | p = 1,0e-07 |
+| 400 | **0 / 77** | 16 / 24 | p = 4,6e-13 |
+| 450 | 5 / 77 | 18 / 24 | — |
+
+Die 77 sind 57 belegte Rufe aus dem Archiv plus die 20 geführten Studio-Takes.
+Letztere sind der eigentliche Beleg, weil dort absichtlich schwierige Fälle
+drin sind: „leise" (427), „abgewandt" (675), „fern" (1129) — keiner fällt unter
+400. Der leiseste echte Ruf überhaupt liegt bei 402.
+
+**Gewählt ist 300, nicht 400.** Bei 400 stünde die Schwelle zwei Zähler über
+dem leisesten je beobachteten Ruf; das ist an die Stichprobe angepasst und der
+nächste leise Ruf fällt durch. Der Sweep im Werkzeug zeigt den Kipppunkt: bei
+450 kostet es die ersten fünf Rufe.
+
+Wie das Gate arbeitet und was bei Änderungen zu beachten ist, steht oben unter
+„Pegel-Gate (`wake_rms_min`)" — hier nur die Messung dahinter.
+
+Dieser Weg ist **unabhängig vom Verifier** (siehe `tools/verifier_probe.py`)
+und deutlich einfacher: ein Parameter statt eines sprecherspezifischen Modells,
+kein Training, keine Sprecherbindung. Beide lassen sich kombinieren — Pegel
+davor, Verifier dahinter. Ob der Verifier daneben noch etwas beiträgt, ist
+offen und erst zu messen, wenn das Pegel-Gate scharf ist.
 
 ## Prozess (wiederholend)
 
@@ -138,36 +234,44 @@ Takes.
 > zu erheben — die Datei sagt, **wo der Prozess steht und was als naechstes
 > ansteht**, nicht was gerade in den Logs liegt.
 
-**Wo der Prozess steht (2026-07-28):**
+**Wo der Prozess steht (2026-08-02):**
 
-Schritt 1 (Sammeln) laeuft, Schritt 2 (Triagieren) ist automatisiert, soweit
-es geht. Was noch fehlt, ist eine Entscheidungsgrundlage fuer Schritt 4
-(Trainieren) — genauer: fuer die Frage, ob Ein-Satz-Aufnahmen ins Training
-gehoeren.
+Schritt 1 (Sammeln) hat geliefert, Schritt 2 (Triagieren) ist automatisiert.
+Schritt 3 der alten Reihenfolge — „Bilanz lesen" — ist **abgearbeitet und
+hat die Frage nicht beantwortet**, siehe „Ein-Satz gegen Pause" oben: p =
+0.17, und die Messung ist per Konstruktion auf die durchgekommenen Rufe
+verzerrt. Passives Weitersammeln behebt das nicht, es vergrößert nur n auf
+einer Größe, die die Frage ohnehin nicht trennscharf beantworten kann.
 
-Bestand zu diesem Zeitpunkt: ~250 archivierte Clips, 54 Trigger, 61
-Near-Misses. Nach den Selbst-Labels: 22 verlorene echte Rufe, 33 Rauschen,
-2 offen zum Anhoeren. Von den 22 echten kamen 17 aus den Selbst-Labels, nicht
-aus der STT.
+Bestand 2026-08-02 (Vergleich 2026-07-28 in Klammern): 384 (~250) archivierte
+Clips, 137 (54) Trigger, 110 (61) Near-Misses, 46 (5) `ack`-Entscheidungen.
+Nach den Selbst-Labels: **36 (22) verlorene echte Rufe, 66 (33) Rauschen,
+8 (2) offen zum Anhoeren.** Positiv- und Negativ-Korpus haben sich damit
+beide ungefaehr verdoppelt — fuer Schritt 4/5 ist genug Material da.
 
 **Was als naechstes ansteht, in dieser Reihenfolge:**
 
-1. **Warten und sammeln.** Der Sprechfluss (`ack`-Zeilen) wird erst seit dem
-   2026-07-28 abends protokolliert — die Ein-Satz-Bilanz in wake_triage hat
-   noch einstellige n und sagt nichts. Ein paar Tage Alltag reichen.
-2. **Bilanz lesen.** `ow-venv/bin/python -m tools.wake_triage --auch-trigger`,
-   Abschnitt „EIN-SATZ GEGEN PAUSE". Die Frage lautet: landen
-   durchgesprochene Rufe deutlich haeufiger auf kurzen Streaks als Rufe mit
-   Pause? Erste, noch nicht belastbare Zahl: 25 % gegen 3 % (n=12 bzw. 35).
-3. **Wenn ja: Ein-Satz-Aufnahmen ins Training.** Das Modell wurde auf 30 000
+1. **Kontrollierter Vergleich statt Alltagsstatistik.** Die Frage
+   „triggert Ein-Satz schlechter?" braucht beide Formen vom selben Sprecher
+   in derselben Session, gegen dasselbe Modell gescort — dann faellt der
+   Survivorship-Bias weg, weil auch die Nicht-Trigger gezaehlt werden.
+   `wakeword_studio record` nimmt heute NUR isolierte Takes auf
+   (`VARIATIONS` in `recorder.py`, alle 10 Eintraege isoliert). Es braucht
+   Ein-Satz-Takes („Gaston, schalte das Tischlicht ein") als eigene
+   Variationen und im Scoring die Trennung beider Gruppen. Das ist die
+   kleinste Aenderung, die die Frage wirklich entscheidet — und dieselbe
+   Aenderung liefert bei Bedarf gleich die Trainingsdaten.
+2. **Die 8 UNKLAR-Faelle anhoeren** (`wake_triage` schlaegt den `aplay`-Pfad
+   vor). Kleiner Stapel, macht den Datensatz vollstaendig.
+3. **Danach erst Schritt 4 (Trainieren).** Das Modell wurde auf 30 000
    synthetischen Einzelwort-Samples trainiert (`piper-sample-generator`,
    siehe `models/wakewords/gaston/manifest.yaml`) und kennt „Gaston" nur
-   isoliert, mit Endsilbenloesung und fallender Intonation. Im Satzfluss
-   klingt es anders. `wakeword_studio record` nimmt heute NUR isolierte Takes
-   auf — es muesste Ein-Satz-Takes fuehren („Gaston schalte das Tischlicht
-   ein") und daraus den „Gaston"-Anteil schneiden.
-4. **Wenn nein:** Recall-Problem liegt woanders, dann zaehlt der normale Weg
-   (mehr Positivdaten, Negativ-Korpus aus den Wiederkehrern).
+   isoliert, mit Endsilbenloesung und fallender Intonation. Ob der Satzfluss
+   wirklich das Problem ist, sagt Schritt 1 — vorher nicht danach trainieren.
+
+**Was NICHT als naechstes ansteht:** weiter passiv sammeln und die
+Ein-Satz-Bilanz nochmal lesen. Das war die Empfehlung vom 2026-07-28, sie ist
+mit dieser Messung erledigt.
 
 **Was NICHT mehr zu versuchen ist:** an den Schwellen drehen. Die Begruendung
 mit Messwerten steht in `models/wakewords/gaston/manifest.yaml` an jedem
