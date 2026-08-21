@@ -228,10 +228,11 @@ have one, the full run is the better source:
 ow-venv/bin/python -m tools.wake_rms_replay     # with archive: recall + precision
 ```
 
-> **Example, not a preset.** Our installation runs at `wake_rms_min: 300`
-> (derived from 57 everyday calls + 24 ear-checked false triggers, lowest
-> genuine call at RMS 402, on a ReSpeaker mic with ×4 gain). **Absolute RMS
-> values are tied to your microphone and amplification.** Copy our 300 onto
+> **Example, not a preset.** Our installation runs at `wake_rms_min: 400`
+> (derived from 88 genuine calls + 20 ear-checked false triggers, lowest
+> genuine call at RMS 336, on a ReSpeaker mic with ×4 gain). It ran at 300 for
+> the first three weeks and was raised on evidence — see below. **Absolute RMS
+> values are tied to your microphone and amplification.** Copy our number onto
 > different hardware and you lose either every call (gain lower) or block
 > nothing (gain higher). Measure your own.
 
@@ -239,6 +240,33 @@ ow-venv/bin/python -m tools.wake_rms_replay     # with archive: recall + precisi
 near-misses with `failed_on: "min_rms"` in `~/.openclaw/workspace/wake_events.log`.
 If intended calls pile up there, the threshold is too high for the current
 gain. The same signal also flags a hardware/gain change — revisit the value.
+
+**Re-check after a few weeks; that same log decides it.** If the gate has
+blocked a good number of streaks and *none* of them was a call you meant,
+while false triggers keep getting through, the threshold is too low for your
+room — re-run the sweep and take the next step up. Ours went 300 → 400 that
+way: 16 blocked streaks in 20 days, not one of them a genuine call. Two things
+to stay honest about when you do this:
+
+- **Name the price.** Above some value it starts costing real calls. For us 350
+  and 400 cost the same single call, but 400 blocked twice as many false
+  triggers, and 450 cost six — so 400 was the knee, not a preference.
+- **An absolute threshold cannot fit both ends of the day.** Our loudest false
+  trigger measured 1691, the genuine call we gave up measured 336. A level
+  gate buys you the quiet false triggers and nothing more; the loud ones are a
+  model problem, not a threshold problem.
+
+**Keep your labelled clips — the archive deletes itself, your labels don't.**
+`triggers/` is pruned after 30 days at service start, while the labels in
+`wake_review.jsonl` live on. When the audio goes, those labels silently stop
+counting and the sweep quietly measures a smaller set. It cost us six
+ear-checked false triggers before we noticed:
+
+```bash
+ow-venv/bin/python -m tools.wake_corpus sichern   # copy labelled clips out of the pruned dir
+ow-venv/bin/python -m tools.wake_corpus bilanz    # what is secured, and which labels lost their audio
+ow-venv/bin/python -m tools.wake_corpus messen    # score the current bundle against that corpus
+```
 
 ## Voice actuator (optional)
 
@@ -622,6 +650,15 @@ archived wake/record/near-miss WAVs).
   threshold sweep and Fisher exact test. Needs archive + labelled clips.
   ```bash
   ow-venv/bin/python -m tools.wake_rms_replay
+  ```
+- `wake_corpus` — lifts labelled clips out of the self-pruning archive into a
+  permanent corpus, reports **erosion** (labels whose audio is already gone),
+  and scores the running bundle against that corpus — the before-figure any
+  retraining has to beat. Needs labelled clips.
+  ```bash
+  ow-venv/bin/python -m tools.wake_corpus bilanz
+  ow-venv/bin/python -m tools.wake_corpus sichern
+  ow-venv/bin/python -m tools.wake_corpus messen
   ```
 - `actuator_watch` — reads `actuator_turns.log` and spots discrepancies
   (intent vs. executed, status problems). Needs `actuator_turns.log`.

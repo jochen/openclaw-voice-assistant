@@ -297,9 +297,22 @@ Replay spielt die Pegelregel über das Archiv und zeigt, was sie geändert
 hätte — analog zu `endpoint_replay.py` und `actuator_grammar_test.py`. Die
 Rechnung ist in Replay und Live identisch (beide importieren
 `loudest_window_rms` aus `voice_assistant/wake_rms.py`). Messreihe und
-Begründung für 300: Docstring des Werkzeugs. Bekannte Schwäche: absolute
-RMS-Werte sind gain-abhängig (ReSpeaker ×4) — ändert sich Hardware/Gain,
-verschiebt sich die Skala.
+Begründung für den aktuellen Wert (seit 2026-08-22: **400**, davor 300):
+Docstring des Werkzeugs. Bekannte Schwäche: absolute RMS-Werte sind
+gain-abhängig (ReSpeaker ×4) — ändert sich Hardware/Gain, verschiebt sich die
+Skala. Zweite, am 2026-08-22 sichtbar gewordene Schwäche: **eine absolute
+Schwelle muss zugleich für den leisen Morgen und den lauten Abend passen** —
+der teuerste Fehltrigger lag bei RMS 1691, der verlorene echte Ruf bei 336.
+
+**Gelabelte Clips gehören gesichert, bevor das Archiv sie löscht.**
+`TRIGGER_AUDIO_DIR` räumt beim Service-Start alles älter als
+`TRIGGER_AUDIO_MAX_AGE_DAYS` ab; die Labels dazu leben unbegrenzt weiter. Am
+2026-08-22 hat ein Neustart 56 Dateien gelöscht, darunter das Audio zu 6 per
+Ohr gefällten Urteilen — die Messbasis des Replays fiel still von 26 auf 20
+belegte Fehltrigger. Seither verschont `_cleanup_trigger_audio` ungesicherte
+Ohr-Urteile, und `tools/wake_corpus.py` hebt gelabelte Clips in einen
+Dauer-Korpus (`sichern`), meldet Erosion (`bilanz`) und misst das laufende
+Bundle gegen den Korpus (`messen` — die Vorher-Zahl fürs Nachtraining).
 
 ## Threading Model
 

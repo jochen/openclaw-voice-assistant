@@ -20,12 +20,33 @@ Die Rechnung ist IDENTISCH zum Live-Gate (``voice_assistant/assistant.py``);
 beide importieren ``loudest_window_rms`` aus ``voice_assistant/wake_rms.py``.
 Sonst misst das Replay etwas anderes als das Gate tut.
 
-Warum die Schwelle 300 und nicht 400
-------------------------------------
-Gemessen 2026-08-02 (Bestand siehe unten): 400 ist genau der leiseste
-beobachtete echte Ruf (402) — eine auf die Stichprobe angepasste Schwelle, bei
-der der nächste leise Ruf durchfällt. 300 lässt 25 % Sicherheitsabstand und
-blockt immer noch 42 % der Fehltrigger. Gewählt wird 300, nicht 400.
+Warum die Schwelle erst 300 war und seit 2026-08-22 auf 400 steht
+-----------------------------------------------------------------
+2026-08-02, beim Scharfschalten: 400 war genau der leiseste beobachtete echte
+Ruf (402) — eine auf die Stichprobe angepasste Schwelle, bei der der nächste
+leise Ruf durchfällt. 300 ließ 25 % Sicherheitsabstand und blockte immer noch
+42 % der Fehltrigger. Gewählt wurde 300.
+
+2026-08-22, nach 20 Tagen Betrieb: erhöht auf 400. Entschieden hat es nicht
+der Sweep, sondern die Beobachtungswette, die in WAKEWORD_PROCESS.md vorab
+formuliert war — "bleibt die Liste der geblockten Rufe leer, während
+Fehltrigger weiter durchkommen, ist die Schwelle zu niedrig für diesen Raum".
+Genau das trat ein: 16 geblockte Streaks in 20 Tagen, KEIN belegter echter Ruf
+darunter, während allein am 21.08. fünf Fehltrigger durchliefen und kein
+einziger echter Ruf kam.
+
+Der Preis ist diesmal nicht null, und das ist die wichtige Änderung gegenüber
+dem 02.08.: bei 400 fällt EIN belegter echter Ruf durch (20260805_065303, RMS
+336 — ein früh morgens leise gesprochenes Rollo-Kommando, per Aktuator-Ausführung
+hart belegt). Der leiseste echte Ruf liegt seither nicht mehr bei 402, sondern
+bei 336; die alte Faustregel "25 % unter dem leisesten Ruf" ergäbe heute 252,
+also eine SENKUNG. Beide Regeln zeigen in verschiedene Richtungen — gewählt ist
+die gemessene Wirkung, nicht die Faustregel, und der Verlust ist benannt statt
+weggerundet.
+
+Warum 400 und nicht 350 oder 450: 350 und 400 kosten denselben einen Ruf, 400
+blockt aber deutlich mehr Fehltrigger; bei 450 kostet es die ersten sechs. 400
+ist der Knick.
 
 Labelquellen in dieser Rangfolge (stärkste zuerst)
 --------------------------------------------------
@@ -104,6 +125,33 @@ Unter den Studio-Takes sind absichtlich schwierige — „leise" (427),
 ``--nur-studio`` am selben Bestand: leisester Take 427 × 0,7 = 299 ≈ 300.
 Vorschlag ohne jedes Alltagsarchiv deckt sich also mit der aus dem vollen
 Datensatz abgeleiteten Schwelle. Vier kritische Stile alle vorhanden.
+
+Messreihe (2026-08-22) — Anlass für die Erhöhung auf 400
+--------------------------------------------------------
+Bestand: 88 echte Rufe (68 Alltag + dieselben 20 Studio-Takes) gegen 20
+belegte Fehltrigger.
+
+    Schwelle 300   echte Rufe verloren  0/88   Fehltrigger geblockt  7/20   p = 2,8e-06
+    Schwelle 350   echte Rufe verloren  1/88   Fehltrigger geblockt  9/20   p = 3,9e-07
+    Schwelle 400   echte Rufe verloren  1/88   Fehltrigger geblockt 14/20   p = 3,9e-12
+    Schwelle 450   echte Rufe verloren  6/88   Fehltrigger geblockt 16/20   p = 5,5e-11
+    leisester echter Ruf 336 (Alltag) / 427 (Studio)    lautester Fehltrigger 2314
+
+DIE NEGATIVSEITE IST AN DIESEM TAG GESCHRUMPFT, und zwar nicht durch bessere
+Labels, sondern durch Datenverlust: derselbe Sweep, wenige Stunden früher am
+21./22.08. gerechnet, hatte 26 statt 20 Fehltrigger (bei 300: 10/26, bei 400:
+17/26). Dazwischen lag ein Service-Neustart. Der Archiv-Cleanup löschte 56
+Dateien älter als 30 Tage, darunter das Audio zu 6 per Ohr entschiedenen
+Fehltriggern — die Labels blieben in wake_review.jsonl stehen, das Audio dazu
+war weg. Das Werkzeug meldete nichts; es rechnete einfach mit weniger Clips.
+
+Zwei Lehren, beide umgesetzt:
+ - ``voice_assistant/assistant.py:_geschuetzte_clips`` verschont beim Cleanup
+   ungesicherte Ohr-Urteile.
+ - ``tools/wake_corpus.py`` hebt gelabelte Clips in einen Dauer-Korpus und
+   meldet mit ``bilanz`` die Erosion (Labels ohne Audio) explizit.
+Wer eine ältere Messreihe nachrechnen will, muss wissen: Bestände vor dem
+2026-08-22 sind nicht mehr vollständig reproduzierbar.
 
 Stand der Capabilities/Archive zum Messzeitpunkt: siehe ``--verbose``.
 """

@@ -230,18 +230,48 @@ ow-venv/bin/python -m tools.wake_rms_replay     # mit Archiv: Recall + Precision
 ```
 
 > **Beispiel, kein Vorgabewert.** Unsere Installation läuft mit
-> `wake_rms_min: 300` (abgeleitet aus 57 Alltagsrufen + 24 per Ohr geprüften
-> Fehltriggern, leisester echter Ruf bei RMS 402, auf einem ReSpeaker-Mic mit
-> ×4 Gain). **Absolute RMS-Werte hängen an deinem Mikrofon und deiner
-> Verstärkung.** Übernimmst du unsere 300 auf andere Hardware, verlierst du
-> entweder alle Rufe (Gain niedriger) oder blockst nichts (Gain höher). Miss
-> deinen eigenen Wert.
+> `wake_rms_min: 400` (abgeleitet aus 88 echten Rufen + 20 per Ohr geprüften
+> Fehltriggern, leisester echter Ruf bei RMS 336, auf einem ReSpeaker-Mic mit
+> ×4 Gain). Die ersten drei Wochen lief sie mit 300 und wurde dann auf Basis
+> von Messungen erhöht — siehe unten. **Absolute RMS-Werte hängen an deinem
+> Mikrofon und deiner Verstärkung.** Übernimmst du unsere Zahl auf andere
+> Hardware, verlierst du entweder alle Rufe (Gain niedriger) oder blockst
+> nichts (Gain höher). Miss deinen eigenen Wert.
 
 **Woran du merkst, dass die Schwelle falsch steht:** vom Gate geblockte Rufe
 landen als Near-Miss mit `failed_on: "min_rms"` im
 `~/.openclaw/workspace/wake_events.log`. Häufen sich dort gemeinte Rufe, ist
 die Schwelle zu hoch für den aktuellen Gain. Dasselbe Signal zeigt auch einen
 Hardware-/Gainwechsel an — dann den Wert neu bestimmen.
+
+**Nach ein paar Wochen nachprüfen; entschieden wird es aus demselben Log.**
+Hat das Gate eine ordentliche Zahl Streaks geblockt und war *kein einziger*
+gemeinter Ruf darunter, während Fehltrigger weiter durchkommen, ist die
+Schwelle zu niedrig für deinen Raum — Sweep neu laufen lassen und eine Stufe
+höher gehen. Bei uns lief das so von 300 auf 400: 16 geblockte Streaks in 20
+Tagen, kein einziger echter Ruf darunter. Zwei Dinge, bei denen man sich dabei
+nicht in die Tasche lügen sollte:
+
+- **Den Preis benennen.** Ab irgendeinem Wert kostet es echte Rufe. Bei uns
+  kosteten 350 und 400 denselben einen Ruf, 400 blockte aber doppelt so viele
+  Fehltrigger, und 450 kostete sechs — 400 war also der Knick, keine
+  Geschmacksfrage.
+- **Eine absolute Schwelle passt nicht auf beide Enden des Tages.** Unser
+  lautester Fehltrigger lag bei 1691, der aufgegebene echte Ruf bei 336. Ein
+  Pegel-Gate kauft dir die leisen Fehltrigger ab und sonst nichts; die lauten
+  sind ein Modellproblem, kein Schwellenproblem.
+
+**Gelabelte Clips sichern — das Archiv löscht sich selbst, deine Labels nicht.**
+`triggers/` wird beim Service-Start nach 30 Tagen aufgeräumt, die Labels in
+`wake_review.jsonl` bleiben. Verschwindet das Audio, zählen diese Labels still
+nicht mehr mit und der Sweep misst unbemerkt einen kleineren Bestand. Uns hat
+das sechs per Ohr geprüfte Fehltrigger gekostet, bevor es auffiel:
+
+```bash
+ow-venv/bin/python -m tools.wake_corpus sichern   # gelabelte Clips aus dem selbstlöschenden Verzeichnis holen
+ow-venv/bin/python -m tools.wake_corpus bilanz    # was gesichert ist — und welche Labels ihr Audio verloren haben
+ow-venv/bin/python -m tools.wake_corpus messen    # das laufende Bundle gegen diesen Korpus scoren
+```
 
 ## Voice-Aktuator (optional)
 
@@ -631,6 +661,15 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
   Schwellen-Sweep und Fisher-exaktem Test. Braucht Archiv + gelabelte Clips.
   ```bash
   ow-venv/bin/python -m tools.wake_rms_replay
+  ```
+- `wake_corpus` — hebt gelabelte Clips aus dem selbstlöschenden Archiv in einen
+  Dauer-Korpus, meldet **Erosion** (Labels, deren Audio schon weg ist), und
+  scored das laufende Bundle gegen diesen Korpus — die Vorher-Zahl, die ein
+  Nachtraining schlagen muss. Braucht gelabelte Clips.
+  ```bash
+  ow-venv/bin/python -m tools.wake_corpus bilanz
+  ow-venv/bin/python -m tools.wake_corpus sichern
+  ow-venv/bin/python -m tools.wake_corpus messen
   ```
 - `actuator_watch` — liest `actuator_turns.log` und erkennt Diskrepanzen
   (Intent vs. ausgeführt, Statusprobleme). Braucht `actuator_turns.log`.
