@@ -55,6 +55,34 @@ Das ist die Negativ-Hälfte des Validierungs-Gates aus
 ``Wakeword_Studio_Spec.md`` (Phase D), gerechnet auf echtem Haus-Material statt
 auf Fremd-Audio.
 
+``paket`` — Trainingspaket mit Tages-Split für das Nachtraining
+---------------------------------------------------------------
+Schnürt aus Dauer-Korpus + Studio-Takes ein tar.gz für die Trainings-
+Pipeline auf dem ai-stack (``~/ai-stack/wakeword-studio/``, siehe README
+dort). Die echten Clips werden VOR dem Packen in Train und Val geteilt,
+und zwar über GANZE TAGE (Verfahren aus ``tools/verifier_probe.py``,
+gleicher Grund: Wiederholungs-Cluster — derselbe Ruf mehrfach binnen
+Sekunden — dürfen nicht über beide Seiten verteilt werden, sonst misst
+die Validierung das Training).
+
+Drei Entscheidungen, die das Paket festschreibt:
+
+1. STUDIO-TAKES GEHEN KOMPLETT IN DIE VALIDIERUNG. Sie sind das härteste
+   Recall-Set (absichtlich leise/fern/abgewandt) und das etablierte
+   Test-Set von ``wakeword_studio score``. Gingen sie ins Training, wäre
+   die empfindlichste Messlatte verbrannt.
+2. AUCH DIE NEGATIVES WERDEN GESPLITTET, mit derselben Tagespartition.
+   Gingen alle harten Fehltrigger ins Training, wäre die Negativseite von
+   ``wake_corpus messen`` hinterher Selbstmessung.
+3. DIE VAL-SEITE DES PAKETS IST DIE NACHHER-MESSUNG. Nach dem Training
+   zählt nur sie (plus FP/h gegen ``validation_set_features.npy`` auf dem
+   ai-stack) — nicht die Train-Clips, auf denen das Modell gut sein MUSS.
+
+Einspeisung drüben: WAVs aus ``train/`` zu den synthetischen Clips nach
+``train_out/gaston/{positive,negative}_train/`` legen, dann
+``--augment_clips --overwrite`` und ``--train_model`` (vorher
+``podman stop llm``!). Details im README, das im Paket liegt.
+
 Grenzen, ehrlich
 ----------------
 1. KEINE FP-RATE PRO STUNDE. Der Korpus enthält nur Clips, die das Modell
@@ -64,10 +92,14 @@ Grenzen, ehrlich
 2. ÜBERANPASSUNG IST MÖGLICH. Wer auf genau diese Clips trainiert und auf
    genau diesen Clips misst, misst sich selbst. Das Ergebnis ist eine untere
    Schranke, kein Beleg für Generalisierung — der kommt erst aus frischen
-   Fehltriggern der Wochen nach dem Deploy.
+   Fehltriggern der Wochen nach dem Deploy. Der Tages-Split in ``paket``
+   entschärft das für die Val-Seite, hebt es aber nicht auf.
 3. DER KORPUS IST SCHIEF. Fehltrigger sammeln sich abends (TV), echte Rufe
    verteilen sich über den Tag. Klassenanteile hier sind kein Abbild des
    Alltags.
+4. DIE VAL-NEGATIVSEITE IST KLEIN. Bei ~25 harten Fehltriggern landen nach
+   dem Split nur eine Handvoll in Val — die Nachher-Zahl dort hat breite
+   Streuung und trägt erst zusammen mit FP/h und frischen Betriebswochen.
 """
 
 from __future__ import annotations
@@ -78,6 +110,7 @@ import os
 import shutil
 import sys
 from collections import Counter
+from datetime import datetime
 
 # --- venv-Re-Exec wie in voice_assistant/__main__.py -----------------------
 _VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -282,6 +315,105 @@ def run_messen(args) -> int:
     return 0
 
 
+def run_paket(args) -> int:
+    """Trainingspaket bauen: Tages-Split, Verzeichnisbaum, Manifest, tar.gz."""
+    import tarfile
+
+    from tools.verifier_probe import _day, _split_days
+
+    im_korpus = _korpus_dateien()
+    manifest = _manifest_lesen()
+    pos = sorted(a for a in im_korpus if manifest.get(a, {}).get("klasse") == "echter_ruf")
+    neg = sorted(a for a in im_korpus if manifest.get(a, {}).get("klasse") == "rauschen")
+    if not pos or not neg:
+        print("Korpus unvollständig — erst 'sichern' laufen lassen.")
+        return 1
+
+    studio = sorted(
+        os.path.join(d, f)
+        for d, _, files in os.walk(args.samples_dir)
+        for f in files if f.endswith(".wav")
+    )
+
+    val_tage, train_tage = _split_days(pos, neg, args.seed, args.val_anteil)
+
+    ziel = args.out
+    if os.path.exists(ziel):
+        print(f"Zielverzeichnis existiert schon: {ziel} — erst wegräumen.")
+        return 1
+
+    plan = []  # (quelle, relpfad)
+    zaehl = Counter()
+    for audio in pos + neg:
+        klasse = "positive" if audio in set(pos) else "negative"
+        seite = "val" if _day(audio) in val_tage else "train"
+        plan.append((im_korpus[audio], os.path.join(seite, klasse, audio)))
+        zaehl[f"{seite}/{klasse}"] += 1
+    for pfad in studio:
+        # Sprecher bleibt im Namen — Kollisionen zwischen Sprechern ausschließen
+        name = os.path.basename(os.path.dirname(pfad)) + "_" + os.path.basename(pfad)
+        plan.append((pfad, os.path.join("val", "positive_studio", name)))
+        zaehl["val/positive_studio"] += 1
+
+    for quelle, rel in plan:
+        dst = os.path.join(ziel, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(quelle, dst)
+
+    paket_manifest = {
+        "erstellt": datetime.now().isoformat(timespec="seconds"),
+        "seed": args.seed,
+        "val_anteil_ziel": args.val_anteil,
+        "split_verfahren": "ganze Tage, tools/verifier_probe._split_days",
+        "train_tage": sorted(train_tage),
+        "val_tage": sorted(val_tage),
+        "zaehlung": dict(zaehl),
+        "labels": {a: manifest[a] for a in pos + neg},
+        "vorher_messung": "wake_corpus messen 2026-08-22: positiv 51/68, negativ 19/20 (gaston @0.35)",
+    }
+    with open(os.path.join(ziel, "paket_manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(paket_manifest, fh, ensure_ascii=False, indent=1)
+    with open(os.path.join(ziel, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write(_PAKET_README.format(seed=args.seed))
+
+    tar_pfad = ziel.rstrip("/") + ".tar.gz"
+    with tarfile.open(tar_pfad, "w:gz") as tar:
+        tar.add(ziel, arcname=os.path.basename(ziel.rstrip("/")))
+
+    print(f"Paket: {tar_pfad}")
+    for k in sorted(zaehl):
+        print(f"  {k:22s} {zaehl[k]:3d} Clips")
+    print(f"  Split: {len(train_tage)} Train-Tage / {len(val_tage)} Val-Tage (Seed {args.seed})")
+    return 0
+
+
+_PAKET_README = """# Nachtrainings-Paket gaston — echte Clips mit Tages-Split (Seed {seed})
+
+Erzeugt von `tools/wake_corpus.py paket` (Repo openclaw_voice_assist, Branch
+feature/wakeword-nachtraining). Labels: Ohr > Selbst, keine STT-Labels.
+
+## Einspeisung (ai-stack, ~/wakeword-studio/)
+
+1. `train/positive/*.wav`  -> zu den synthetischen Clips nach `train_out/gaston/positive_train/`
+2. `train/negative/*.wav`  -> nach `train_out/gaston/negative_train/` (adversarial negatives)
+3. `val/**`                -> NICHT einspeisen. Das ist die Nachher-Messung.
+4. `podman stop llm`, dann `train.py --training_config gaston.yaml --augment_clips --overwrite`
+   und `--train_model`, danach `podman start llm`. Stolpersteine: README im ai-stack-Repo.
+
+## Validierungs-Gate vor jedem Deploy
+
+- Recall: `val/positive/` + `val/positive_studio/` durchs neue Modell (Ziel >= 0.9);
+  auf dem Pi: `wakeword_studio score` + `wake_corpus messen`.
+- FP-Seite: `val/negative/` (klein! nur Richtungsindikator) UND
+  `eval_debounce.py` gegen `validation_set_features.npy` (Ziel < 1 FP/h,
+  immer MIT Debounce rechnen).
+- Vorher-Zahl, die zu schlagen ist: positiv 51/68, negativ 19/20 (@0.35).
+
+Alle WAVs: 16 kHz mono int16, ~3 s (Wake-Ring vor dem Trigger).
+Familienstimmen — bleiben auf diesem Host, kein Upload irgendwohin.
+"""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="befehl", required=True)
@@ -300,6 +432,18 @@ def main() -> int:
     p.add_argument("--threshold", type=float, default=None)
     p.add_argument("--verbose", action="store_true")
     p.set_defaults(func=run_messen)
+
+    p = sub.add_parser("paket", help="Trainingspaket mit Tages-Split schnüren")
+    p.add_argument("--seed", type=int, default=20260916,
+                   help="Seed der Tagespartition — im Manifest festgehalten")
+    p.add_argument("--val-anteil", type=float, default=0.3, dest="val_anteil")
+    p.add_argument("--out", default="/tmp/gaston_nachtraining_paket")
+    p.add_argument("--samples-dir", dest="samples_dir",
+                   default=os.path.join(os.path.dirname(os.path.dirname(
+                       os.path.abspath(__file__))),
+                       "models", "wakewords", "gaston", "samples"),
+                   help="Studio-Takes (gehen komplett in die Validierung)")
+    p.set_defaults(func=run_paket)
 
     args = ap.parse_args()
     return args.func(args)
