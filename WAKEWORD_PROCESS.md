@@ -451,5 +451,27 @@ zweiseitig 0,0625 — Richtung klar, knapp an der Schwelle). Studio 3:1
 eliminiert, **darunter 20260822_003128 — der "Stopp und Stopp"-Fehltrigger,
 mit dem die Familienbeschwerde anfing**. Keine neuen FP im generischen Set.
 
-Kandidat liegt als Bundle `models/wakewords/gaston_v3/` bereit (nicht
-deployt). Deploy-Entscheid steht aus.
+**Deployt am 2026-09-16** (Jochens Entscheid): v3 ersetzt das Modell im
+`gaston`-Bundle, der Vorgänger liegt in der Git-Historie. Die Gate-Parameter
+(`min_peak_short` 0.9, `min_peak_single` 0.75) sind an den Score-Verteilungen
+des **Vorgängers** geeicht und wurden bewusst nicht angefasst.
+
+### Beobachtungswette v3 (formuliert VOR den Daten, wie beim Pegel-Gate)
+
+Die Offline-Zahlen sagen 93 % Recall und weniger bekannte Fehltrigger voraus.
+Live können Frame-Phasen anders fallen (Methoden-Warnung 2026-07-26). Nach
+**~3 Wochen Betrieb** entscheidet `wake_events.log` + Triage:
+
+1. **FP-Rate** (`Trigger mit Fehltrigger-Outcome pro Tag`): vorher 1,16/Tag.
+   Fällt sie deutlich (< ~0,6/Tag), hat das Nachtraining geliefert. Bleibt
+   sie gleich, war der Val-Gewinn Offline-Artefakt → zurück zu Schritt 4.
+2. **Verlustquote** (Selbst-Label „wiederholt" unter den Near-Misses):
+   zuletzt 5 von 16 Rufversuchen (~31 %). Soll spürbar fallen. Steigt sie,
+   ist v3 live schlechter als gemessen → Rollback (Git-Historie) und Befund.
+3. **1-Frame-/Kurz-Streak-Pfade**: die Peaks von v3 sind anders verteilt —
+   häufen sich echte Rufe als Near-Miss mit `failed_on: min_peak` oder
+   knapp unter `min_peak_single`, sind die Kurz-Streak-Schwellen für v3 neu
+   zu messen (nur gegen die live geloggten Score-Verläufe, nicht offline).
+
+Rollback-Weg: die drei Modell-Dateien aus der Git-Historie
+(`git checkout <alt> -- models/wakewords/gaston/`), Service-Neustart.
