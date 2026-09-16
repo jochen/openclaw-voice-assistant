@@ -421,3 +421,35 @@ Im MemPalace (Wing `clawdpi1-home-pi-openclaw-voice-assist`, Room `decisions`,
 Drawer `...11c2e98f58cb...`) liegt der ausfuehrliche Prozess-Drawer mit
 Session-Kontext und Fehlerdokumentation. Diese Datei ist die Repo-Seite
 desselben — beide sind gegenseitig verlinkt.
+
+## Nachtraining Runde 3 — Kandidat gaston_v3 (2026-09-16)
+
+Erster Lauf mit den echten Clips ("Hebel b"): 47 echte Rufe + 19 belegte
+Fehltrigger (×10 dupliziert) zu den 30k synthetischen, Paket und Split siehe
+`wake_corpus paket` (Seed 20260916).
+
+**Falle, an der der erste Lauf scheiterte:** `augment_clips` schneidet Clips
+über `total_length` (hier 2 s) per **Münzwurf** vorn ODER hinten ab
+(`data.py:create_fixed_size_clip`). Die 3-s-Archiv-Clips tragen das Wakewort
+am Ende — die Hälfte der echten Positives ging als "Gaston"-gelabeltes
+Raum-Audio OHNE Wakewort ins Training. Ergebnis: Recall brach ein (Studio
+50→25 %). **Wer echte Archiv-Clips einspeist, schneidet sie vorher auf die
+letzten 1,8 s.** Mit dem Fix (Runde 2 desselben Tages):
+
+| Messung | gaston (live) | gaston_v3 |
+|---|---|---|
+| val/positive (27 echte Rufe, Val-Tage) | 74 % | **93 %** |
+| val/positive_studio (20 Takes leise/fern) | 50 % | **60 %** |
+| val/negative (6 belegte FP, Val-Tage) | 6 lösen aus | **4** |
+| train/negative (19 belegte FP, Training) | 17 lösen aus | 8 (Selbstmessung) |
+| FP/h generisch, 3-Frame-Streak @0.35 | 0,00 | 0,00 |
+
+Gepaart (alt→neu): val/positive **5 Gewinne, 0 Verluste** (darunter der
+komplette Wiederholungs-Cluster 20260731_1754xx; McNemar einseitig p=0,031,
+zweiseitig 0,0625 — Richtung klar, knapp an der Schwelle). Studio 3:1
+(verloren: der "schnell"-Take). val/negative: 2 der 6 bekannten Fehltrigger
+eliminiert, **darunter 20260822_003128 — der "Stopp und Stopp"-Fehltrigger,
+mit dem die Familienbeschwerde anfing**. Keine neuen FP im generischen Set.
+
+Kandidat liegt als Bundle `models/wakewords/gaston_v3/` bereit (nicht
+deployt). Deploy-Entscheid steht aus.
