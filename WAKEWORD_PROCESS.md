@@ -103,7 +103,13 @@ vorbeikommen, weil das Modell auf das jeweilige Geräusch hoch scoret.
   Skala und die Schwelle stimmt nicht mehr. Woran man das merkt: steigt der
   Anteil geblockter echter Rufe im Near-Miss-Log (`failed_on: min_rms`), ist
   die Schwelle zu hoch für die aktuelle Verstärkung. Messreihe und
-  Begründung für 300: Docstring von `tools/wake_rms_replay.py`.
+  Begründung für den aktuellen Wert (seit 2026-08-22: **400**, vorher 300):
+  Docstring von `tools/wake_rms_replay.py`.
+- **Die gelabelten Clips gehören gesichert, bevor das Archiv sie löscht.**
+  `TRIGGER_AUDIO_DIR` räumt beim Service-Start alles älter als 30 Tage ab, die
+  Labels dazu leben unbegrenzt weiter — am 2026-08-22 kostete das 6 Ohr-Urteile
+  (siehe „Was am 2026-08-22 verloren ging"). `tools/wake_corpus.py sichern`
+  hebt gelabelte Clips heraus, `bilanz` meldet Erosion.
 
 ## Was sich von selbst labelt
 
@@ -193,10 +199,70 @@ Letztere sind der eigentliche Beleg, weil dort absichtlich schwierige Fälle
 drin sind: „leise" (427), „abgewandt" (675), „fern" (1129) — keiner fällt unter
 400. Der leiseste echte Ruf überhaupt liegt bei 402.
 
-**Gewählt ist 300, nicht 400.** Bei 400 stünde die Schwelle zwei Zähler über
+**Gewählt war 300, nicht 400.** Bei 400 stünde die Schwelle zwei Zähler über
 dem leisesten je beobachteten Ruf; das ist an die Stichprobe angepasst und der
 nächste leise Ruf fällt durch. Der Sweep im Werkzeug zeigt den Kipppunkt: bei
 450 kostet es die ersten fünf Rufe.
+
+### Nachtrag 2026-08-22: erhöht auf 400
+
+Die Familie meldete auffällig viele Fehltrigger. Der Befund aus
+`wake_events.log`: am 21.08. drei Trigger, alle falsch, dazu zwei weitere in
+der Nacht — und seit dem 19.08. abends **kein einziger echter Ruf** mehr
+darunter. An Code oder Config lag es nicht, der Prozess lief da seit 19 Tagen
+unverändert; die Umgebung war lauter geworden (Median des lautesten Fensters
+je Tag: 341 → 549 → 592 → 909).
+
+Damit war die oben notierte Beobachtungswette entschieden — und zwar in die
+Richtung „Schwelle zu niedrig für diesen Raum": **16 geblockte Streaks in 20
+Tagen Betrieb, kein einziger belegter echter Ruf darunter**, während die
+Fehltrigger weiterliefen.
+
+| Schwelle | echte Rufe verloren | Fehltrigger geblockt |
+|---|---|---|
+| 300 | 0 / 88 | 7 / 20 |
+| 350 | 1 / 88 | 9 / 20 |
+| **400** | **1 / 88** | **14 / 20** |
+| 450 | 6 / 88 | 16 / 20 |
+
+**Was 400 kostet, ausdrücklich benannt:** einen belegten echten Ruf
+(`20260805_065303`, RMS 336) — ein frühmorgens leise gesprochenes
+Rollo-Kommando, hart belegt durch die Aktuator-Ausführung. Der leiseste echte
+Ruf liegt damit nicht mehr bei 402, sondern bei 336; die Faustregel „25 % unter
+dem leisesten Ruf" ergäbe heute **252**, also eine Senkung. Die beiden Regeln
+zeigen in verschiedene Richtungen. Gewählt ist die gemessene Wirkung, nicht die
+Faustregel.
+
+**Was 400 nicht löst:** von den fünf Fehltriggern des 21./22.08. hätte es
+genau einen geblockt (RMS 316). Die anderen lagen bei 588–1691 und kamen mit
+Score 0.93–0.98 durch — für jedes Gate ununterscheidbar von einem echten Ruf.
+Der eigentliche Hebel bleibt das Nachtraining.
+
+**Geprüft und verworfen: ein Sprach-Gate.** Die Triage meldete fünf der sechs
+letzten Fehltrigger als „kein Sprachanteil", das klang nach einem billigen
+Filter. Über alle 114 gelabelten Trigger-Clips gerechnet trennt WebRTC-VAD
+aber nicht: Sprachanteil im Wake-Fenster bei echten Rufen Median 0,36, bei
+Fehltriggern 0,35. Bei einer Schwelle, die 4 von 41 Fehltriggern blockt, ist
+der Gewinn Rauschen. Nicht einbauen.
+
+### Was am 2026-08-22 verloren ging
+
+Der Neustart nach der Änderung hat den Archiv-Cleanup ausgelöst: **56 Dateien
+älter als 30 Tage gelöscht, darunter das Audio zu 6 per Ohr entschiedenen
+Fehltriggern.** Die Labels stehen weiter in `wake_review.jsonl`, das Audio
+dazu ist weg. Die Negativseite des Sweeps fiel dadurch im selben Lauf von 26
+auf 20 belegte Fehltrigger — ohne dass ein Werkzeug etwas gemeldet hätte, es
+rechnete einfach mit weniger. Ohr-Urteile sind das teuerste Label des
+Verfahrens und waren am schlechtesten geschützt.
+
+Behoben:
+- `_cleanup_trigger_audio` verschont ungesicherte Ohr-Urteile
+  (`voice_assistant/assistant.py:_geschuetzte_clips`).
+- `tools/wake_corpus.py` hebt gelabelte Clips in einen Dauer-Korpus außerhalb
+  des selbstlöschenden Verzeichnisses und meldet Erosion.
+
+Nicht behebbar: die 6 Clips sind fort, Messreihen von vor dem 2026-08-22 sind
+nicht mehr exakt reproduzierbar.
 
 Wie das Gate arbeitet und was bei Änderungen zu beachten ist, steht oben unter
 „Pegel-Gate (`wake_rms_min`)" — hier nur die Messung dahinter.
@@ -248,28 +314,57 @@ offen und erst zu messen, wenn das Pegel-Gate scharf ist.
 > zu erheben — die Datei sagt, **wo der Prozess steht und was als naechstes
 > ansteht**, nicht was gerade in den Logs liegt.
 
-**Wo der Prozess steht (2026-08-02, abends):**
+**Wo der Prozess steht (2026-08-22, nachts):**
 
 Es laufen drei Faeden nebeneinander. Der aktive ist Nummer 1.
 
-**Faden 1 — Pegel-Gate ist SCHARF und wird beobachtet.** `wake_rms_min: 300`
-steht im Profil `gastonllm`, der Service laeuft damit seit dem 2026-08-02
-abends. Das ist die einzige Aenderung am Laufzeitverhalten aus dieser Runde.
-Details und Messung: Abschnitte „Pegel-Gate (`wake_rms_min`)" und „Pegel als
-zweite Dimension" oben.
+**Faden 1 — Pegel-Gate ausgewertet, Schwelle auf 400, Wette geschlossen.**
+Die am 2026-08-02 formulierte Frage („stimmt die Schwelle im Alltag?") ist
+nach 20 Tagen Betrieb beantwortet: 16 geblockte Streaks, kein belegter echter
+Ruf darunter, Fehltrigger liefen weiter durch — der Fall „Schwelle zu niedrig
+fuer diesen Raum". `wake_rms_min: 400` steht seit dem 2026-08-22, 01:03 im
+Profil `gastonllm`. Messung, Preis (ein belegter echter Ruf) und die verworfene
+Sprach-Gate-Idee: Abschnitt „Nachtrag 2026-08-22" oben.
 
-Die offene Frage ist rein empirisch: **stimmt die Schwelle im Alltag?**
+Die neue offene Frage ist dieselbe wie vorher, nur in die andere Richtung:
 
     grep min_rms ~/.openclaw/workspace/wake_events.log
 
-Jeder geblockte Ruf steht dort mit gemessenem Pegel. Beim Scharfschalten:
-0 Eintraege (der Betrieb begann gerade erst). Zu pruefen ist:
-- Sind darunter Rufe, die Jochen gemeint hat? → Schwelle zu hoch, senken.
-- Bleibt die Liste leer, waehrend Fehltrigger weiter durchkommen? → Schwelle
-  zu niedrig fuer diesen Raum, der Sweep in `tools/wake_rms_replay.py` zeigt,
-  was 350 oder 400 kosten wuerden.
+- Tauchen dort jetzt Rufe auf, die jemand gemeint hat? → 400 ist zu hoch,
+  zurueck auf 350 (kostet denselben einen Ruf, blockt 9 statt 14).
+- Kommen Fehltrigger weiter durch, ohne dass echte Rufe verloren gehen? → das
+  Gate ist ausgereizt, der Rest ist Modellarbeit (Faden 4).
 - **Erst mit ein paar Tagen Betrieb ist das entscheidbar.** Vorher nicht am
   Wert drehen.
+
+Bekannte Schwaeche, die dieser Fall offengelegt hat: eine ABSOLUTE Schwelle
+muss zugleich fuer den leisen Morgen (Ruf bei 336) und den lauten Abend
+(Fehltrigger bei 1691) passen — das kann sie nicht. Der naheliegende naechste
+Entwurf ist ein Abstand zum gleitenden Grundpegel statt eines festen Werts;
+`wakeword_studio/recorder.py:331` rechnet bereits so. Nicht gebaut, nicht
+gemessen — notiert als Idee, nicht als Plan.
+
+**Faden 4 — Nachtraining: Material und Ausgangsmessung liegen bereit.**
+Der Grund steht im Nachtrag: die starken Fehltrigger (Score 0.93–0.98) sind
+score- und pegelseitig nicht trennbar. `tools/wake_corpus.py` sichert die
+gelabelten Clips dauerhaft (88 Stueck: 68 echte Rufe, 20 Fehltrigger) und
+misst das laufende Bundle dagegen.
+
+**Ausgangswert 2026-08-22, gaston @ threshold 0.35 (`wake_corpus messen`):**
+
+    positiv   51/68  loesen aus  (75 %)   ← darf NICHT fallen
+    negativ   19/20  loesen aus  (95 %)   ← soll fallen
+
+Die 95 % sind fast tautologisch — der Negativ-Korpus besteht aus Clips, die
+live getriggert HABEN. Der Wert taugt nicht als Guete des Modells, nur als
+Vorher-Zahl fuer ein Nachher. Was noch fehlt, bevor trainiert wird:
+- Die Negativseite ist mit 20 harten Labels duenn. 254 weitere `rauschen`-Clips
+  liegen STT-gelabelt bereit; sie gehoeren per Ohr bestaetigt
+  (`tools/review_audio.py`), bevor sie als Negativbeispiele taugen —
+  ein faelschlich als Rauschen trainierter echter Ruf bringt genau das Wort
+  bei, das nicht erkannt werden soll.
+- Trainiert wird auf dem GPU-Host (`~/ai-stack/wakeword-studio/`, Spec Phase C);
+  von diesem Pi aus ist das nicht erreichbar.
 
 **Faden 2 — Verifier: gemessen, NICHT deploy-reif, liegt bewusst still.**
 `tools/verifier_probe.py`, Messreihe im Docstring. FP-Achse traegt
@@ -293,11 +388,14 @@ Eintraege isoliert) — es muesste Ein-Satz-Takes fuehren („Gaston, schalte da
 Tischlicht ein") und im Scoring beide Gruppen trennen. Dieselbe Aenderung
 liefert bei Bedarf gleich die Trainingsdaten.
 
-**Bestand 2026-08-02 abends** (2026-07-28 in Klammern): 391 (~250) archivierte
-Clips. Labels: 106 echter_ruf, 104 rauschen, 54 unklar. Davon **24 per Ohr
-entschieden** (`wake_review.jsonl`, 2 echter_ruf / 22 rauschen) — die staerkste
-Quelle. Fuer Schritt 4/5 (Trainieren/Validieren) ist genug Material da; es
-fehlt nicht an Daten, sondern an der Entscheidung, was trainiert werden soll.
+**Bestand 2026-08-22 nachts** (2026-08-02 in Klammern): 580 (391) archivierte
+Clips. Labels: 119 (106) echter_ruf, 280 (104) rauschen, 86 (54) unklar. Davon
+**24 per Ohr entschieden** (`wake_review.jsonl`, 2 echter_ruf / 22 rauschen) —
+die staerkste Quelle, aber **zu 6 davon existiert kein Audio mehr**, sie zaehlen
+in keiner Messung mehr mit. Dauerhaft gesichert sind 88 Clips
+(`tools/wake_corpus.py bilanz`). Fuer Schritt 4/5 (Trainieren/Validieren) ist
+genug Material da; es fehlt nicht an Daten, sondern an der Entscheidung, was
+trainiert werden soll.
 
 **Kleinere offene Punkte:**
 - Die UNKLAR-Faelle per Ohr entscheiden — jetzt mit

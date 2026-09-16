@@ -649,6 +649,17 @@ LAST_RECORDING_PATH = os.path.join(VOICE_DIR, "last_recording.wav")
 # (Peaks 0.94-0.98, Logs 2026-07-08..13) sind score-seitig nicht filterbar.
 TRIGGER_AUDIO_DIR = os.path.join(VOICE_DIR, "triggers")
 TRIGGER_AUDIO_MAX_AGE_DAYS = 30
+# Dauerhafter Korpus: das Archiv oben löscht sich nach 30 Tagen selbst, die
+# LABELS dazu (wake_review.jsonl, per Ohr gefällt) leben unbegrenzt weiter.
+# Am 2026-08-22 hat ein Service-Neustart 56 Dateien aufgeräumt, darunter das
+# Audio zu 6 Ohr-Urteilen — die Messbasis von tools/wake_rms_replay.py schrumpfte
+# still von 26 auf 20 belegte Fehltrigger. Gelabelte Clips gehören deshalb aus
+# dem selbstlöschenden Verzeichnis heraus: tools/wake_corpus.py sichert sie
+# hierher, und _cleanup_trigger_audio verschont ungesicherte Ohr-Urteile.
+WAKE_CORPUS_DIR = os.path.join(VOICE_DIR, "corpus")
+# Ohr-Urteile (tools/review_audio.py). Hier, weil auch der Laufzeit-Cleanup sie
+# kennen muss — nicht nur die Werkzeuge.
+WAKE_REVIEW_PATH = os.path.join(WORKSPACE, "wake_review.jsonl")
 SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
 SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")

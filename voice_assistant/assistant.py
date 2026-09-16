@@ -35,7 +35,9 @@ from voice_assistant.config import (
     VAD_FRAME_SIZE,
     VOICE_ANALYSIS_BASE,
     VOICE_DIR,
+    WAKE_CORPUS_DIR,
     WAKE_LOG_PATH,
+    WAKE_REVIEW_PATH,
     WORKSPACE,
     Profile,
     WakewordConfig,
@@ -260,20 +262,72 @@ def _log_actuator_turn(meta: dict) -> None:
         print(f"⚠️  aktuator-log: {exc}")
 
 
+def _geschuetzte_clips() -> set[str]:
+    """Dateinamen, die der Cleanup NICHT löschen darf.
+
+    Ein per Ohr gefälltes Urteil (wake_review.jsonl) ist das teuerste Label im
+    ganzen Verfahren — es entsteht nur, indem ein Mensch den Clip anhört. Der
+    Cleanup kannte diese Liste bis zum 2026-08-22 nicht und hat beim Neustart
+    56 Dateien nach Alter gelöscht, darunter das Audio zu 6 Ohr-Urteilen. Die
+    Labels blieben in wake_review.jsonl stehen, das Audio dazu war weg: die
+    Messbasis von tools/wake_rms_replay.py fiel still von 26 auf 20 belegte
+    Fehltrigger, und keine frühere Messung ist seither reproduzierbar.
+
+    Geschützt wird nur, was noch NICHT in den Dauer-Korpus gesichert ist
+    (tools/wake_corpus.py sichern). Ist die Kopie dort, darf das Original im
+    selbstlöschenden Archiv verschwinden — sonst wüchse das Archiv unbegrenzt.
+    """
+    try:
+        with open(WAKE_REVIEW_PATH, encoding="utf-8") as fh:
+            gelabelt = {
+                json.loads(z)["audio"] for z in fh if z.strip()
+            }
+    except FileNotFoundError:
+        return set()
+    except Exception as e:
+        # Im Zweifel NICHTS löschen: ein voll laufendes Archiv ist reparabel,
+        # ein gelöschtes Ohr-Urteil nicht.
+        print(f"⚠️  Trigger-Archiv-Cleanup: Ohr-Labels unlesbar ({e}) — lösche nichts")
+        return {"*"}
+    gesichert = set()
+    for unterordner in ("positiv", "negativ"):
+        gesichert |= set(_listdir_safe(os.path.join(WAKE_CORPUS_DIR, unterordner)))
+    return gelabelt - gesichert
+
+
+def _listdir_safe(pfad: str) -> list[str]:
+    try:
+        return os.listdir(pfad)
+    except OSError:
+        return []
+
+
 def _cleanup_trigger_audio() -> None:
-    """Löscht Trigger-Archiv-Dateien älter als TRIGGER_AUDIO_MAX_AGE_DAYS."""
+    """Löscht Trigger-Archiv-Dateien älter als TRIGGER_AUDIO_MAX_AGE_DAYS.
+
+    Ausgenommen sind ungesicherte Ohr-Urteile, siehe _geschuetzte_clips().
+    """
     try:
         if not os.path.isdir(TRIGGER_AUDIO_DIR):
             return
+        geschuetzt = _geschuetzte_clips()
+        if "*" in geschuetzt:
+            return
         cutoff = time.time() - TRIGGER_AUDIO_MAX_AGE_DAYS * 86400
         removed = 0
+        behalten = 0
         for name in os.listdir(TRIGGER_AUDIO_DIR):
             path = os.path.join(TRIGGER_AUDIO_DIR, name)
-            if name.endswith(".wav") and os.path.getmtime(path) < cutoff:
-                os.remove(path)
-                removed += 1
-        if removed:
-            print(f"🧹 Trigger-Archiv: {removed} Datei(en) > {TRIGGER_AUDIO_MAX_AGE_DAYS} Tage gelöscht")
+            if not name.endswith(".wav") or os.path.getmtime(path) >= cutoff:
+                continue
+            if name in geschuetzt:
+                behalten += 1
+                continue
+            os.remove(path)
+            removed += 1
+        if removed or behalten:
+            zusatz = f", {behalten} wegen Ohr-Urteil behalten" if behalten else ""
+            print(f"🧹 Trigger-Archiv: {removed} Datei(en) > {TRIGGER_AUDIO_MAX_AGE_DAYS} Tage gelöscht{zusatz}")
     except Exception as e:
         print(f"⚠️  Trigger-Archiv-Cleanup: {e}")
 
