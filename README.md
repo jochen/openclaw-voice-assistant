@@ -464,7 +464,11 @@ This does not imply a duty to ask back — an assistant that confirms every swit
 
 ### Speaker awareness & safety
 
-Each 🎤 message is prefixed with `[Sprecher: …]` (the recognised speaker, or `unbekannt`). Goal: impactful or hard-to-undo actions should only happen when it's clear a trusted person wants them. For an `unbekannt` speaker, be freely helpful with harmless things (info, status, simple queries); for anything with loss or damage potential, get confirmation from a known speaker first.
+Each 🎤 message is prefixed with `[Sprecher: …]`. It carries one of four things: the recognised name, `unbekannt` (recognition ran and matched nobody), `Erkennung ausgefallen` (recognition did not run at all), or `Erkennung nicht eingerichtet`. Goal: impactful or hard-to-undo actions should only happen when it's clear a trusted person wants them. For anything but a recognised name, be freely helpful with harmless things (info, status, simple queries); for anything with loss or damage potential, get confirmation from a known speaker first.
+
+**Treat an outage as less, not more, permission.** `Erkennung ausgefallen` means nothing was measured — it is weaker evidence than `unbekannt`, not a technicality to wave through.
+
+This prompt directive is guidance, not enforcement. The enforcement lives in the tool that performs the action, via [`SPEAKER_STATE.md`](SPEAKER_STATE.md).
 
 ### Mood signal (acoustic)
 
@@ -493,11 +497,29 @@ Each recording runs through Speaches diarization in parallel to STT. The dominan
 ```
 ~/.openclaw/workspace/voice/
   last_recording.wav             current recording (overwritten per trigger)
+  current_speaker.json           who spoke last — read by gating tools
   speakers/
     jochen.wav                   active reference (sent to Speaches)
   originals/
     jochen-2026-05-09T22-15.wav  timestamped backup, never overwritten
 ```
+
+### Speaker state file — turning the label into a barrier
+
+The recognised speaker used to exist **only** inside the prompt. That makes it a
+hint to a language model, not a rule: whether an impactful action is skipped for
+an unrecognised speaker was decided by prose alone. On 2026-09-18 that failed in
+the field — diarization was down, every turn therefore read `unbekannt`, and the
+assistant powered machines off anyway, reasoning that the request had just been
+made by someone known.
+
+So the assistant now writes `voice/current_speaker.json` after **every** turn,
+including failed ones, and a tool that is about to do something consequential
+reads it and decides for itself. The full contract — the four statuses, the
+freshness window, a minimum implementation and an acceptance check — is in
+[`SPEAKER_STATE.md`](SPEAKER_STATE.md). Note what it is not: with shell access as
+the same user this is defence against a model *talking itself into* an action,
+not a security boundary.
 
 ### Enrolment HTTP server
 
@@ -538,6 +560,7 @@ These tools call the assistant's loopback HTTP servers (enrolment `:18791`, spea
 ### Limitations
 
 - Speaches diarization needs **at least 16 kHz mono audio with 2–10 s of real speech** (silence does not contribute). Very short follow-up answers (≤ 2 s) often classify as "unknown".
+- A failing diarization service is reported as `ausgefallen`, never as `unbekannt`. Collapsing the two is what made the 2026-09-18 incident invisible in the log: an outage looked exactly like a stranger at the microphone.
 - Recordings longer than ~10 s would OOM the GPU (Wespeaker resnet34 buffer allocation), so the diarization client truncates input + references to 8 s before the request. The original full recording is still preserved in `originals/` and `last_recording.wav`.
 - The first-time enrolment uses the same recording the user spoke their request in (Variant 1). Quality scales with recording length and noise level.
 

@@ -473,7 +473,11 @@ Daraus folgt keine Rückfragepflicht — ein Assistent, der jede Schaltung best�
 
 ### Sprechererkennung & Sicherheit
 
-Jede 🎤-Nachricht ist mit `[Sprecher: …]` versehen (erkannter Sprecher oder `unbekannt`). Ziel: folgenreiche oder schwer umkehrbare Aktionen sollen nur passieren, wenn klar ist, dass eine berechtigte Person sie will. Bei `unbekannt`em Sprecher sei frei hilfsbereit für Harmloses (Auskünfte, Status, einfache Abfragen); für alles mit Verlust- oder Schadenspotenzial hol vorher die Bestätigung eines bekannten Sprechers.
+Jede 🎤-Nachricht ist mit `[Sprecher: …]` versehen. Darin steht eines von vier Dingen: der erkannte Name, `unbekannt` (Erkennung lief und ordnete niemandem zu), `Erkennung ausgefallen` (Erkennung lief gar nicht) oder `Erkennung nicht eingerichtet`. Ziel: folgenreiche oder schwer umkehrbare Aktionen sollen nur passieren, wenn klar ist, dass eine berechtigte Person sie will. Bei allem außer einem erkannten Namen sei frei hilfsbereit für Harmloses (Auskünfte, Status, einfache Abfragen); für alles mit Verlust- oder Schadenspotenzial hol vorher die Bestätigung eines bekannten Sprechers.
+
+**Ein Ausfall ist weniger Erlaubnis, nicht mehr.** `Erkennung ausgefallen` heißt, es wurde nichts gemessen — das ist ein schwächerer Beleg als `unbekannt`, keine Formalie, über die man hinweggeht.
+
+Diese Prompt-Direktive ist Anleitung, keine Durchsetzung. Durchgesetzt wird es in dem Werkzeug, das die Aktion ausführt — über [`SPEAKER_STATE.md`](SPEAKER_STATE.md).
 
 ### Stimmungssignal (akustisch)
 
@@ -502,11 +506,30 @@ Jede Aufnahme läuft parallel zur STT durch die Speaches-Diarization. Der domina
 ```
 ~/.openclaw/workspace/voice/
   last_recording.wav             aktuelle Aufnahme (wird pro Trigger überschrieben)
+  current_speaker.json           wer zuletzt sprach — gelesen von schrankenden Werkzeugen
   speakers/
     jochen.wav                   aktive Referenz (geht an Speaches)
   originals/
     jochen-2026-05-09T22-15.wav  Backup mit Zeitstempel, bleibt erhalten
 ```
+
+### Sprecher-Zustandsdatei — aus dem Etikett eine Schranke machen
+
+Der erkannte Sprecher stand früher **nur** im Prompt. Damit ist er ein Hinweis
+an ein Sprachmodell, keine Regel: ob eine folgenreiche Aktion bei
+unerkanntem Sprecher unterbleibt, entschied allein Prosa. Am 2026-09-18 ist
+das im Betrieb gescheitert — die Diarization war ausgefallen, jeder Turn las
+sich deshalb als `unbekannt`, und der Assistent hat trotzdem Rechner
+ausgeschaltet, mit der Begründung, die Anweisung komme ja von jemandem, der
+kurz vorher erkannt worden war.
+
+Deshalb schreibt der Assistent jetzt nach **jedem** Turn `voice/current_speaker.json`,
+auch nach einem gescheiterten, und ein Werkzeug, das gleich etwas Folgenreiches
+tut, liest sie und entscheidet selbst. Der vollständige Vertrag — die vier
+Status, das Frischefenster, eine Mindest-Implementierung und eine
+Abnahme-Prüfung — steht in [`SPEAKER_STATE.md`](SPEAKER_STATE.md). Und was es
+nicht ist: bei Shell-Zugang als derselbe Benutzer ist das ein Schutz dagegen,
+dass ein Modell sich in eine Aktion *hineinredet*, keine Sicherheitsgrenze.
 
 ### Enrolment-HTTP-Server
 
@@ -547,6 +570,7 @@ Diese Tools rufen die Loopback-HTTP-Server des Assistenten auf (Enrolment `:1879
 ### Einschränkungen
 
 - Speaches-Diarization braucht **mindestens 16 kHz mono mit 2–10 s echter Sprache** (Stille zählt nicht). Sehr kurze Follow-up-Antworten (≤ 2 s) werden oft als "unbekannt" klassifiziert.
+- Ein ausgefallener Diarization-Dienst wird als `ausgefallen` gemeldet, nie als `unbekannt`. Genau diese Verschmelzung hat den Vorfall vom 2026-09-18 im Log unsichtbar gemacht: ein Ausfall sah exakt aus wie ein Fremder am Mikrofon.
 - Aufnahmen länger als ~10 s würden den GPU-Speicher sprengen (Wespeaker resnet34 Buffer-Allokation), daher kürzt der Diarization-Client Eingabe + Referenzen vor dem Request auf 8 s. Die volle Originalaufnahme bleibt in `originals/` und `last_recording.wav` erhalten.
 - Erst-Enrolment nutzt dieselbe Aufnahme, mit der der Nutzer den Befehl gesprochen hat (Variante 1). Qualität skaliert mit Aufnahmelänge und Geräuschpegel.
 

@@ -93,6 +93,7 @@ voice_assistant/
     leds.py              WledLeds + RespeakerRing + LedDirector
     telegram.py
     speaches.py          SpeachesState + Start-Check
+    speaker_state.py     current_speaker.json — Grundlage der Sprecher-Schranke
     stt.py               SpeachesStt + LocalWhisperStt + SttPipeline
     tts.py               SpeachesTts + Piper + ReplySpeaker + ThinkingWorker
     openclaw.py          /v1/responses Client
@@ -181,6 +182,55 @@ Telegram (zu laut). Bei LLM-Fehler: Meldung an Telegram
 
 Aktiviert per Profil-Block `watcher:` (Default `enabled: false`).
 LLM-Felder: `llm_url`, `llm_model`, `llm_api_key`, `llm_timeout`.
+
+## Sprecher-Zustand und die Schranke (`current_speaker.json`)
+
+Der erkannte Sprecher war bis zum 2026-09-19 **ausschliesslich ein Label im
+Prompt** (`🎤 [Sprecher: jochen]`). Kein Gate im Code, keins in den Werkzeugen
+des Brains — die gesamte Absicherung war Prosa in der ausgerollten `AGENTS.md`,
+inklusive einer Fortsetzungs-Ausnahme, die eine `unbekannt`e Eingabe als
+Fortsetzung des zuletzt erkannten Sprechers erlaubte.
+
+Am **2026-09-18** hat das im Fablab genau so versagt: Speaches-Diarization gab
+ab 20:01 HTTP 500, jeder Turn wurde dadurch zu „unbekannt", und Mister Handy
+hat Desktop-Rechner ausgeschaltet. Nachlesbar im Journal des Pi und in seiner
+eigenen Antwort um 20:05:49.
+
+Zwei Dinge sind daraus entstanden:
+
+**1. Vier Status statt zwei** (`services/diarization.py`). `diarize()` liefert
+ein `SpeakerVerdict` mit `bekannt` · `unbekannt` · `ausgefallen` ·
+`nicht_eingerichtet`. Vorher wurde **jeder** Fehler zu `None` und damit zum
+Label „unbekannt" — ein toter Dienst war nicht von einem Fremden zu
+unterscheiden, die Identitaet fiel still nach aussen offen aus. `name` ist nur
+bei `bekannt` gesetzt, damit alles Identitaetsgebundene (Sprecher-Stimme,
+`last_speaker`) unveraendert weiterlaufen kann. Auch ein Join-Timeout in der
+State-Machine zaehlt als `ausgefallen`, sonst waere das Gate per Timeout
+aushebelbar.
+
+**2. Eine Datei statt eines Prompt-Hinweises** (`services/speaker_state.py`).
+Nach **jedem** Turn — auch einem gescheiterten — wird
+`~/.openclaw/workspace/voice/current_speaker.json` atomar geschrieben. Wer
+etwas Folgenreiches tut, liest sie selbst. Vollstaendiger Vertrag samt
+Mindest-Implementierung und Abnahme-Pruefung: **`SPEAKER_STATE.md`**.
+
+Die ausfuehrende Seite liegt **nicht in diesem Repo**: im Fablab ist es
+`~/.openclaw/inventory/claw-power`, das seit 2026-09-19 `shutdown`/`reboot`
+ablehnt, wenn der letzte frische Sprach-Turn (Fenster 120 s) nicht `bekannt`
+war. Absichtlich ohne Abschalt-Option — was man abschalten kann, wird
+wegargumentiert. Ist der letzte Turn aelter oder fehlt die Datei, greift die
+Schranke nicht; eine Anweisung per Chat laeuft also normal durch.
+
+**Ehrliche Grenze:** das ist kein Schutz gegen ein Modell mit Shell-Zugang als
+derselbe Benutzer — es kann die Datei schreiben. Es ist ein Schutz gegen das,
+was tatsaechlich passiert ist: eine Rationalisierung. Die echte Grenze waere,
+Power-Aktionen hinter einen Dienst zu legen, den der Agent nicht als derselbe
+Benutzer erreicht. Offen.
+
+**Aenderungen hier nur gegen `tests/test_speaker_verdict.py`** (14 Tests, ohne
+Netz). Der Test haelt genau die Bruchlinie fest, an der es schiefging: jeder
+Fehlerweg muss `ausgefallen` ergeben, jeder gemessene Nicht-Treffer
+`unbekannt`. Verschmelzen die beiden wieder, ist das Loch lautlos zurueck.
 
 ## Profile System
 
