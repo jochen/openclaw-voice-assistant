@@ -477,6 +477,10 @@ Jede 🎤-Nachricht ist mit `[Sprecher: …]` versehen. Darin steht eines von vi
 
 **Ein Ausfall ist weniger Erlaubnis, nicht mehr.** `Erkennung ausgefallen` heißt, es wurde nichts gemessen — das ist ein schwächerer Beleg als `unbekannt`, keine Formalie, über die man hinweggeht.
 
+**Fortsetzung hat eine Grenze.** Eine Folge-Eingabe ohne festen Sprecher als Fortsetzung der eben erkannten Person zu behandeln, ist für Harmloses in Ordnung. Für folgenreiche Aktionen gilt es nicht: Rechner ausschalten, löschen, umkonfigurieren, flashen, im Namen anderer handeln. Dafür braucht es einen Sprecher, der *bei dieser Eingabe* feststeht — nicht einen, der vorhin feststand. Diese Unterscheidung ist nicht akademisch; ihr Fehlen hat den Vorfall vom 2026-09-18 erlaubt.
+
+Weist das Werkzeug ab, funktioniert die Regel. Dann von einer bekannten Stimme bestätigen lassen oder per Chat anweisen, statt einen Weg drumherum zu suchen.
+
 Diese Prompt-Direktive ist Anleitung, keine Durchsetzung. Durchgesetzt wird es in dem Werkzeug, das die Aktion ausführt — über [`SPEAKER_STATE.md`](SPEAKER_STATE.md).
 
 ### Stimmungssignal (akustisch)
