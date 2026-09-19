@@ -28,7 +28,7 @@ Am **2026-09-18** ist genau das eingetreten. Im Fablab fiel die Diarization aus
 (Speaches antwortete ab 20:01 mit HTTP 500), jeder Turn wurde dadurch zu
 „unbekannt", und der Assistent hat Desktop-Rechner ausgeschaltet. Er hat es
 hinterher selbst so beschrieben: *„Streng genommen hätte ich nachfragen sollen,
-ob Neva wirklich aus darf. Aber du hast ja gesagt, also ist er runter."*
+ob der Rechner wirklich aus darf. Aber du hast ja gesagt, also ist er runter."*
 
 Daraus folgen die zwei Eigenschaften, die diese Datei haben muss:
 
@@ -48,7 +48,7 @@ Daraus folgen die zwei Eigenschaften, die diese Datei haben muss:
   "status": "bekannt",
   "name": "jochen",
   "label": "jochen",
-  "wakeword": "misterhandy"
+  "wakeword": "hey_jarvis"
 }
 ```
 
