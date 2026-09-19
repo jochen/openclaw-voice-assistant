@@ -63,21 +63,26 @@ def query(
     session: str,
     voice_instruction: str = "",
     speaker: str | None = None,
+    speaker_label: str | None = None,
     mood: dict | None = None,
     on_done=None,
     wrap: bool = True,
 ) -> str | None:
     """Send a voice turn to /v1/responses and return the final reply.
 
-    speaker: erkannter Sprecher-Name (oder None für unbekannt). Wird im
+    speaker: erkannter Sprecher-Name (oder None, wenn keiner feststeht). Wird im
         Wrapper-Prefix mitgegeben, damit das LLM weiß, wer spricht und
         ggf. ein Enrolment-Tool aufrufen kann.
+    speaker_label: was hinter [Sprecher: …] steht. Trennt "unbekannt" (gemessen,
+        niemand zugeordnet) von "Erkennung ausgefallen" (gar nicht gemessen) —
+        siehe diarization.SpeakerVerdict. Fehlt der Wert, gilt das alte
+        Verhalten (Name oder "unbekannt").
     mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
     wrap: False = text unverändert senden (Systemnachrichten statt Mikrofon-Transkription).
     """
-    speaker_label = speaker if speaker else "unbekannt"
+    speaker_label = speaker_label or (speaker if speaker else "unbekannt")
     voice_input = f"🎤 [Sprecher: {speaker_label}] {text}" if wrap else text
     if mood and all(isinstance(mood.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
         a, v, d = mood["arousal"], mood["valence"], mood["dominance"]
@@ -137,6 +142,7 @@ def query_stream(
     session: str,
     voice_instruction: str = "",
     speaker: str | None = None,
+    speaker_label: str | None = None,
     mood: dict | None = None,
     on_sentence: Callable[[str], None] | None = None,
     on_first_text: Callable[[], None] | None = None,
@@ -144,7 +150,8 @@ def query_stream(
     """Streaming-Variante von query(): liest SSE-Events und liefert fertige Sätze
     via on_sentence-Callback, sobald split_into_sentences eine Satzgrenze erkennt.
 
-    speaker: erkannter Sprecher-Name (oder None für unbekannt).
+    speaker: erkannter Sprecher-Name (oder None, wenn keiner feststeht).
+    speaker_label: Anzeigeform inkl. "Erkennung ausgefallen" (siehe query()).
     mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     on_sentence: wird für jeden abgeschlossenen Satz aufgerufen (kann parallel sprechen).
@@ -156,7 +163,7 @@ def query_stream(
     """
     from voice_assistant.services.tts import StreamingSentenceBuffer
 
-    speaker_label = speaker if speaker else "unbekannt"
+    speaker_label = speaker_label or (speaker if speaker else "unbekannt")
     voice_input = f"🎤 [Sprecher: {speaker_label}] {text}"
     if mood and all(isinstance(mood.get(k), (int, float)) for k in ("arousal", "valence", "dominance")):
         a, v, d = mood["arousal"], mood["valence"], mood["dominance"]

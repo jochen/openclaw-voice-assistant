@@ -6,7 +6,13 @@ import queue
 import threading
 
 from voice_assistant.services import openclaw, telegram
-from voice_assistant.services.diarization import SpeachesDiarizer, run_diarization
+from voice_assistant.services.diarization import (
+    STATUS_NICHT_EINGERICHTET,
+    SpeachesDiarizer,
+    SpeakerVerdict,
+    run_diarization,
+    verdict_from_speaker,
+)
 from voice_assistant.services.leds import LED_IDLE
 from voice_assistant.services.mood import MoodAnalyzer, run_mood
 from voice_assistant.services.stt import SttPipeline, chunks_to_wav_bytes
@@ -76,12 +82,14 @@ class Workers:
     ) -> threading.Thread | None:
         """Diarization parallel zur STT. Ergebnis landet in out_q (turn-eigen).
 
-        Wenn kein Diarizer konfiguriert ist, wird sofort None in die Queue
-        geschoben — die State-Machine kann sich darauf verlassen, immer ein
-        Element abzuholen.
+        Wenn kein Diarizer konfiguriert ist, wird sofort ein Urteil
+        "nicht eingerichtet" geschoben — die State-Machine kann sich darauf
+        verlassen, immer ein Element abzuholen. Bewusst NICHT "unbekannt":
+        ein Profil ohne Erkennung hat nichts gemessen und soll nicht so
+        aussehen, als habe es jemanden nicht wiedererkannt.
         """
         if self.diarizer is None:
-            out_q.put(None)
+            out_q.put(SpeakerVerdict(None, STATUS_NICHT_EINGERICHTET))
             return None
         t = threading.Thread(
             target=self._diarize_worker,
@@ -132,12 +140,17 @@ class Workers:
     def start_openclaw_turn(
         self,
         user_text: str,
-        speaker: str | None = None,
+        speaker: SpeakerVerdict | str | None = None,
         mood: dict | None = None,
         session: str | None = None,
     ) -> threading.Thread:
         """session: Routing-Ziel des getriggerten Wakewords (x-openclaw-session-key).
-        None → Fallback auf self.openclaw_session (Profil-Default)."""
+        None → Fallback auf self.openclaw_session (Profil-Default).
+
+        speaker ist das Urteil der Diarization. Ein blosser Name (altes
+        Aufruf-Schema) wird weiterhin angenommen und als "bekannt" gelesen."""
+        if not isinstance(speaker, SpeakerVerdict):
+            speaker = verdict_from_speaker(speaker)
         t = threading.Thread(
             target=self._openclaw_turn,
             args=(user_text, speaker, mood, session),
@@ -148,8 +161,8 @@ class Workers:
 
     # --- internal workers ---
     def _openclaw_turn(
-        self, user_text: str, speaker: str | None = None, mood: dict | None = None,
-        session: str | None = None,
+        self, user_text: str, speaker: SpeakerVerdict | None = None,
+        mood: dict | None = None, session: str | None = None,
     ) -> None:
         try:
             self._run_openclaw_turn(user_text, speaker, mood, session)
@@ -164,15 +177,16 @@ class Workers:
                     pass
 
     def _run_openclaw_turn(
-        self, user_text: str, speaker: str | None = None, mood: dict | None = None,
-        session: str | None = None,
+        self, user_text: str, speaker: SpeakerVerdict | None = None,
+        mood: dict | None = None, session: str | None = None,
     ) -> None:
         # Wakeword-Routing: session_key kommt vom getriggerten Wakeword
         # (assistant.py); None (z.B. altes Aufruf-Schema) fällt auf den
         # Profil-Default zurück. Eigener Name, weil "session" weiter unten
         # bereits für das ReplyStreamSession-Objekt vergeben ist.
         session_key = session or self.openclaw_session
-        speaker_label = speaker if speaker else "unbekannt"
+        verdict = speaker if isinstance(speaker, SpeakerVerdict) else verdict_from_speaker(speaker)
+        speaker_label = verdict.label
 
         # Die User-Eingabe wird erst gespiegelt, sobald eine echte (Nicht-
         # NO_REPLY-)Antwort feststeht. So bleibt der Chat sauber, wenn OpenClaw
@@ -216,7 +230,8 @@ class Workers:
                 token=self.openclaw_token,
                 session=session_key,
                 voice_instruction=self.voice_instruction,
-                speaker=speaker,
+                speaker=verdict.name,
+                speaker_label=speaker_label,
                 mood=mood,
                 on_sentence=guarded_feed,
                 on_first_text=self.thinking.stop,
@@ -278,7 +293,8 @@ class Workers:
                 token=self.openclaw_token,
                 session=session_key,
                 voice_instruction=self.voice_instruction,
-                speaker=speaker,
+                speaker=verdict.name,
+                speaker_label=speaker_label,
                 mood=mood,
                 on_done=self.thinking.stop,
             )

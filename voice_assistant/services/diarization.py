@@ -7,6 +7,7 @@ werden bei jedem Aufruf als known_speaker_references mitgeschickt (data: URLs).
 from __future__ import annotations
 
 import base64
+import dataclasses
 import io
 import json
 import math
@@ -21,6 +22,59 @@ from voice_assistant.config import (
     RATE_OW,
     SPEAKERS_DIR,
 )
+
+
+# Drei Ausgänge statt zwei. Bis 2026-09-19 lieferte diarize() nur "Name oder
+# None", und JEDER Fehler — HTTP 500, Timeout, kaputtes JSON — wurde zu None
+# und damit zum Label "unbekannt". Ein Ausfall der Erkennung war im Prompt
+# nicht von einem echten Fremden zu unterscheiden; die Identität fiel still
+# und nach außen offen aus. Am 2026-09-18 im Fablab genau so passiert: Speaches
+# gab ab 20:01 HTTP 500, im Log stand "Sprecher: unbekannt", und es sah aus,
+# als sei der Sprecher nicht mehr zuzuordnen gewesen.
+STATUS_BEKANNT = "bekannt"
+STATUS_UNBEKANNT = "unbekannt"        # Erkennung lief, ordnete aber niemandem zu
+STATUS_AUSGEFALLEN = "ausgefallen"    # Erkennung lief gar nicht (Dienst/Netz)
+STATUS_NICHT_EINGERICHTET = "nicht_eingerichtet"  # Profil hat keinen Diarizer
+
+# Beides heißt „wir wissen es nicht, weil nicht gemessen wurde" — und muss sich
+# darum vom gemessenen "unbekannt" unterscheiden.
+_OHNE_MESSUNG = (STATUS_AUSGEFALLEN, STATUS_NICHT_EINGERICHTET)
+
+
+@dataclasses.dataclass(frozen=True)
+class SpeakerVerdict:
+    """Ergebnis eines Diarization-Laufs: Identität UND ob sie zustande kam.
+
+    `name` ist nur bei STATUS_BEKANNT gesetzt. Alles, was an einer Identität
+    hängt (Sprecher-Stimme, last_speaker), darf weiterhin ausschließlich auf
+    `name` schauen — ein Ausfall setzt bewusst keinen Sprecher.
+    """
+
+    name: str | None = None
+    status: str = STATUS_UNBEKANNT
+
+    @property
+    def available(self) -> bool:
+        """Hat überhaupt eine Messung stattgefunden?"""
+        return self.status not in _OHNE_MESSUNG
+
+    @property
+    def label(self) -> str:
+        """Was im Prompt hinter [Sprecher: …] steht."""
+        if self.status == STATUS_BEKANNT and self.name:
+            return self.name
+        if self.status == STATUS_AUSGEFALLEN:
+            return "Erkennung ausgefallen"
+        if self.status == STATUS_NICHT_EINGERICHTET:
+            return "Erkennung nicht eingerichtet"
+        return "unbekannt"
+
+
+def verdict_from_speaker(speaker: str | None) -> SpeakerVerdict:
+    """Altes `str | None` in ein Urteil übersetzen (Aufrufer ohne Diarization)."""
+    if speaker:
+        return SpeakerVerdict(speaker, STATUS_BEKANNT)
+    return SpeakerVerdict(None, STATUS_UNBEKANNT)
 
 
 # Speaches' Diarization-Modell (resnet34) braucht für lange Audios mehr GPU-RAM
@@ -117,8 +171,8 @@ class SpeachesDiarizer:
     def __init__(self, base: str) -> None:
         self.base = base
 
-    def diarize(self, wav_bytes: bytes) -> str | None:
-        """Liefert den dominanten Sprechernamen oder None bei 'unbekannt'/Fehler.
+    def diarize(self, wav_bytes: bytes) -> SpeakerVerdict:
+        """Liefert Sprecher UND ob die Erkennung überhaupt zustande kam.
 
         Speaches-Cluster (SPEAKER_00, SPEAKER_01, ...) gelten als unbekannt.
 
@@ -128,25 +182,29 @@ class SpeachesDiarizer:
         eine Referenz — Wiederholung hebt kurze/still-gepolsterte Aufnahmen über
         die Schwelle, ohne bei genuin Unbekannten falsch zuzuordnen (der zweite
         Aufruf fällt nur an, wenn der erste nichts fand).
+
+        Nach einem AUSFALL wird NICHT getilt: das Tilen behebt zu wenig Sprache,
+        nicht einen toten Dienst — es verdoppelt dann nur die Requests. Am
+        2026-09-18 standen im Fablab-Log deshalb zwei 500er pro Turn.
         """
         speakers = _list_known_speakers()
         # Referenzen kürzen (GPU-OOM-Schutz beim Speaker-Embedding)
         speakers = [(name, _truncate_wav(b, DIARIZATION_MAX_SEC)) for name, b in speakers]
         inp = _truncate_wav(wav_bytes, DIARIZATION_MAX_SEC)
 
-        spk = self._diarize_pass(inp, speakers)
-        if spk is not None:
-            return spk
+        verdict = self._diarize_pass(inp, speakers)
+        if verdict.status != STATUS_UNBEKANNT:
+            return verdict  # bekannt → fertig; ausgefallen → Retry brächte nichts
 
         boosted = _repeat_to_fill(inp, DIARIZATION_MAX_SEC)
         if boosted is inp:
-            return None  # Input war schon volle Länge → Retry brächte nichts
+            return verdict  # Input war schon volle Länge → Retry brächte nichts
         return self._diarize_pass(boosted, speakers)
 
     def _diarize_pass(
         self, input_bytes: bytes, speakers: list[tuple[str, bytes]]
-    ) -> str | None:
-        """Ein Diarization-Request; dominanter bekannter Sprecher oder None."""
+    ) -> SpeakerVerdict:
+        """Ein Diarization-Request als Urteil (bekannt/unbekannt/ausgefallen)."""
         boundary = "----GastonDiarBoundary"
         parts: list[bytes] = []
         parts.append(
@@ -191,10 +249,10 @@ class SpeachesDiarizer:
         except urllib.error.HTTPError as e:
             err = e.read().decode(errors="replace")
             print(f"⚠️  Diarization HTTP {e.code}: {err[:120]}")
-            return None
+            return SpeakerVerdict(None, STATUS_AUSGEFALLEN)
         except Exception as e:
             print(f"⚠️  Diarization error: {e}")
-            return None
+            return SpeakerVerdict(None, STATUS_AUSGEFALLEN)
 
         durations: dict[str, float] = {}
         for seg in result.get("segments", []):
@@ -202,12 +260,14 @@ class SpeachesDiarizer:
             dur = float(seg.get("end", 0)) - float(seg.get("start", 0))
             if dur > 0 and spk:
                 durations[spk] = durations.get(spk, 0.0) + dur
+        # Ab hier hat der Dienst geantwortet: alles Weitere ist ein echtes
+        # "niemand Bekanntes drin", kein Ausfall.
         if not durations:
-            return None
+            return SpeakerVerdict(None, STATUS_UNBEKANNT)
         dominant = max(durations.items(), key=lambda x: x[1])[0]
         if dominant.startswith("SPEAKER_"):
-            return None
-        return dominant
+            return SpeakerVerdict(None, STATUS_UNBEKANNT)
+        return SpeakerVerdict(dominant, STATUS_BEKANNT)
 
 
 def run_diarization(
@@ -216,12 +276,11 @@ def run_diarization(
     out: queue.Queue,
 ) -> None:
     try:
-        spk = diarizer.diarize(wav_bytes)
-        if spk:
-            print(f"🎙  [Diarization] Sprecher: {spk}")
-        else:
-            print("🎙  [Diarization] Sprecher: unbekannt")
-        out.put(spk)
+        verdict = diarizer.diarize(wav_bytes)
+        print(f"🎙  [Diarization] Sprecher: {verdict.label}")
+        out.put(verdict)
     except Exception as e:
+        # Auch ein Absturz des Workers ist ein Ausfall der Erkennung, kein
+        # Fremder — sonst wäre das Gate wieder umgehbar.
         print(f"⚠️  Diarization worker error: {e}")
-        out.put(None)
+        out.put(SpeakerVerdict(None, STATUS_AUSGEFALLEN))

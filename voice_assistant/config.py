@@ -664,6 +664,13 @@ SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
 SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
 
+# Wer zuletzt per Stimme gesprochen hat — geschrieben nach JEDEM Voice-Turn,
+# gelesen von Werkzeugen AUSSERHALB dieses Repos (siehe SPEAKER_STATE.md), die
+# vor einer folgenreichen Aktion wissen müssen, ob gerade ein bekannter Sprecher
+# am Mikrofon war. Bewusst eine Datei und kein Prompt-Hinweis: das Sprachmodell
+# soll daran nicht vorbeireden können.
+CURRENT_SPEAKER_PATH = os.path.join(VOICE_DIR, "current_speaker.json")
+
 # Schwellwert für „lange Pause" (Sekunden): Eine temporäre, besitzergebundene
 # Stimme (per voice_set_voice ohne for_speaker gesetzt) bleibt nur erhalten,
 # solange derselbe Sprecher innerhalb dieser Zeit weiterspricht. Vergeht mehr

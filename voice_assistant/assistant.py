@@ -50,7 +50,12 @@ from voice_assistant.services.actuator import (
     VERDICT_KEIN_KOMMANDO,
     VERDICT_UNKLAR,
 )
-from voice_assistant.services.diarization import SpeachesDiarizer
+from voice_assistant.services.diarization import (
+    STATUS_AUSGEFALLEN,
+    SpeachesDiarizer,
+    SpeakerVerdict,
+)
+from voice_assistant.services.speaker_state import write_current_speaker
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
@@ -1460,9 +1465,14 @@ def run() -> None:
                             # gesagt" aber Teil des Bildes (späteres
                             # Sprecher-Gate), also wegwerfen wäre schade.
                             try:
-                                act_spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                                act_verdict = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
-                                act_spk = None
+                                # Nicht rechtzeitig gemessen ist NICHT dasselbe wie
+                                # "ein Fremder" — sonst wäre das Gate per Timeout
+                                # aushebelbar.
+                                act_verdict = SpeakerVerdict(None, STATUS_AUSGEFALLEN)
+                            write_current_speaker(act_verdict, current_wakeword.bundle)
+                            act_spk = act_verdict.name
                             try:
                                 turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
@@ -1478,6 +1488,7 @@ def run() -> None:
                                 "request_id": request_id,
                                 "transcript": text,
                                 "speaker": act_spk,
+                                "speaker_status": act_verdict.status,
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
                                 "latency_ms": round(actuator.last_latency_ms),
@@ -1501,6 +1512,7 @@ def run() -> None:
                                     "request_id": request_id,
                                     "transcript": text,
                                     "speaker": act_spk,
+                                    "speaker_status": act_verdict.status,
                                     "intent": intent,
                                     "status": (resp or {}).get("status", "keine_antwort"),
                                     "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
@@ -1532,6 +1544,7 @@ def run() -> None:
                                         "request_id": request_id,
                                         "transcript": text,
                                         "speaker": act_spk,
+                                        "speaker_status": act_verdict.status,
                                     }
                                     audio_source.flush()
                                     wakeword.reset()
@@ -1563,9 +1576,11 @@ def run() -> None:
                             # Weder ausführen noch an den Brain geben —
                             # nachfragen. Begründung: actuator.verdict().
                             try:
-                                act_spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                                act_verdict = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
-                                act_spk = None
+                                act_verdict = SpeakerVerdict(None, STATUS_AUSGEFALLEN)
+                            write_current_speaker(act_verdict, current_wakeword.bundle)
+                            act_spk = act_verdict.name
                             try:
                                 turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
@@ -1582,6 +1597,7 @@ def run() -> None:
                                 "request_id": str(uuid.uuid4()),
                                 "transcript": text,
                                 "speaker": act_spk,
+                                "speaker_status": act_verdict.status,
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
                                 "latency_ms": round(actuator.last_latency_ms),
@@ -1632,16 +1648,18 @@ def run() -> None:
                             # --- Brain-Pfad wie bisher (unverändert) ---
                             _save_last_recording(recorded_chunks)
                             try:
-                                spk = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                                spk_verdict = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
-                                print(f"[{now:.1f}s] ⚠️  Diarization timeout — Sprecher unbekannt")
-                                spk = None
+                                print(f"[{now:.1f}s] ⚠️  Diarization timeout — Erkennung ausgefallen")
+                                spk_verdict = SpeakerVerdict(None, STATUS_AUSGEFALLEN)
+                            write_current_speaker(spk_verdict, current_wakeword.bundle)
+                            spk = spk_verdict.name
                             try:
                                 mood = turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                             except queue.Empty:
                                 print(f"[{now:.1f}s] ⚠️  Mood timeout — Stimmung unbekannt")
                                 mood = None
-                            spk_label = spk if spk else "unbekannt"
+                            spk_label = spk_verdict.label
                             if isinstance(mood, dict):
                                 mood_label = f"a{mood.get('arousal', 0):.2f} v{mood.get('valence', 0):.2f} d{mood.get('dominance', 0):.2f}"
                             else:
@@ -1663,7 +1681,7 @@ def run() -> None:
                             pending_reply_text[0] = None
                             thinking.start()
                             workers.start_openclaw_turn(
-                                text, speaker=spk, mood=mood, session=current_wakeword.session
+                                text, speaker=spk_verdict, mood=mood, session=current_wakeword.session
                             )
                             state = STATE_WAITING
                             state_start = now
