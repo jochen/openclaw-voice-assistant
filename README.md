@@ -841,6 +841,13 @@ archived wake/record/near-miss WAVs).
   ```bash
   ow-venv/bin/python -m tools.wake_triage --seit 3 --auch-trigger
   ```
+  With `--auch-trigger` it also breaks the triggers down **by gate path**
+  (1 frame / 2 frames / 3+ frames) against those labels, and says what turning
+  the one-frame path off would have cost in proven real calls. That table is the
+  only honest way to judge the short-streak thresholds: offline scorers try
+  several frame phases and always find the best streak, so they cannot see this
+  at all. Ours showed a path that used to buy 12 real calls and, after a
+  retraining, bought none while still letting four false triggers through.
 - `endpoint_replay` — replays the endpointing logic over the archived
   recordings and shows where a different silence/ceiling setting would have
   cut a recording — proving via STT whether spoken material was lost.
@@ -857,12 +864,21 @@ archived wake/record/near-miss WAVs).
 - `wake_corpus` — lifts labelled clips out of the self-pruning archive into a
   permanent corpus, reports **erosion** (labels whose audio is already gone),
   and scores the running bundle against that corpus — the before-figure any
-  retraining has to beat. Needs labelled clips.
+  retraining has to beat. `--split` takes the training package's manifest and
+  separates FRESH (clips the model never saw) from TRAIN (self-measurement);
+  without it the number is a mixture of both and claims more than it shows. Needs
+  labelled clips.
   ```bash
   ow-venv/bin/python -m tools.wake_corpus bilanz
   ow-venv/bin/python -m tools.wake_corpus sichern
   ow-venv/bin/python -m tools.wake_corpus messen
+  ow-venv/bin/python -m tools.wake_corpus messen --split /path/paket_manifest.json
   ```
+  The tool's docstring also carries the recipe for A/B-ing two models on the same
+  clips (the predecessor comes out of git history) — and the warning that this
+  tool **cannot** evaluate the short-streak gate paths at all: its scorer tries
+  several frame phases and always finds the best streak, so a one-frame trigger
+  practically never occurs offline while live the phase is fixed.
 - `actuator_watch` — reads `actuator_turns.log` and spots discrepancies
   (intent vs. executed, status problems). Needs `actuator_turns.log`.
   ```bash

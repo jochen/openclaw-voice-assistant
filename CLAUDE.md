@@ -377,11 +377,14 @@ Nutzer darauf, ob sein Abbruch ankam.
 Beep quittiert den **Abbruch**, das gesprochene „Okay." den **verstandenen**
 Abbruch (also nur, wenn im Transkript ein Stopp-Wort stand).
 
-> **Offen, bräuchte einen OTA-Flash des ESP:** eine eigene LED-Phase für den
-> Abbruch. Die zwölf Phasen 0–12 sind alle belegt (`max_value: 12` in
-> `esphome/respeaker.yaml`), deshalb leiht sich der Abbruch derzeit das Rot der
-> Fehler-Phase. Semantisch ist das eine Anleihe, keine Aussage — eine Phase 13
-> (z.B. rote Sichel, die einmal ausläuft) wäre die saubere Lösung.
+**Keine eigene LED-Phase für den Abbruch — entschieden, nicht aufgeschoben**
+(Jochen, 2026-09-20): der kurze Wechsel auf das Rot der Fehler-Phase genügt,
+denn *der Abbruch ist ein Ereignis und kein Zustand*. Eine LED-Phase beschreibt,
+was der Assistent gerade tut (zuhören, verarbeiten, sprechen) und hält an; ein
+Abbruch hält nichts an, er beendet etwas. Deshalb kein Flash für eine Phase 13,
+und deshalb ist das Rot hier keine Anleihe aus Verlegenheit, sondern das
+passende Mittel: ein kurzes Aufleuchten, das sofort dem Aufnahme-Grün weicht.
+Wer das erneut vorschlägt, ändert damit eine Entscheidung, nicht eine Lücke.
 
 ### Zwei Fallen, die der erste Messlauf aufgedeckt hat
 

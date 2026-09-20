@@ -863,6 +863,14 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
   ```bash
   ow-venv/bin/python -m tools.wake_triage --seit 3 --auch-trigger
   ```
+  Mit `--auch-trigger` schlüsselt es die Trigger zusätzlich **nach Gate-Pfad**
+  auf (1 Frame / 2 Frames / 3+ Frames) und hält sie gegen diese Labels; dazu,
+  was ein Abschalten des 1-Frame-Pfads an belegten echten Rufen gekostet hätte.
+  Diese Tabelle ist der einzige ehrliche Weg, die Kurz-Streak-Schwellen zu
+  beurteilen: Offline-Scorer probieren mehrere Frame-Phasen und finden immer den
+  besten Streak, sie können das also überhaupt nicht sehen. Bei uns zeigte sie
+  einen Pfad, der früher 12 echte Rufe einbrachte und nach einem Nachtraining
+  keinen einzigen mehr, während er weiter vier Fehltrigger durchließ.
 - `endpoint_replay` — spielt die Endpointing-Logik über die archivierten
   Aufnahmen und zeigt, wo eine andere Nachlauf-/Deckel-Einstellung eine
   Aufnahme beendet hätte — per STT belegt, ob gesprochenes Material verloren
@@ -879,12 +887,22 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
 - `wake_corpus` — hebt gelabelte Clips aus dem selbstlöschenden Archiv in einen
   Dauer-Korpus, meldet **Erosion** (Labels, deren Audio schon weg ist), und
   scored das laufende Bundle gegen diesen Korpus — die Vorher-Zahl, die ein
-  Nachtraining schlagen muss. Braucht gelabelte Clips.
+  Nachtraining schlagen muss. `--split` nimmt das Manifest des Trainingspakets
+  und trennt FRISCH (Clips, die das Modell nie gesehen hat) von TRAIN
+  (Selbstmessung); ohne das ist die Zahl eine Mischung aus beidem und behauptet
+  mehr, als sie zeigt. Braucht gelabelte Clips.
   ```bash
   ow-venv/bin/python -m tools.wake_corpus bilanz
   ow-venv/bin/python -m tools.wake_corpus sichern
   ow-venv/bin/python -m tools.wake_corpus messen
+  ow-venv/bin/python -m tools.wake_corpus messen --split /pfad/paket_manifest.json
   ```
+  Im Docstring des Werkzeugs steht auch das Rezept, zwei Modelle auf denselben
+  Clips gegeneinander zu messen (der Vorgänger kommt aus der Git-Historie) — und
+  die Warnung, dass dieses Werkzeug die Kurz-Streak-Pfade **grundsätzlich nicht**
+  bewerten kann: sein Scorer probiert mehrere Frame-Phasen und findet immer den
+  besten Streak, ein 1-Frame-Trigger entsteht offline also praktisch nie,
+  während live die Phase festliegt.
 - `actuator_watch` — liest `actuator_turns.log` und erkennt Diskrepanzen
   (Intent vs. ausgeführt, Statusprobleme). Braucht `actuator_turns.log`.
   ```bash

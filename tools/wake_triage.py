@@ -478,6 +478,54 @@ def main() -> int:
                 marke = (f"  ⚠️ {echt}× selbst als echter Ruf gelabelt → Verhörer, nicht TV"
                          if echt else "")
                 print(f"    {n:>2}×  {t[:52]!r}{marke}")
+    # --- Gate-Pfad gegen Label: Kriterium 3 der Beobachtungswette v3 ---------
+    #
+    # Die Wette (WAKEWORD_PROCESS.md) verlangt fuer die Kurz-Streak-Pfade
+    # ausdruecklich eine Messung an den LIVE geloggten Score-Verlaeufen und
+    # nicht offline. Der Grund ist methodisch und wurde am 2026-09-20 noch
+    # einmal belegt: der Offline-Scorer (wakeword_studio.scoring) probiert
+    # mehrere Frame-Phasen und findet immer den besten Streak, ein
+    # 1-Frame-Trigger entsteht dort praktisch nie. Live liegt die Phase fest.
+    # Ein Korpus-A/B "mit gegen ohne min_peak_single" ergab deshalb exakt
+    # dieselben Zahlen — die Frage ist offline nicht messbar.
+    #
+    # Diese Tabelle ist die Antwort auf die Wette: sie zeigt, WELCHER Gate-Pfad
+    # die Fehltrigger liefert und was ein Abschalten des 1-Frame-Pfads an
+    # belegten echten Rufen kosten wuerde.
+    tr = [r for r in zeilen if r["art"] == "trigger"]
+    if tr:
+        def _pfad(h) -> str:
+            if h == 1:
+                return "1 Frame"
+            if h == 2:
+                return "2 Frames"
+            return "3+ Frames"
+
+        tab: dict[str, Counter] = {}
+        for r in tr:
+            tab.setdefault(_pfad(r.get("hits")), Counter())[r["klasse"]] += 1
+        print("\n=== TRIGGER NACH GATE-PFAD (Wette v3, Kriterium 3) ===")
+        for pfad in ("1 Frame", "2 Frames", "3+ Frames"):
+            c = tab.get(pfad)
+            if not c:
+                continue
+            print(f"    {pfad:10s} n={sum(c.values()):3d}   "
+                  f"echt={c[ECHT]:3d}  Fehltrigger={c[RAUSCH]:3d}  unklar={c[UNKLAR]:3d}")
+        eins = [r for r in tr if r.get("hits") == 1]
+        if eins:
+            e_echt = sum(1 for r in eins if r["klasse"] == ECHT)
+            e_fp = sum(1 for r in eins if r["klasse"] == RAUSCH)
+            print(f"    → min_peak_single AUS haette in diesem Zeitraum "
+                  f"{e_echt} belegte echte Rufe gekostet und "
+                  f"{e_fp} belegte Fehltrigger verhindert.")
+            if e_fp > e_echt:
+                print("    Der 1-Frame-Pfad liefert hier mehr Fehltrigger als Rufe. Das ist")
+                print("    KEIN Abschalt-Befehl: er wurde am 2026-07-26 eingebaut, weil 4 von")
+                print("    6 verlorenen echten Rufen nur so zurueckkamen. Ob der Handel sich")
+                print("    gedreht hat, entscheidet der Zeitraum — kurze Fenster mit wenigen")
+                print("    Rufen sehen immer so aus. Gegen die Wette lesen, nicht gegen das")
+                print("    Bauchgefuehl.")
+
     if nm:
         c = Counter(r["klasse"] for r in nm)
         echt_peaks = [r["peak"] for r in nm if r["klasse"] == ECHT and r.get("peak")]

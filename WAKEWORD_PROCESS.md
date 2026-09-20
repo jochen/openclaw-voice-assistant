@@ -522,3 +522,80 @@ Live können Frame-Phasen anders fallen (Methoden-Warnung 2026-07-26). Nach
 
 Rollback-Weg: die drei Modell-Dateien aus der Git-Historie
 (`git checkout <alt> -- models/wakewords/gaston/`), Service-Neustart.
+
+### Zwischenlesung der Wette nach 4 Tagen (2026-09-20) — NICHT geschlossen
+
+Die Wette will ~3 Wochen. Nach 4 Tagen ist sie nicht entscheidbar, aber drei
+Dinge sind schon messbar, und eines davon zeigt in eine unerwartete Richtung.
+Alle Zahlen sind mit `tools/wake_triage.py --seit N --auch-trigger`,
+`tools/wake_corpus.py messen --split` und `wake_events.log` reproduzierbar.
+
+**Das Modell ist besser — gemessen auf Material, das es nie gesehen hat.**
+v2 gegen v3 auf denselben Korpus-Clips, identische Gate-Parameter (nur die
+tflite getauscht, v2 aus `daf5518^`), und getrennt nach dem Tages-Split des
+damaligen Trainingspakets:
+
+| auf FRISCHEN Clips (32 positiv / 7 negativ) | echte Rufe | Fehltrigger durchgelassen |
+|---|---|---|
+| v2 | 24/32 = 75 % | 6/7 = 86 % |
+| v3 | 30/32 = **94 %** | 4/7 = **57 %** |
+
+v3 ist auf beiden Achsen besser, und zwar auf Clips, die **keines** der beiden
+Modelle im Training hatte. Der Verdacht „beim Nachtraining ist etwas Falsches
+hineingerutscht" ist damit ausgeräumt. Nebenbefund gegen Überanpassung: v3
+erkennt auf den frischen Clips (94 %) *mehr* als auf den Trainingsclips (85 %).
+
+**Die FP-Rate im Betrieb ist unverändert — Kriterium 1 zeigt nach unten.**
+Mit derselben Triage-Methode über beide Zeiträume: **1,33 Fehltrigger/Tag vorher,
+1,40/Tag nachher.** Die Wette verlangt „< ~0,6/Tag, sonst war der Val-Gewinn
+Offline-Artefakt". Bei n=7 Fehltriggern in 4 Tagen ist das keine Entscheidung,
+aber die Richtung ist nicht die erhoffte. Beides zugleich wahr zu haben ist
+kein Widerspruch: der Korpus misst, ob v3 die **bekannten** Fehltrigger
+abstellt; der Alltag produziert **neue** — Gesprächsfetzen, die kein Modell
+gesehen hat. Genau diese Grenze steht im Docstring von `wake_corpus`.
+
+**Kriterium 3 ist das eigentliche Ergebnis: der 1-Frame-Pfad kauft nichts mehr.**
+Trigger nach Gate-Pfad, gegen die Labels:
+
+| Pfad | vor v3: echt / Fehltrigger | nach v3: echt / Fehltrigger |
+|---|---|---|
+| 1 Frame (`min_peak_single`) | 12 / **29** | **0** / **4** |
+| 2 Frames (`min_peak_short`) | 9 / 14 | 1 / 2 |
+| 3+ Frames (`min_peak`) | 55 / 17 | 1 / 1 |
+
+Der 1-Frame-Pfad war immer FP-lastig (29 von 73 Fehltriggern vor v3, also 66 %
+seiner eigenen Trigger), aber er hatte eine Rechtfertigung: er holte 12 belegte
+echte Rufe herein, und eingebaut wurde er am 2026-07-26, weil 4 von 6
+verlorenen Rufen nur so zurückkamen. **Mit v3 holt er keinen einzigen mehr** —
+v3 erreicht echte Rufe mit richtigen Streaks und braucht die Rettung nicht.
+Übrig bleibt die Fehltrigger-Seite: 4 von 7 Fehltriggern der letzten 4 Tage
+kamen über diesen Pfad.
+
+Das ist die plausibelste Erklärung für „v3 ist offline besser, der Alltag fühlt
+sich gleich an": das Modell wurde besser, aber ein Gate-Pfad, der auf die
+Score-Verteilung des VORGÄNGERS geeicht war, lässt weiter Gesprächsfetzen
+durch. Genau die Eichung, die `manifest.yaml` beim Deploy als offen markiert
+hat.
+
+**Methodisch wichtig, und es bestätigt die Wette:** das ist offline NICHT
+messbar. Ein Korpus-A/B „v3 mit gegen v3 ohne `min_peak_single`" ergab exakt
+dieselben Zahlen (94 % / 57 % in beiden Fällen), weil der Offline-Scorer
+mehrere Frame-Phasen probiert und immer den besten Streak findet — ein
+1-Frame-Trigger entsteht dort praktisch nie, live liegt die Phase fest. Die
+Wette hat das vorausgesagt („nur gegen die live geloggten Score-Verläufe, nicht
+offline"). Die Tabelle oben ist deshalb jetzt Teil von
+`tools/wake_triage.py` (Abschnitt „TRIGGER NACH GATE-PFAD"), damit die Wette
+mit einem Befehl und nicht mit einem Wegwerf-Skript gelesen wird.
+
+**Was daraus NICHT folgt:** `min_peak_single` jetzt abzuschalten. Vier Tage mit
+5 belegten echten Rufen sind zu wenig — ein kurzes Fenster mit wenigen Rufen
+sieht immer so aus, als kaufe der Pfad nichts. Die Wette läuft bis ~3 Wochen;
+bleibt die Tabelle dann so, ist das Abschalten (oder eine Anhebung auf die neue
+Score-Verteilung) der erste Schritt, und zwar mit eigener, vorab formulierter
+Wette.
+
+**Nebenbefund, der eigene Aufmerksamkeit verdient:** von 792 Labels haben
+**307 kein Audio mehr**, darunter 6 Ohr-Urteile aus dem Juli. `wake_corpus
+sichern` hat am 2026-09-20 nichts Neues gefunden (alles Haltbare ist im Korpus),
+die Erosion ist also Altlast von vor der Schutzregel — aber sie verkleinert
+jede künftige Messbasis dauerhaft.

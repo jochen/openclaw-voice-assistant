@@ -5,6 +5,8 @@ Aufruf (Projekt-venv wird selbst gesucht):
     ow-venv/bin/python -m tools.wake_corpus bilanz     # was ist da, was fehlt
     ow-venv/bin/python -m tools.wake_corpus sichern    # Clips in den Dauer-Korpus
     ow-venv/bin/python -m tools.wake_corpus messen     # Modell gegen den Korpus
+    ow-venv/bin/python -m tools.wake_corpus messen --split /pfad/paket_manifest.json
+                                                       # getrennt: frisch vs. trainiert
 
 Warum es dieses Werkzeug gibt
 -----------------------------
@@ -54,6 +56,40 @@ getrennt:
 Das ist die Negativ-Hälfte des Validierungs-Gates aus
 ``Wakeword_Studio_Spec.md`` (Phase D), gerechnet auf echtem Haus-Material statt
 auf Fremd-Audio.
+
+``--split`` — die ehrliche Hälfte von der Selbstmessung trennen
+--------------------------------------------------------------
+``messen --split <paket_manifest.json>`` liest die Tagesaufteilung des
+Trainingspakets und weist zwei Blöcke getrennt aus: FRISCH (Val-Tage plus alles
+danach — Clips, die das Modell im Training nicht gesehen hat) und TRAIN
+(Selbstmessung). Ohne die Aufteilung ist die Zahl eine Mischung aus beidem und
+sagt weniger, als sie zeigt; der Abstand zwischen den Blöcken ist das Maß der
+Überanpassung.
+
+Zwei Modelle auf demselben Material vergleichen (A/B, z.B. nach einem
+Nachtraining oder vor einem Rollback) — der Vorgänger liegt in der
+Git-Historie:
+
+    mkdir -p models/wakewords/gaston_alt
+    git show <commit>^:models/wakewords/gaston/gaston.tflite \
+        > models/wakewords/gaston_alt/gaston_alt.tflite
+    sed -e 's/^name: gaston$/name: gaston_alt/' \
+        -e 's/^model: gaston.tflite$/model: gaston_alt.tflite/' \
+        models/wakewords/gaston/manifest.yaml > models/wakewords/gaston_alt/manifest.yaml
+    ow-venv/bin/python -m tools.wake_corpus messen --bundle gaston_alt --split …
+    ow-venv/bin/python -m tools.wake_corpus messen --bundle gaston     --split …
+    rm -rf models/wakewords/gaston_alt          # temporär, nicht committen
+
+Die Gate-Parameter im Ersatz-Manifest müssen **unverändert** bleiben, sonst
+vergleicht man Schwellen statt Modelle.
+
+**Was dieses Werkzeug grundsätzlich nicht messen kann: die Kurz-Streak-Pfade.**
+``BundleScorer`` probiert mehrere Frame-Phasen und nimmt den besten Streak — ein
+1-Frame-Trigger entsteht dabei praktisch nie, während live die Phase festliegt.
+Ein A/B „mit gegen ohne ``min_peak_single``" ergab am 2026-09-20 deshalb exakt
+identische Zahlen, obwohl der Pfad live 4 von 7 Fehltriggern lieferte. Diese
+Frage gehört an die live geloggten Score-Verläufe: ``tools/wake_triage.py``,
+Abschnitt „TRIGGER NACH GATE-PFAD".
 
 ``paket`` — Trainingspaket mit Tages-Split für das Nachtraining
 ---------------------------------------------------------------
@@ -287,29 +323,74 @@ def run_messen(args) -> int:
           f"min_hits={scorer.min_hits}, min_peak={scorer.min_peak}")
     print(f"Korpus: {len(im_korpus)} Clips\n")
 
-    ergebnis: dict[str, list] = {"positiv": [], "negativ": []}
+    from tools.verifier_probe import _day   # gleiche Tages-Ableitung wie im Paket
+
+    train_tage: set[str] = set()
+    if args.split:
+        try:
+            with open(args.split) as fh:
+                paket = json.load(fh)
+            train_tage = set(paket.get("train_tage") or [])
+            print(f"Trainings-Split aus {args.split}: "
+                  f"{len(train_tage)} Train-Tage, "
+                  f"{len(paket.get('val_tage') or [])} Val-Tage "
+                  f"(erstellt {paket.get('erstellt', '?')})\n")
+        except Exception as e:
+            print(f"⚠️  Split-Manifest nicht lesbar ({e}) — messe ohne Aufteilung")
+
+    # (gruppe, unter) → Liste; gruppe ist "train" (im Nachtraining gesehen) oder
+    # "frisch" (nicht gesehen: Val-Tage plus alles nach dem Training).
+    ergebnis: dict[tuple[str, str], list] = {}
     for audio, pfad in sorted(im_korpus.items()):
         klasse = manifest.get(audio, {}).get("klasse")
         unter = ORDNER.get(klasse) or os.path.basename(os.path.dirname(pfad))
-        if unter not in ergebnis:
+        if unter not in ("positiv", "negativ"):
             continue
+        gruppe = "train" if _day(audio) in train_tage else "frisch"
         r = scorer.score_wav(pfad)
-        ergebnis[unter].append((audio, r))
+        ergebnis.setdefault((gruppe, unter), []).append((audio, r))
         if args.verbose:
-            print(f"  {audio}  score={r['max_score']:.2f} streak={r['best_streak']} "
+            print(f"  [{gruppe:6s}] {audio}  score={r['max_score']:.2f} "
+                  f"streak={r['best_streak']} "
                   f"trigger={'JA' if r['triggered'] else 'nein'} robust={r['robust']}")
+
+    def _zeile(gruppe: str, unter: str, richtung: str) -> None:
+        clips = ergebnis.get((gruppe, unter), [])
+        if not clips:
+            print(f"  {unter:8s} — keine Clips")
+            return
+        feuert = sum(1 for _, r in clips if r["triggered"])
+        print(f"  {unter:8s} {feuert:3d}/{len(clips):3d} lösen aus  "
+              f"({feuert / len(clips):.0%})   ← {richtung}")
 
     print("=" * 62)
     print("AUSGANGSMESSUNG — was ein nachtrainiertes Modell schlagen muss")
     print("=" * 62)
-    for unter, richtung in (("positiv", "soll hoch bleiben"), ("negativ", "soll fallen")):
-        clips = ergebnis[unter]
-        if not clips:
-            print(f"{unter:8s} — keine Clips im Korpus")
-            continue
-        feuert = sum(1 for _, r in clips if r["triggered"])
-        print(f"{unter:8s} {feuert:3d}/{len(clips):3d} lösen aus  "
-              f"({feuert / len(clips):.0%})   ← {richtung}")
+    if not train_tage:
+        print("Ganzer Korpus (ohne --split ist nicht zu trennen, was das Modell "
+              "im Training schon gesehen hat):")
+        for unter, richtung in (("positiv", "soll hoch bleiben"), ("negativ", "soll fallen")):
+            clips = (ergebnis.get(("train", unter), [])
+                     + ergebnis.get(("frisch", unter), []))
+            if not clips:
+                print(f"  {unter:8s} — keine Clips im Korpus")
+                continue
+            feuert = sum(1 for _, r in clips if r["triggered"])
+            print(f"  {unter:8s} {feuert:3d}/{len(clips):3d} lösen aus  "
+                  f"({feuert / len(clips):.0%})   ← {richtung}")
+    else:
+        # Die FRISCHE Hälfte zuerst und zuerst genannt: sie ist die Zahl, die
+        # etwas behauptet. Die Train-Hälfte steht daneben, weil ihre Differenz
+        # zeigt, wie viel Ueberanpassung im Spiel ist — nicht als Erfolgsmeldung.
+        print("FRISCH — Clips, die dieses Modell im Training NICHT gesehen hat")
+        print("         (Val-Tage des Pakets plus alles danach). Diese Zahl gilt.")
+        _zeile("frisch", "positiv", "soll hoch bleiben")
+        _zeile("frisch", "negativ", "soll fallen")
+        print()
+        print("TRAIN  — Clips AUS dem Training. Selbstmessung, kein Beleg;")
+        print("         der Abstand zur frischen Hälfte ist das Mass der Ueberanpassung.")
+        _zeile("train", "positiv", "muss hoch sein, sonst lief das Training schief")
+        _zeile("train", "negativ", "muss niedrig sein, sonst lief das Training schief")
     print("\nGrenzen dieser Zahl: siehe Docstring (keine FP/Stunde, "
           "Überanpassungs-Gefahr, schiefer Korpus).")
     return 0
@@ -431,6 +512,11 @@ def main() -> int:
     p.add_argument("--bundle", default="gaston")
     p.add_argument("--threshold", type=float, default=None)
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--split", default=None, metavar="PAKET_MANIFEST.JSON",
+                   help="paket_manifest.json des Nachtrainings. Trennt die "
+                        "Messung in 'frisch' (nie im Training gesehen) und "
+                        "'train' (Selbstmessung) — ohne das ist die Zahl "
+                        "teilweise Selbstmessung und sagt weniger, als sie zeigt.")
     p.set_defaults(func=run_messen)
 
     p = sub.add_parser("paket", help="Trainingspaket mit Tages-Split schnüren")
