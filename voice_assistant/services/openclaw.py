@@ -57,6 +57,33 @@ def query_status(token: str, session: str, on_done=None) -> str | None:
     return query(STATUS_PROMPT, token=token, session=session, on_done=on_done, wrap=False)
 
 
+ABORT_PROMPT = (
+    "[Systemnachricht vom Voice-Kanal, kein neuer Auftrag: Der Nutzer hat den "
+    "laufenden Sprach-Turn abgebrochen (Stopp-Wort am Lautsprecher). Die "
+    "Verbindung zu deiner Antwort wurde geschlossen. Stelle die Arbeit an dem "
+    "abgebrochenen Auftrag ein, fuehre nichts davon nachtraeglich aus und "
+    "frage nicht nach. Antworte ausschliesslich mit NO_REPLY.]"
+)
+
+
+def notify_abort(token: str, session: str) -> None:
+    """Dem Brain den Abbruch mitteilen — blockierend, gehoert in einen Thread.
+
+    Warum ueberhaupt: das Schliessen der SSE-Verbindung bricht den Agent-Run
+    serverseitig ab, hinterlaesst im Verlauf der Session aber einen abrupt
+    endenden Turn. Ohne diesen Vermerk kann der Brain den naechsten Turn als
+    Fortsetzung lesen und die abgebrochene Arbeit von sich aus zu Ende
+    fuehren — genau das, was der Abbruch verhindern soll.
+
+    Die Antwort wird verworfen (angefordert ist NO_REPLY): der Nutzer hat
+    gerade um Ruhe gebeten, da wird nicht zurueckgesprochen.
+    """
+    try:
+        query(ABORT_PROMPT, token=token, session=session, wrap=False)
+    except Exception as e:
+        print(f"⚠️  Abbruch-Vermerk an OpenClaw fehlgeschlagen: {e}")
+
+
 def query(
     text: str,
     token: str,
@@ -146,6 +173,8 @@ def query_stream(
     mood: dict | None = None,
     on_sentence: Callable[[str], None] | None = None,
     on_first_text: Callable[[], None] | None = None,
+    control=None,  # state.TurnControl | None
+    turn: int | None = None,
 ) -> tuple[str | None, bool]:
     """Streaming-Variante von query(): liest SSE-Events und liefert fertige Sätze
     via on_sentence-Callback, sobald split_into_sentences eine Satzgrenze erkennt.
@@ -156,6 +185,11 @@ def query_stream(
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     on_sentence: wird für jeden abgeschlossenen Satz aufgerufen (kann parallel sprechen).
     on_first_text: wird einmalig beim ersten Delta aufgerufen (z.B. ThinkingWorker stoppen).
+    control/turn: Abbruch-Schranke des Turns (state.TurnControl). Die offene
+        Antwort wird dort als Closer hinterlegt — ein Abbruch schliesst die
+        Verbindung, und laut OpenClaws eigener Doku zu /v1/responses bricht
+        ein getrennter HTTP-Client den Agent-Run ab. Ohne das waere ein
+        "Stopp" nur Schweigen, waehrend der Brain weiterarbeitet.
     Gibt (text, timed_out) zurück: den vollständigen akkumulierten Text (für
     Telegram-Spiegelung) oder None bei Fehler, und ob der Abbruch ein Timeout
     war. timed_out=True heißt: der Server arbeitet vermutlich noch am Turn —
@@ -202,8 +236,17 @@ def query_stream(
 
     try:
         with urllib.request.urlopen(req, timeout=OPENCLAW_STREAM_TIMEOUT) as resp:
+            if control is not None and turn is not None:
+                # Ohne turn gibt es keinen abbrechbaren Turn — dann NICHT
+                # registrieren: register_closer wuerde einen fremden/ungueltigen
+                # Turn als "schon ueberholt" lesen und die eben geoeffnete
+                # Verbindung sofort schliessen.
+                control.register_closer(turn, resp.close)
             current_event: str | None = None
             for raw_line in resp:
+                if control is not None and turn is not None and control.cancelled(turn):
+                    print("🛑 OpenClaw-Stream abgebrochen (Barge-in)")
+                    return full_text or None, False
                 line = raw_line.decode("utf-8").rstrip("\r\n")
 
                 if line.startswith("event:"):
@@ -263,14 +306,28 @@ def query_stream(
         print(f"❌ OpenClaw stream HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
         return None, False
     except TimeoutError:
+        # Abbruch zuerst pruefen: timed_out=True wuerde sonst eine
+        # Status-Nachfrage ausloesen und den gerade gestoppten Turn per
+        # Umweg doch noch zu Ende bringen.
+        if control is not None and turn is not None and control.cancelled(turn):
+            print("🛑 OpenClaw-Stream abgebrochen (Barge-in)")
+            return full_text or None, False
         print(f"❌ OpenClaw stream timeout ({OPENCLAW_STREAM_TIMEOUT}s ohne Daten)")
         return full_text or None, True
     except urllib.error.URLError as e:
+        if control is not None and turn is not None and control.cancelled(turn):
+            print("🛑 OpenClaw-Stream abgebrochen (Barge-in)")
+            return full_text or None, False
         if isinstance(e.reason, TimeoutError):
             print(f"❌ OpenClaw stream timeout ({OPENCLAW_STREAM_TIMEOUT}s ohne Daten)")
             return full_text or None, True
         print(f"❌ OpenClaw stream error: {e}")
         return None, False
     except Exception as e:
+        # Ein Abbruch schliesst den Socket unter dem Leser weg — das ist kein
+        # Fehler, sondern die gewollte Wirkung. Nicht als Stoerung melden.
+        if control is not None and turn is not None and control.cancelled(turn):
+            print("🛑 OpenClaw-Stream abgebrochen (Barge-in)")
+            return full_text or None, False
         print(f"❌ OpenClaw stream error: {e}")
         return None, False

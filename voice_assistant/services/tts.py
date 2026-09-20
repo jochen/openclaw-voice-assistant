@@ -29,7 +29,7 @@ from voice_assistant.config import (
     SPEACHES_TIMEOUT,
 )
 from voice_assistant.services.speaches import SpeachesState
-from voice_assistant.state import tts_lock
+from voice_assistant.state import tts_lock, turn_stopped
 
 PlayWav = Callable[[str], None]
 
@@ -287,6 +287,24 @@ class SpeachesTts:
             return resp.read()
 
     def synth(self, text: str) -> bytes | None:
+        """WAV-Bytes der gerenderten Sprache, oder None bei Fehler.
+
+        **Zwei Eigenschaften dieser Bytes, die schon je einen Messlauf gekostet
+        haben** (2026-09-20, siehe tools/bargein_echo_test.py):
+
+        1. **Der WAV-Header luegt ueber die Laenge.** Speaches streamt und setzt
+           ``nframes`` auf den Platzhalter 2147483647 — bei 22050 Hz sind das
+           97391 Sekunden. ``readframes(getnframes())`` ist harmlos (es liest,
+           was da ist), aber jede RECHNUNG mit ``getnframes()`` ist falsch:
+           Dauer, Fortschritt, "ist die Datei plausibel". Die Laenge muss aus
+           der Menge der gelesenen Bytes kommen
+           (``len(roh) / (rate * channels * sampwidth)``).
+        2. **Dasselbe Wort klingt jedes Mal anders.** Drei Renderings desselben
+           Satzes ergaben 137294 / 130638 / 133710 Bytes. Wer gegen TTS-Ausgabe
+           misst, braucht deshalb Wiederholungen — ein Durchlauf ist eine
+           Stichprobe von eins, und ein Befund, der beim ersten Mal ausbleibt,
+           kann beim zweiten da sein.
+        """
         from voice_assistant.state import voice_state
         vm, vv, vsp = voice_state.get()
         model = vm or self.model
@@ -510,10 +528,20 @@ class ReplySpeaker:
             if tmp_wav and os.path.exists(tmp_wav):
                 os.unlink(tmp_wav)
 
-    def speak(self, text: str, restore_leds: bool = True) -> None:
+    def speak(self, text: str, restore_leds: bool = True, turn: int | None = None) -> None:
+        """turn: Nummer des Turns aus state.turn_control (None = kein
+        abbrechbarer Turn, siehe state.turn_stopped).
+
+        Vor jedem Satz wird geprueft, ob der Turn abgebrochen wurde. Das
+        Abwuergen der LAUFENDEN Datei macht die Senke (AudioSink.stop); diese
+        Pruefung verhindert, dass danach der naechste Satz anfaengt — sonst
+        wuerde ein Abbruch nur eine Luecke in die Antwort schneiden.
+        """
         from voice_assistant.services.leds import (
             LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION, LED_OPENCLAW,
         )
+        if turn_stopped(turn):
+            return
         with tts_lock:
             clean = self.tts_prefix + clean_for_tts(text)
             if not clean.strip():
@@ -529,6 +557,9 @@ class ReplySpeaker:
             if self.speaches.state.tts_ok():
                 print("🔄 TTS: Speaches (sentence by sentence)...")
                 for i, sentence in enumerate(sentences):
+                    if turn_stopped(turn):
+                        print(f"🛑 Abbruch — Rest der Ansage entfaellt ({len(sentences) - i} Satz/Sätze)")
+                        break
                     print(f"🔊 Sentence {i + 1}/{len(sentences)}: '{sentence}'")
                     if restore_leds:
                         self.leds.set_phase(LED_AUDIO_OUT)
@@ -544,7 +575,7 @@ class ReplySpeaker:
                         break
                 played = True
 
-            if not played:
+            if not played and not turn_stopped(turn):
                 print("🔄 TTS: Piper (local)...")
                 if restore_leds:
                     self.leds.set_phase(LED_AUDIO_OUT)
@@ -562,10 +593,10 @@ class ReplySpeaker:
             if not restore_leds:
                 self.leds.set_phase(LED_OPENCLAW)
 
-    def stream_session(self, restore_leds: bool = True) -> "ReplyStreamSession":
+    def stream_session(self, restore_leds: bool = True, turn: int | None = None) -> "ReplyStreamSession":
         """Liefert eine Sitzung, die Antwort-Sätze abspielt, sobald sie aus dem
         OpenClaw-Stream eintreffen (statt erst nach Volltext wie speak())."""
-        return ReplyStreamSession(self, restore_leds)
+        return ReplyStreamSession(self, restore_leds, turn)
 
 
 class ReplyStreamSession:
@@ -574,9 +605,10 @@ class ReplyStreamSession:
     end() einmal am Schluss. Jeder Satz wird hier verbalisiert (clean_for_tts) —
     der Stream-Buffer liefert Rohsätze."""
 
-    def __init__(self, sp: "ReplySpeaker", restore_leds: bool) -> None:
+    def __init__(self, sp: "ReplySpeaker", restore_leds: bool, turn: int | None = None) -> None:
         self.sp = sp
         self.restore_leds = restore_leds
+        self.turn = turn
         self.spoke = False
         self._led_set = False
         self._first = True
@@ -586,6 +618,8 @@ class ReplyStreamSession:
         from voice_assistant.services.leds import (
             LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION,
         )
+        if turn_stopped(self.turn):
+            return
         # tts_prefix nur dem ersten Satz voranstellen (wie speak(): prefix ungecleant)
         clean = (self.sp.tts_prefix if self._first else "") + clean_for_tts(sentence)
         self._first = False

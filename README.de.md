@@ -187,9 +187,35 @@ python -m venv esphome-venv
 esphome-venv/bin/pip install esphome
 ```
 
-**Funktionsweise:** Der Pi verbindet sich via ESPHome Native API (Port 6053, `aioesphomeapi`) mit dem ESP. Audio streamt kontinuierlich über die `voice_assistant`-Komponente im API_AUDIO-Modus. TTS-Ausgabe wird als WAV über die `media_player`-Announce-API zurückgespielt — der Pi stellt die WAV-Datei per HTTP (Port 18800) bereit, der ESP lädt und spielt sie ab.
+**Funktionsweise:** Der Pi verbindet sich via ESPHome Native API (Port 6053, `aioesphomeapi`) mit dem ESP. Audio streamt kontinuierlich über die `voice_assistant`-Komponente im API_AUDIO-Modus. TTS-Ausgabe wird als WAV zurückgespielt — der Pi stellt die WAV-Datei per HTTP (Port 18800) bereit, der ESP lädt und spielt sie ab.
 
 Wakeword-Erkennung (`openwakeword`) läuft auf dem Pi gegen den Audio-Stream.
+
+**Die Wiedergabe läuft über die `media_player`-Entity, nicht über die
+Voice-Assistant-Announce-API — und das ist Absicht.** Die Announce-API
+(`send_voice_assistant_announcement_*`) beendet die `voice_assistant`-Session
+des ESP: `handle_stop` feuert, der Audio-Strom reißt ab, und die Session muss
+danach neu gestartet werden. Die Folge fällt leicht nicht auf und ist mühsam zu
+finden: **der Pi ist für die gesamte Dauer jeder gesprochenen Antwort taub.**
+Kein Wakewort, kein Dazwischenreden, nichts. Schickt man die URL stattdessen an
+die `media_player`-Entity (`media_player_command(media_url=…,
+announcement=True)`), bleibt die Session unberührt, das Mikrofon läuft also
+durch die Wiedergabe hindurch — und anders als eine Ansage lässt sich die
+Wiedergabe mitten im Satz abbrechen. Ein Firmware-Wechsel ist dafür nicht
+nötig; ESPHomes eigenes `on_announce` macht intern genau denselben
+Media-Player-Aufruf.
+
+Zwei Dinge, die man wissen muss, wenn man darauf aufbaut:
+
+- **Eine Ansage meldet sich als `PLAYING`, nicht als `ANNOUNCING`.** Wer auf
+  `MediaPlayerState.ANNOUNCING` wartet, um das Abspielen zu erkennen, wartet
+  auf etwas, das nie kommt — jeder Satz läuft dann in die eigene
+  Start-Zeitschranke. Beide Zustände akzeptieren (siehe
+  `RespeakerClient._BUSY_STATES`). Uns hat das 5 Sekunden Zusatzlatenz pro
+  Satz gekostet, bevor es auffiel.
+- **Für das Ende der Wiedergabe immer einen Rückfallweg vorsehen.** Bleibt das
+  Zustands-Ereignis aus, lieber auf die Länge der WAV-Datei zurückfallen als
+  endlos warten — sonst hängt ein fehlendes Ereignis einen ganzen Turn.
 
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 
@@ -272,6 +298,106 @@ ow-venv/bin/python -m tools.wake_corpus sichern   # gelabelte Clips aus dem selb
 ow-venv/bin/python -m tools.wake_corpus bilanz    # was gesichert ist — und welche Labels ihr Audio verloren haben
 ow-venv/bin/python -m tools.wake_corpus messen    # das laufende Bundle gegen diesen Korpus scoren
 ```
+
+## Einen Turn abbrechen, während er läuft (`barge_in`, optional)
+
+Ein Wakeword-Fehltrigger ist nicht das Teure. Teuer ist, was danach passiert:
+der Assistent wiederholt das Verstandene, das Sprachmodell fängt an zu
+arbeiten, und was dieses Modell dann tut, tut es. Bis hierher gab es genau
+einen Ausweg — ein Stopp-Wort **innerhalb der Aufnahme**, geprüft am
+Transkript. War die Aufnahme vorbei, lief der Turn zu Ende.
+
+Diese Lücke wurde größer, als die gesprochene Quittung („Ja?") bei
+durchgesprochenen Ein-Satz-Kommandos wegfiel: ohne diesen hörbaren Hinweis
+merkt man einen Fehltrigger oft erst, wenn der Assistent schon antwortet.
+
+Mit aktiviertem `barge_in` wird das Wakewort auch gehört, **während der
+Assistent selbst dran ist**. „Stopp <Wakewort>" bricht den laufenden Turn
+dann ab:
+
+- die Wiedergabe endet mitten im Satz,
+- die Lebenszeichen-Phrasen hören auf,
+- die HTTP-Verbindung zum Backend wird geschlossen, was den **Agent-Run
+  serverseitig abbricht** (dokumentiertes Verhalten von `/v1/responses`: ein
+  getrennter Client bricht den Run ab),
+- nichts wird in den Chat gespiegelt, keine Follow-up-Runde beginnt,
+- und optional geht eine kurze Systemnachricht in dieselbe Session, damit das
+  Modell den Abbruch in seinem Verlauf sieht und den nächsten Turn nicht als
+  Fortsetzung liest.
+
+Das Stopp-Wort wird **nicht** am Wakeword-Ereignis erkannt, sondern danach am
+Transkript. Der Trigger feuert auf das Wakewort, und das „Stopp", das davor
+gesprochen wurde, steckt im Pre-Roll-Puffer. Deshalb funktionieren
+„Stopp <Wakewort>" und „<Wakewort>, Stopp" gleichermaßen — und deshalb ist ein
+Barge-in *ohne* Stopp-Wort einfach ein neuer Auftrag, also das gewohnte
+Dazwischenreden.
+
+```yaml
+profiles:
+  deinprofil:
+    barge_in:
+      enabled: true
+      # Auch hören, während der Assistent selbst spricht? Siehe Warnung unten.
+      while_speaking: false
+      # Pegel-Gate für den Abbruch. Ohne Eintrag gilt wake_rms_min des Profils.
+      rms_min: 400
+      # Kurze gesprochene Quittung nach einem Abbruch. Leer = stumm.
+      ack: "Okay."
+      # Systemnachricht über den Abbruch in dieselbe Session posten.
+      notify_brain: true
+      # Optional: eigenes Bundle für den Abbruch. Ohne Eintrag werden die
+      # Wakewords des Profils benutzt.
+      wakewords:
+        - bundle: stopp_gaston
+          min_hits: 2
+```
+
+> **Miss nach, ob dein Assistent seine eigene Stimme erkennt, bevor du
+> `while_speaking: true` setzt.** Das ist kein theoretisches Risiko, und die
+> beiden Zahlen liegen weit auseinander:
+>
+> ```bash
+> ow-venv/bin/python -m tools.bargein_echo_test digital --wiederholungen 5
+> ow-venv/bin/python -m tools.bargein_echo_test akustisch --wiederholungen 3
+> ```
+>
+> | Lauf | Selbst-Trigger | höchster Score |
+> |---|---|---|
+> | `digital` — reines TTS-Signal, kein Raum, keine Echo-Unterdrückung | **5 von 40** | **0,97** |
+> | `akustisch` — echter Lautsprecher → Echo-Unterdrückung → echtes Mikro | **0 von 24** | **0,07** |
+>
+> Digital ist der Befund strukturell: ein Wakeword-Modell, das auf
+> synthetischen Stimmen trainiert wurde, erkennt *die synthetische Stimme, mit
+> der dein Assistent spricht* — sie liegt innerhalb seiner
+> Trainingsverteilung. Getroffen hat es alle drei Gate-Pfade und vier
+> verschiedene Sätze, darunter eine Denk-Phrase, in der das Wakewort gar nicht
+> vorkommt. Es ist also nicht bloß die Bestätigung, die das Transkript
+> wiederholt.
+>
+> Akustisch fiel dasselbe Material auf unserer Hardware auf 0,07: die
+> Echo-Unterdrückung nimmt dem Signal nicht nur Pegel, sondern die
+> Wakeword-Eigenschaft. Deshalb ist **der Default `while_speaking: false`**,
+> während unsere eigene Installation auf `true` läuft — die gute Zahl hängt
+> vollständig daran, dass im Audio-Pfad eine Echo-Unterdrückung sitzt (beim
+> ReSpeaker nur mit `use_speaker: true`, wo der XVF3800 die
+> Lautsprecher-Referenz hat). Geht die Wiedergabe stattdessen über einen
+> gewöhnlichen ALSA-Lautsprecher, gilt die digitale Zahl.
+>
+> Mit `while_speaking: false` ist ein Selbst-Abbruch strukturell unmöglich —
+> gehört wird nur, solange nichts gesprochen wird — und der Abbruch greift
+> weiterhin beim Denken und Warten, also im Fenster, das Sekunden bis Minuten
+> dauert. Nach einem Wechsel von Stimme, Lautstärke, Modell oder Audio-Hardware
+> neu messen.
+
+**Was ein Abbruch nicht kann:** ein Schaltbefehl, den der Voice-Aktuator
+erledigt, ist etwa eine halbe Sekunde nach Aufnahmeende schon ausgeführt. Da
+kommt kein gesprochenes „Stopp" hinterher. Die Wiedergabe zu stoppen macht das
+Licht nicht wieder aus. Barge-in schützt vor dem Sprachmodell, nicht vor einer
+Lampe.
+
+Jeder Abbruch und jeder Near-Miss landet in `wake_events.log`
+(`result: "bargein"` / `"bargein_nearmiss"`) samt eigenem Audio-Clip — das Gate
+lässt sich damit offline sweepen wie das Wakewort selbst.
 
 ## Voice-Aktuator (optional)
 
@@ -636,7 +762,7 @@ des Werkzeugs — nicht im Chat, nicht im Kopf. Einige dieser Werkzeuge stehen
 oben in ihrem Fachabschnitt (Aktuator, Wakeword, Endpointing); hier sind alle,
 geordnet nach dem Zeitpunkt, ab dem man sie nutzen kann.
 
-Zwei Lehren haben diese Disziplin geprägt, beide schmerzhaft gelernt:
+Vier Lehren haben diese Disziplin geprägt, alle schmerzhaft gelernt:
 
 - Eine Messung, die nur in einem Scratchpad stand, war einen Tag später weder
   reproduzierbar noch gültig. Zahlen, die nicht beim Werkzeug committet sind,
@@ -645,6 +771,20 @@ Zwei Lehren haben diese Disziplin geprägt, beide schmerzhaft gelernt:
   behauptete vier Tage lang einen Effekt, den seine eigenen Zahlen widerlegten.
   Ein Werkzeug muss sein Urteil aus den aktuellen Daten *berechnen*, nicht
   behaupten.
+- **Ein Werkzeug muss merken, wenn es nichts gemessen hat.** Eines davon erklärte
+  einen Lauf für ungültig, sobald der Mikrofon-Pegel unter einer *geratenen*
+  Schwelle lag. Gemessen lag genau das Signal, das es erkennen sollte, auf Höhe
+  dieser geratenen Schwelle — das Werkzeug verwarf also gültige Läufe und hätte
+  einen echten Befund verdeckt. Wenn ein Werkzeug ein Gültigkeitskriterium hat,
+  muss dieses aus etwas Beobachtbarem folgen (hat die Wiedergabe überhaupt
+  stattgefunden? wie hoch ist der Grundpegel dieses Raums?), nicht aus einer
+  Zahl, die plausibel schien.
+- **Wo etwas Generatives im Spiel ist, ist ein Lauf eine Stichprobe von eins.**
+  Unser TTS rendert denselben Satz jedes Mal anders (drei Renderings eines
+  Satzes: 137294 / 130638 / 133710 Bytes). Ein Selbst-Trigger trat deshalb in
+  verschiedenen Läufen an verschiedenen Sätzen auf, und ein einzelner Durchlauf
+  über acht Sätze fand beim ersten Versuch nichts. Wiederholungen sind dort der
+  Normalfall, nicht die Feinarbeit.
 
 Die meisten dieser Werkzeuge brauchen **einige Tage Betrieb**, bevor sie etwas
 liefern, weil sie auf dem Trigger-Archiv und `wake_events.log` aufsetzen. Am
@@ -667,6 +807,15 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
   aus diesen Takes vor, kein Alltagsarchiv nötig (siehe Pegel-Gate-Abschnitt).
   ```bash
   ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
+  ```
+- `bargein_echo_test` — misst, ob die **eigene Stimme** des Assistenten den
+  Abbruch-Detektor auslöst (siehe Barge-in-Abschnitt oben). `digital` braucht
+  keine Hardware und liefert die untere Schranke; `akustisch` spielt über den
+  echten Lautsprecher, während das echte Mikrofon mithört — das ist die Zahl,
+  die darüber entscheidet, ob `while_speaking: true` tragfähig ist.
+  ```bash
+  ow-venv/bin/python -m tools.bargein_echo_test digital
+  ow-venv/bin/python -m tools.bargein_echo_test akustisch
   ```
 
 **Nach einigen Tagen Betrieb (sobald das Archiv existiert):**

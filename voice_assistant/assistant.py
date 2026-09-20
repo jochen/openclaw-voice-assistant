@@ -85,10 +85,14 @@ from voice_assistant.state import (
     current_state,
     pending_reply_text,
     reply_done_event,
+    tts_lock,
+    turn_control,
     voice_state,
 )
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
 from voice_assistant.wakeword.respeaker import RespeakerWakeword
+from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
+from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
 from voice_assistant.workers import Workers
 
@@ -350,10 +354,18 @@ def _make_audio(profile: Profile):
     return AlsaSource(profile.local_audio), AlsaSink(profile.local_audio.playback_device)
 
 
-def _make_wakeword(profile: Profile):
+def _make_wakeword(profile: Profile, wakewords: list | None = None):
+    """Wakeword-Engine fuer ein Profil.
+
+    wakewords: eigene Liste statt profile.wakewords — fuer die ZWEITE Instanz,
+    die den Abbruch waehrend der eigenen Ansage erkennt (siehe bargein.py).
+    Eine geteilte Instanz waere falsch: der Streak-Zaehler wuerde Zustand
+    ueber den Wechsel zwischen Leerlauf und Ansage hinwegtragen.
+    """
+    ww = profile.wakewords if wakewords is None else wakewords
     if profile.mode == "respeaker":
-        return RespeakerWakeword(profile.respeaker, profile.wakewords)
-    return OpenWakewordEngine(profile.wakewords)
+        return RespeakerWakeword(profile.respeaker, ww)
+    return OpenWakewordEngine(ww)
 
 
 def _wakeword_ack_path(bundle: str, multi: bool) -> str:
@@ -367,6 +379,33 @@ def _wakeword_ack_path(bundle: str, multi: bool) -> str:
         return PIPER_OUT
     safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", bundle) or "wakeword"
     return os.path.join(WORKSPACE, f"ack_{safe}.wav")
+
+
+def _sink_stop(audio_sink) -> None:
+    """Laufende Wiedergabe abbrechen, falls die Senke das kann.
+
+    getattr statt harter Aufruf: eine fremde/aeltere Senke ohne stop() soll
+    keinen Absturz mitten im Abbruch verursachen — dann bleibt eben der
+    angefangene Satz stehen, der Rest des Abbruchs greift trotzdem.
+    """
+    fn = getattr(audio_sink, "stop", None)
+    if fn is None:
+        return
+    try:
+        fn()
+    except Exception as e:
+        print(f"⚠️  Wiedergabe-Abbruch fehlgeschlagen: {e}")
+
+
+def _sink_resume(audio_sink) -> None:
+    """Abbruch-Marke der Senke loeschen (neuer Turn darf wieder sprechen)."""
+    fn = getattr(audio_sink, "resume", None)
+    if fn is None:
+        return
+    try:
+        fn()
+    except Exception as e:
+        print(f"⚠️  Wiedergabe-Freigabe fehlgeschlagen: {e}")
 
 
 def _make_leds(profile: Profile) -> LedDirector:
@@ -461,51 +500,6 @@ def _log_endpoint(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:  # Logging darf den Loop nie crashen
         print(f"⚠️  endpoint-log: {exc}")
-
-
-def _gate_passed(
-    wake_hits: int,
-    wake_peak: float,
-    min_hits: int,
-    min_peak: float,
-    min_peak_short: float,
-    min_peak_single: float,
-) -> bool:
-    """Entscheidet, ob ein beendeter Streak triggern darf.
-
-    Zwei Wege, absichtlich als ODER: der bisherige Streak-Weg (min_hits Frames
-    plus gestufte Peak-Anforderung) und — falls konfiguriert — ein einzelner
-    sehr hoher Frame. Der zweite ist ADDITIV; min_hits bleibt unangetastet,
-    damit die Gap-Toleranz im Streak-Zähler unverändert erst ab min_hits
-    greift (sonst würde sie zwei unabhängige Rausch-Spitzen zusammennähen).
-
-    Der 1-Frame-Weg existiert, weil 5 der 6 nachweislich echten, verlorenen
-    Rufe vom 2026-07-26 als EINZELNE Spitze ankamen (Nachbar-Frames bei 0.01)
-    und damit an min_hits scheiterten, nicht am Peak. Siehe
-    WakewordHit.min_peak_single für die Datenbasis und tools/wake_triage.py
-    für das Verfahren, mit dem echte Rufe von Rauschen getrennt wurden.
-    """
-    if wake_hits >= min_hits and wake_peak >= _required_peak(
-        wake_hits, min_peak, min_peak_short
-    ):
-        return True
-    return wake_hits == 1 and min_peak_single > 0.0 and wake_peak >= min_peak_single
-
-
-def _required_peak(
-    wake_hits: int, min_peak: float, min_peak_short: float, min_peak_single: float = 0.0
-) -> float:
-    """Peak-Anforderung abhängig von der Streak-Länge.
-
-    Kurz-Streaks (< 3 Frames, also der min_hits-2-Pfad) müssen min_peak_short
-    erreichen, längere Streaks min_peak. Datenbasis Live-Logs 2026-07-08..13:
-    alle vier 2-Frame-Trigger waren False Positives (Peaks 0.70/0.77/0.83/0.92),
-    der einzige echte 2-Frame-Ruf peakte 0.93 — ab 3 Frames tragen die
-    zusätzlichen Hits die Evidenz, dort bleibt min_peak ausreichend.
-    """
-    if wake_hits == 1 and min_peak_single > 0.0:
-        return min_peak_single
-    return min_peak_short if wake_hits < 3 else min_peak
 
 
 def _wake_level_rms(wake_ring: deque) -> float:
@@ -737,6 +731,29 @@ def run() -> None:
               f"failed_on=min_rms)")
     else:
         print("🔊 Pegel-Gate aus (wake_rms_min=0)")
+
+    # --- Barge-in ("Stopp Gaston"): zweite Wakeword-Instanz fuers Fenster,
+    # in dem der Assistent selbst dran ist (Bestaetigung, Denken, Vorlesen).
+    # Ohne den Profil-Block barge_in: bleibt alles wie vorher. Siehe bargein.py
+    _barge_cfg = profile.barge_in
+    bargein: BargeInDetector | None = None
+    if _barge_cfg.enabled:
+        _barge_rms = _barge_cfg.rms_min if _barge_cfg.rms_min is not None else _wake_rms_min
+        bargein = BargeInDetector(
+            _make_wakeword(profile, _barge_cfg.wakewords),
+            rms_min=_barge_rms,
+        )
+        print(
+            "🛑 Barge-in aktiv: "
+            f"{', '.join(w.bundle for w in _barge_cfg.wakewords)} "
+            f"(Pegel-Gate {_barge_rms:.0f}, "
+            f"waehrend eigener Ansage: "
+            f"{'JA' if _barge_cfg.while_speaking else 'nein — nur in den Luecken'}, "
+            f"Vermerk an den Brain: {'ja' if _barge_cfg.notify_brain else 'nein'})"
+        )
+    else:
+        print("🛑 Barge-in aus (kein barge_in-Block im Profil)")
+
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
     # --- Services zusammenstecken ---
@@ -765,6 +782,7 @@ def run() -> None:
         diarizer=diarizer,
         mood_analyzer=mood_analyzer,
         use_stream=profile.openclaw_stream,
+        abort_notify_brain=_barge_cfg.enabled and _barge_cfg.notify_brain,
         voice_controller=voice_controller,
     )
 
@@ -892,6 +910,16 @@ def run() -> None:
     # stehen (anders als trigger_audio_id), damit der AUSGANG des Turns noch auf
     # den Trigger bezogen protokolliert werden kann. Siehe _log_outcome().
     turn_audio: str | None = None
+    # Wie turn_audio, aber NICHT von _log_outcome geleert: der Wake-Clip des
+    # laufenden Turns muss beim Abbruch noch greifbar sein. Ein per Stopp-Wort
+    # abgebrochener Turn ist der haerteste Fehltrigger-Beleg, den es gibt (die
+    # Selbst-Label-Regel aus tools/wake_triage.py) — und genau der ginge sonst
+    # verloren, weil der Turn seine Outcome-Zeile schon geschrieben hat.
+    turn_wake_audio: str | None = None
+    # Wake-Clip des Turns, den ein Barge-in gerade abgebrochen hat. Wird in
+    # STATE_PROCESSING verbraucht: war es ein Stopp-Wort, bekommt DIESER Clip
+    # das Fehltrigger-Label — nicht der Clip des Abbruchs selbst.
+    bargein_abgebrochen_audio: str | None = None
     trigger_audio_bundle = ""
     followup_round = 0                     # aktuelle Follow-up-Runde (0 = kein Follow-up aktiv)
     followup_rms_sum = 0.0
@@ -913,6 +941,23 @@ def run() -> None:
     ack_pending = False
     ack_deadline = 0.0
     ack_path = ""
+    # Barge-in unterdrueckt das "Ja?": der Nutzer hat gerade hineingesprochen
+    # (und im Abbruch-Fall ausdruecklich um Ruhe gebeten) — da ist eine
+    # Rueckfrage die falsche Antwort. Die Ein-Satz-Entscheidung selbst bleibt,
+    # weil davon der straffe Nachlauf haengt.
+    ack_suppress = False
+    # Turn, der aus einem Barge-in entstand. Traegt zwei Dinge: das Stopp-Wort
+    # darf dann als EINZELNES Wort gelten (das Mikro war ohne Wakewort offen —
+    # gleiche Ueberlegung wie bei followup_round/unklar_round), und die Quittung
+    # nach dem Abbruch wird nur hier gesprochen.
+    bargein_round = 0
+    # Barge-in ist gerade stummgeschaltet, weil der Assistent selbst spricht
+    # (nur bei while_speaking=False). Merker, damit der Ring genau EINMAL beim
+    # Uebergang geleert wird und nicht bei jedem Chunk.
+    barge_muted = False
+    # Nummer des laufenden Turns in state.turn_control. Wird in STATE_PROCESSING
+    # vergeben, bevor irgendetwas gesprochen oder an OpenClaw geschickt wird.
+    turn_nr = 0
     # Wie viele der recorded_chunks aus dem Pre-Roll stammen (also VOR dem
     # Trigger aufgenommen wurden) — die haben den VAD nie gesehen und dürfen
     # bei den Sprach-Gates nicht mitzählen.
@@ -1072,6 +1117,7 @@ def run() -> None:
                             unklar_round = 0
                             _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                             turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
+                            turn_wake_audio = turn_audio
                             # Trigger genauso protokollieren wie den Near-Miss —
                             # ein Sweep braucht beide Klassen im selben Log.
                             _log_wake_event({
@@ -1120,6 +1166,7 @@ def run() -> None:
                             ack_pending = True
                             ack_deadline = now + _ACK_DELAY_SEC
                             ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                            ack_suppress = False
                     elif wake_hits >= 1:
                         # Wakeword-Name mitloggen: current_wakeword wurde von den
                         # Frames dieses Streaks gesetzt → erlaubt False-Positive-
@@ -1197,6 +1244,7 @@ def run() -> None:
                         trigger_audio_bundle = current_wakeword.bundle
                         _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                         turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
+                        turn_wake_audio = turn_audio
                         _log_wake_event({
                             "result": "trigger",
                             "via": "timeout",
@@ -1237,6 +1285,7 @@ def run() -> None:
                         ack_pending = True
                         ack_deadline = now + _ACK_DELAY_SEC
                         ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                        ack_suppress = False
                     wake_hits = 0
                     wake_peak = 0.0
                     wake_announced = False
@@ -1292,6 +1341,8 @@ def run() -> None:
                         # so ein Turn endet nach Sekunden statt am Deckel.
                         turn_ein_satz = True
                         print(f"[{now:.1f}s] ⚡ Ein-Satz erkannt — kein Ja?")
+                    elif ack_suppress:
+                        print(f"[{now:.1f}s] 🔇 Barge-in — kein Ja?")
                     elif os.path.exists(ack_path):
                         print(f"[{now:.1f}s] 🔊 Playing acknowledgement...")
                         audio_sink.play_wav(ack_path)
@@ -1370,6 +1421,21 @@ def run() -> None:
             elif state == STATE_PROCESSING:
                 try:
                     text = turn_stt_q.get_nowait()
+                    # Ab hier beginnt die folgenreiche Haelfte des Turns
+                    # (Sprechen, Schalten, OpenClaw). Sie bekommt eine Nummer,
+                    # damit ein Barge-in genau DIESEN Turn abbrechen kann und
+                    # ein verwaister Worker des VORIGEN nicht in ihn
+                    # hineinspricht. Und die Senke wird freigegeben: ein
+                    # vorangegangener Abbruch hat sie stumm geschaltet.
+                    turn_nr = turn_control.begin()
+                    _sink_resume(audio_sink)
+                    # Barge-in-Fenster wird gleich betreten — der Ringpuffer
+                    # darf die eben beendete Aufnahme nicht mitbringen, sonst
+                    # steckt sie im Pre-Roll eines Abbruchs.
+                    if bargein is not None:
+                        bargein.reset()
+                    war_bargein = bargein_round
+                    bargein_round = 0
                     if pending_confirm is not None:
                         # Ja/Nein-Antwort auf eine Aktuator-Rückfrage (Handshake).
                         try:
@@ -1434,10 +1500,16 @@ def run() -> None:
                     # unklar_round zählt hier wie eine Follow-up-Runde: das Mikro
                     # ist ohne Wakewort offen, also muss ein einzelnes "Stopp"
                     # reichen (das strengere Erst-Muster verlangt zwei Wörter).
-                    elif _is_stop_command(text, followup_round or unklar_round):
+                    elif _is_stop_command(text, followup_round or unklar_round or war_bargein):
                         print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
-                        _log_outcome("stopwort", transcript=text)
-                        _flush_endpoint(text, ausgang="stopwort")
+                        _log_outcome(
+                            "stopwort", transcript=text,
+                            via="bargein" if war_bargein else None,
+                        )
+                        _flush_endpoint(
+                            text, ausgang="stopwort",
+                            via="bargein" if war_bargein else None,
+                        )
                         # Diarization- und Mood-Resultat verwerfen damit Queues nicht überlaufen
                         try:
                             turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
@@ -1447,10 +1519,40 @@ def run() -> None:
                             turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
                             pass
+                        # Der abgebrochene Turn war ein Fehltrigger — und das
+                        # ist kein Schluss, sondern eine Handlung des Nutzers:
+                        # er hat mitten in der Antwort "Stopp" gesagt. Dieselbe
+                        # Beweiskraft wie ein Stopp-Wort in der Aufnahme, nur
+                        # einen Turn spaeter. Eigene Zeile auf den Clip des
+                        # abgebrochenen Turns, damit tools/wake_triage.py das
+                        # Label findet (dort sticht die spaetere Zeile die
+                        # fruehere "brain"-Zeile, die kein Label ergibt).
+                        if war_bargein and bargein_abgebrochen_audio:
+                            _log_wake_event({
+                                "result": "outcome",
+                                "audio": bargein_abgebrochen_audio,
+                                "ausgang": "stopwort",
+                                "via": "bargein",
+                                "transcript": text,
+                            })
+                        bargein_abgebrochen_audio = None
+                        # Quittung nur nach einem Barge-in: dort hat der
+                        # Nutzer in eine laufende Ansage hineingesprochen und
+                        # braucht die Auskunft, dass der Abbruch ankam (die LED
+                        # allein sieht er womoeglich nicht). Ein Stopp-Wort in
+                        # der normalen Aufnahme quittiert weiterhin stumm.
+                        if war_bargein and _barge_cfg.ack:
+                            speaker.speak(_barge_cfg.ack, turn=turn_nr)
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
                     elif text:
+                        # Kein Stopp-Wort: der Barge-in war ein neuer Auftrag,
+                        # kein Urteil ueber den abgebrochenen Trigger. Das
+                        # Fehltrigger-Label waere hier falsch — wer eine lange
+                        # Antwort unterbricht, um etwas anderes zu fragen, sagt
+                        # damit nicht, dass der erste Ruf keiner war.
+                        bargein_abgebrochen_audio = None
                         # --- Aktuator-Vorlauf: Schaltkommando? Dann Brain überspringen. ---
                         intent = None
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
@@ -1676,12 +1778,13 @@ def run() -> None:
                                 voice_state.set_last_speaker(spk)
                             voice_controller.apply_speaker_default(spk)
                             leds.set_phase(LED_CONFIRMATION)
-                            workers.start_confirmation(text)
+                            workers.start_confirmation(text, turn=turn_nr)
                             reply_done_event.clear()
                             pending_reply_text[0] = None
                             thinking.start()
                             workers.start_openclaw_turn(
-                                text, speaker=spk_verdict, mood=mood, session=current_wakeword.session
+                                text, speaker=spk_verdict, mood=mood,
+                                session=current_wakeword.session, turn=turn_nr,
                             )
                             state = STATE_WAITING
                             state_start = now
@@ -1716,6 +1819,137 @@ def run() -> None:
 
             # --- WAITING (for OpenClaw reply + TTS) ---
             elif state == STATE_WAITING:
+                # Barge-in: in genau diesem Fenster ist der Assistent selbst
+                # dran (Bestaetigung, Denk-Phrasen, Vorlesen) — und bis hierher
+                # wurde das Mikrofon dabei gelesen und weggeworfen. Jetzt laeuft
+                # dieselbe Wakeword-Erkennung darueber wie im Leerlauf.
+                # Waehrend der EIGENEN Ansage nur lauschen, wenn das Profil es
+                # ausdruecklich erlaubt: das Wakeword-Modell erkennt Gastons
+                # eigene Stimme (gemessen, siehe BargeInConfig.while_speaking),
+                # und ein Selbst-Abbruch wuerde jede Antwort zerhacken.
+                # tts_lock ist dabei die verlaessliche Auskunft "es spricht
+                # gerade jemand von uns" — er wird von JEDER Ausgabe gehalten
+                # (Bestaetigung, Denk-Phrase, Antwortsatz, Ansage von aussen).
+                barge_res = None
+                if bargein is not None:
+                    spricht_selbst = tts_lock.locked() and not _barge_cfg.while_speaking
+                    if spricht_selbst:
+                        if not barge_muted:
+                            # Eigene Ansage beginnt: Zaehler und Ring leeren.
+                            # Sonst wuerde ein halber Streak von vorher nach der
+                            # Ansage fertig gezaehlt, und die eigene Stimme
+                            # landete im Pre-Roll eines spaeteren Abbruchs.
+                            barge_muted = True
+                            bargein.reset()
+                    else:
+                        if barge_muted:
+                            # Eigene Ansage ist GERADE zu Ende. Hier reicht es
+                            # nicht, einfach weiterzuhoeren: openwakeword
+                            # entscheidet aus einem Fenster von rund 1,4 s, und
+                            # die gepufferten Chunks der Quelle liegen auch noch
+                            # da — die ersten Predictions wuerden also ueber
+                            # Gastons eigene Stimme laufen. Und die erkennt das
+                            # Modell zuverlaessig: gemessen 5 Selbst-Trigger auf
+                            # 40 TTS-Renderings (tools/bargein_echo_test.py,
+                            # 2026-09-20), einer davon auf eine Denk-Phrase ohne
+                            # Wakewort darin. Also Quelle leeren und den
+                            # Modell-Kontext verwerfen.
+                            barge_muted = False
+                            audio_source.flush()
+                            bargein.reset()
+                        barge_res = bargein.feed(audio_16)
+
+                    if isinstance(barge_res, BargeInMiss):
+                        # Nicht durchgekommener Abbruch — der Fall, den man
+                        # messen muss. Clip + Zeile, aber kein Eingriff.
+                        nm_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        _save_trigger_audio(
+                            list(bargein.ring), barge_res.bundle, "bargein_nearmiss", nm_id
+                        )
+                        _log_wake_event({
+                            "result": "bargein_nearmiss",
+                            "bundle": barge_res.bundle,
+                            "hits": barge_res.hits,
+                            "peak": round(barge_res.peak, 3),
+                            "min_hits": barge_res.min_hits,
+                            "threshold": barge_res.threshold,
+                            "failed_on": barge_res.failed_on,
+                            "rms": round(barge_res.rms),
+                            "scores": barge_res.scores,
+                            "audio": f"{nm_id}_{barge_res.bundle}_bargein_nearmiss.wav",
+                        })
+                        print(f"[{now:.1f}s] ⚡ Barge-in Near-Miss [{barge_res.bundle}] "
+                              f"({barge_res.hits} Frames, Peak {barge_res.peak:.2f}, "
+                              f"{barge_res.failed_on})")
+                    elif isinstance(barge_res, BargeInHit):
+                        # Ab hier wird der laufende Turn abgebrochen: Wiedergabe
+                        # aus, Denk-Phrasen aus, SSE-Verbindung zu OpenClaw zu
+                        # (das bricht den Agent-Run serverseitig ab). Ob es ein
+                        # ABBRUCH oder ein neuer Auftrag war, entscheidet erst
+                        # das Transkript in STATE_PROCESSING — der laufende Turn
+                        # ist in beiden Faellen hinfaellig.
+                        print(f"[{now:.1f}s] 🛑 Barge-in [{barge_res.bundle}] "
+                              f"(Peak {barge_res.peak:.2f}, {barge_res.hits} Frames, "
+                              f"Pegel {barge_res.rms:.0f}) — Turn wird abgebrochen")
+                        thinking.stop()
+                        _sink_stop(audio_sink)
+                        abgebrochen = turn_control.cancel("barge_in")
+                        _sink_resume(audio_sink)
+                        trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        trigger_audio_bundle = barge_res.bundle
+                        _save_trigger_audio(
+                            list(bargein.ring), trigger_audio_bundle, "bargein", trigger_audio_id
+                        )
+                        # Clip des ABGEBROCHENEN Turns festhalten, bevor
+                        # turn_wake_audio auf den Abbruch-Clip umspringt.
+                        bargein_abgebrochen_audio = turn_wake_audio
+                        turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_bargein.wav"
+                        turn_wake_audio = turn_audio
+                        _log_wake_event({
+                            "result": "bargein",
+                            "bundle": trigger_audio_bundle,
+                            "hits": barge_res.hits,
+                            "peak": round(barge_res.peak, 3),
+                            "min_hits": barge_res.min_hits,
+                            "threshold": barge_res.threshold,
+                            "rms": round(barge_res.rms),
+                            "scores": barge_res.scores,
+                            "cancelled_turn": turn_nr if abgebrochen else None,
+                            "audio": turn_audio,
+                        })
+                        # Aufnahme wie nach einem normalen Trigger, inkl.
+                        # Pre-Roll: das "Stopp" wurde VOR "Gaston" gesprochen
+                        # und steckt genau dort (siehe _PRE_ROLL_SEC).
+                        pre_roll = _pre_roll(bargein.ring, _PRE_ROLL_SEC)
+                        bargein.reset()
+                        reply_done_event.clear()
+                        pending_reply_text[0] = None
+                        pending_confirm = None
+                        leds.set_phase(LED_RECORDING)
+                        state = STATE_RECORDING
+                        state_start = time.time()
+                        recorded_chunks = list(pre_roll)
+                        pre_roll_chunks = len(pre_roll)
+                        silence_counter = 0
+                        max_internal_pause = 0
+                        speech_detected = False
+                        turn_mode = "dialog"
+                        turn_silence_limit = _silence_limit
+                        turn_max_sec = RECORDING_MAX_SEC
+                        turn_ein_satz = False
+                        turn_speech_chunks = 0
+                        turn_rms = []
+                        turn_frames_speech = 0
+                        turn_frames_total = 0
+                        followup_round = 0
+                        unklar_round = 0
+                        bargein_round = 1
+                        ack_pending = True
+                        ack_deadline = now + _ACK_DELAY_SEC
+                        ack_path = ""
+                        ack_suppress = True
+                        continue
+
                 if now - state_start > OPENCLAW_OVERALL_TIMEOUT:
                     print(f"[{now:.1f}s] ⚠️  Overall timeout exceeded")
                     thinking.stop()

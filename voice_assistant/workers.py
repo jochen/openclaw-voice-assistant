@@ -22,6 +22,8 @@ from voice_assistant.state import (
     current_state,
     pending_reply_text,
     reply_done_event,
+    turn_control,
+    turn_stopped,
 )
 
 
@@ -42,6 +44,7 @@ class Workers:
         mood_analyzer: MoodAnalyzer | None = None,
         use_stream: bool = True,
         voice_controller=None,  # VoiceController | None — nur Halten/Durchreichen
+        abort_notify_brain: bool = False,
     ) -> None:
         self.stt = stt
         self.speaker = speaker
@@ -56,6 +59,9 @@ class Workers:
         self.diarizer = diarizer
         self.mood_analyzer = mood_analyzer
         self.use_stream = use_stream
+        # Nach einem Abbruch eine Systemnachricht in dieselbe Session posten
+        # (barge_in.notify_brain). Siehe openclaw.notify_abort.
+        self.abort_notify_brain = abort_notify_brain
         # VoiceController wird in assistant.py verwendet (apply_speaker_default
         # vor start_confirmation/start_openclaw_turn). Workers hält die Referenz
         # für späteren Zugriff durch OpenClaw-Tools (HTTP-Endpoint), falls nötig.
@@ -127,11 +133,11 @@ class Workers:
         wav_bytes = chunks_to_wav_bytes(audio_chunks)
         run_mood(self.mood_analyzer, wav_bytes, out_q)
 
-    def start_confirmation(self, recognized_text: str) -> threading.Thread:
+    def start_confirmation(self, recognized_text: str, turn: int | None = None) -> threading.Thread:
         t = threading.Thread(
             target=self.speaker.speak,
             args=(f"{self.confirmation_prefix}{recognized_text}",),
-            kwargs={"restore_leds": False},
+            kwargs={"restore_leds": False, "turn": turn},
             daemon=True,
         )
         t.start()
@@ -143,6 +149,7 @@ class Workers:
         speaker: SpeakerVerdict | str | None = None,
         mood: dict | None = None,
         session: str | None = None,
+        turn: int | None = None,
     ) -> threading.Thread:
         """session: Routing-Ziel des getriggerten Wakewords (x-openclaw-session-key).
         None → Fallback auf self.openclaw_session (Profil-Default).
@@ -153,7 +160,7 @@ class Workers:
             speaker = verdict_from_speaker(speaker)
         t = threading.Thread(
             target=self._openclaw_turn,
-            args=(user_text, speaker, mood, session),
+            args=(user_text, speaker, mood, session, turn),
             daemon=True,
         )
         t.start()
@@ -163,22 +170,52 @@ class Workers:
     def _openclaw_turn(
         self, user_text: str, speaker: SpeakerVerdict | None = None,
         mood: dict | None = None, session: str | None = None,
+        turn: int | None = None,
     ) -> None:
         try:
-            self._run_openclaw_turn(user_text, speaker, mood, session)
+            self._run_openclaw_turn(user_text, speaker, mood, session, turn)
         finally:
             # Hat die Hauptschleife den Turn per Overall-Timeout schon verlassen,
             # setzt niemand mehr die LED nach dem (verspäteten) Sprechen zurück —
             # der Ring bliebe sonst dauerhaft auf AUDIO_OUT (grün pulsierend).
-            if current_state[0] != STATE_WAITING:
+            # Nach einem Abbruch laeuft die Hauptschleife bereits im naechsten
+            # Turn (Aufnahme). Dann ist der Ring NICHT verwaist, und ein
+            # LED_IDLE von hier wuerde die Aufnahme-Farbe ueberschreiben.
+            if current_state[0] != STATE_WAITING and not turn_stopped(turn):
                 try:
                     self.speaker.leds.set_phase(LED_IDLE)
                 except Exception:
                     pass
 
+    def _finish_cancelled(self, session_key: str) -> None:
+        """Aufraeumen nach einem Abbruch (Barge-in).
+
+        Kein Vorlesen, kein Telegram-Spiegel, kein Follow-up: der Nutzer hat
+        den Turn gerade weggeworfen, da ist jede Ausgabe ein Widerspruch zur
+        Anweisung. pending_reply_text=None haelt das Follow-up-Gate in
+        assistant.py zu; reply_done_event wird trotzdem gesetzt, damit eine
+        Hauptschleife, die noch in WAITING steht, nicht bis zum Overall-Timeout
+        haengt.
+
+        Der Vermerk an den Brain laeuft in einem eigenen Thread: er ist ein
+        vollwertiger (wenn auch stummer) Turn und darf den Abschluss hier
+        nicht aufhalten.
+        """
+        print("🛑 Turn abgebrochen — kein Vorlesen, kein Telegram, kein Follow-up")
+        self.thinking.stop()
+        pending_reply_text[0] = None
+        reply_done_event.set()
+        if self.abort_notify_brain:
+            threading.Thread(
+                target=openclaw.notify_abort,
+                args=(self.openclaw_token, session_key),
+                daemon=True,
+            ).start()
+
     def _run_openclaw_turn(
         self, user_text: str, speaker: SpeakerVerdict | None = None,
         mood: dict | None = None, session: str | None = None,
+        turn: int | None = None,
     ) -> None:
         # Wakeword-Routing: session_key kommt vom getriggerten Wakeword
         # (assistant.py); None (z.B. altes Aufruf-Schema) fällt auf den
@@ -215,7 +252,7 @@ class Workers:
         # --- Streaming-Pfad: Sätze werden gesprochen, sobald sie generiert sind ---
         timed_out = False
         if self.use_stream:
-            session = self.speaker.stream_session(restore_leds=True)
+            session = self.speaker.stream_session(restore_leds=True, turn=turn)
 
             def guarded_feed(sentence: str) -> None:
                 # NO_REPLY-Sentinel niemals sprechen; echte Sätze posten erst
@@ -235,8 +272,14 @@ class Workers:
                 mood=mood,
                 on_sentence=guarded_feed,
                 on_first_text=self.thinking.stop,
+                control=turn_control,
+                turn=turn,
             )
             spoke = session.end()
+
+            if turn_stopped(turn):
+                self._finish_cancelled(session_key)
+                return
 
             if openclaw.is_no_reply(full_reply):
                 finish_no_reply(full_reply)
@@ -267,7 +310,7 @@ class Workers:
                     prefix="🔊 ",
                 )
                 pending_reply_text[0] = full_reply
-                self.speaker.speak(full_reply)
+                self.speaker.speak(full_reply, turn=turn)
                 reply_done_event.set()
                 return
 
@@ -299,6 +342,10 @@ class Workers:
                 on_done=self.thinking.stop,
             )
 
+        if turn_stopped(turn):
+            self._finish_cancelled(session_key)
+            return
+
         if openclaw.is_no_reply(full_reply):
             finish_no_reply(full_reply)
             return
@@ -313,11 +360,11 @@ class Workers:
                 prefix="🔊 ",
             )
             pending_reply_text[0] = full_reply
-            self.speaker.speak(full_reply)
+            self.speaker.speak(full_reply, turn=turn)
         else:
             # Echter Leerlauf/Fehler (kein Sentinel): Eingabe spiegeln + Fallback ansagen
             post_user_input()
             pending_reply_text[0] = None
-            self.speaker.speak(self.no_reply_fallback)
+            self.speaker.speak(self.no_reply_fallback, turn=turn)
 
         reply_done_event.set()

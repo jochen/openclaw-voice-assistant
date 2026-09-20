@@ -294,6 +294,50 @@ offen und erst zu messen, wenn das Pegel-Gate scharf ist.
 6. **Deployen** — neues `.tflite` ins Bundle, Service neustarten.
 7. **Weiter sammeln** — der Kreislauf beginnt von vorn.
 
+## Das Modell erkennt Gastons eigene Stimme (2026-09-20)
+
+Beim Einbau des Abbruchs mitten im Turn (`barge_in`, siehe CLAUDE.md und
+`tools/bargein_echo_test.py`) kam ein Befund heraus, der fürs **Training**
+wichtiger ist als für den Abbruch:
+
+> Das gaston-Modell erkennt die TTS-Stimme, mit der Gaston selbst spricht.
+> Gemessen am reinen TTS-Signal: **5 Selbst-Trigger auf 40 Renderings (12,5 %),
+> höchster Score 0,97.**
+
+Das ist kein Zufall, sondern eine Lücke in der Trainingsverteilung. Trainiert
+wird synthetisch auf Piper-Stimmen (`manifest.yaml`, `voices:` — thorsten-medium
+/ high / emotional, karlsson, pavoque, …), und der Assistent spricht mit
+`de_DE-thorsten-medium`. Seine eigene Stimme ist für das Modell nicht „jemand
+anders", sie ist **Trainingsmaterial für die positive Klasse**.
+
+Belege, die zeigen, dass es wirklich die Stimme ist und nicht bloß das Wort:
+
+- Getroffen wurden alle drei Gate-Pfade (1 Frame/0,76 und 0,81;
+  2 Frames/0,93; 3 Frames/0,97) und vier verschiedene Sätze.
+- Darunter **„Das dauert noch einen Augenblick"** — eine Denk-Phrase, in der das
+  Wakewort überhaupt nicht vorkommt.
+- Umgekehrt: das korrekt ausgesprochene „Gaston" blieb in einem Lauf bei 0,58,
+  während der STT-Verhörer „Gastau" 0,93 erreichte — dieselbe Nasal-Eigenschaft,
+  die unter `spellings:` im Manifest steht.
+
+**Was daraus für die nächste Trainingsrunde folgt:** Gastons eigene
+TTS-Renderings gehören als **adversariale Negative** in den Datensatz. Sie sind
+in beliebiger Menge und ohne Aufnahmesession herstellbar (jeder Satz, den er
+je gesagt hat, plus die Bestätigungs- und Denk-Phrasen aus der Profil-Config)
+und treffen eine Klasse von Fehltriggern, die im Alltagsarchiv kaum auftaucht —
+weil das Mikro sie bisher nie zu hören bekam. Ab jetzt bekommt es sie: mit
+`barge_in.while_speaking: true` hört der Assistent durch seine eigene Ansage
+hindurch.
+
+**Warum es trotzdem live funktioniert:** akustisch fällt derselbe Satz auf
+Score **0,07** — die Echo-Unterdrückung des XVF3800 nimmt dem Signal die
+Wakeword-Eigenschaft (Messreihe im Docstring von
+`tools/bargein_echo_test.py`). Diese Rettung hängt vollständig an der Hardware:
+ohne Echo-Unterdrückung im Audio-Pfad (`use_speaker: false`, ALSA-Lautsprecher)
+gilt die digitale Zahl. Ein Modell, das die eigene Stimme nicht kennt, wäre
+unabhängig davon robust — deshalb der Eintrag hier und nicht nur in der
+Barge-in-Doku.
+
 ## Was NICHT zu tun ist
 
 - An den **Score**-Schwellen weiter justieren — ausgereizt, die Begründung mit
@@ -306,6 +350,9 @@ offen und erst zu messen, wenn das Pegel-Gate scharf ist.
   BELEG für einen echten Ruf, nicht der Fehltrigger selbst.
 - Echte Aufnahmen als Trainingsdaten missverstehen — sie sind das
   Validierungs-Set. Trainiert wird synthetisch.
+- Gastons **eigene** TTS-Stimme bei den Negativen vergessen — sie ist die eine
+  Stimme, die garantiert täglich vor dem Mikro steht, und das Modell erkennt sie
+  derzeit als Wakewort (siehe „Das Modell erkennt Gastons eigene Stimme").
 - Ohne Prozess-Verständnis Klassifizierungen vornehmen.
 
 ## Stand

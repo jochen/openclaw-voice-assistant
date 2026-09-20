@@ -68,6 +68,9 @@ AudioSource (ALSA | ReSpeaker via ESPHome) → WakewordEngine
     non-streaming Fallback)
   → Antwort satzweise via TTS (Speaches, fallback: Piper) über AudioSink
   → Telegram notification
+
+  Quer dazu: Barge-in ("Stopp Gaston") bricht den laufenden Turn ab —
+  Wiedergabe, Denk-Phrasen, OpenClaw-Run, Spiegel, Follow-up (optional).
 ```
 
 ### Package-Struktur
@@ -76,7 +79,9 @@ AudioSource (ALSA | ReSpeaker via ESPHome) → WakewordEngine
 voice_assistant/
   __main__.py            entry: python -m voice_assistant (venv-Re-Exec)
   assistant.py           run() — Hauptloop + State-Machine
-  state.py               STATE_*, tts_lock, reply_done_event, stt_queue
+  state.py               STATE_*, tts_lock, reply_done_event, TurnControl
+  bargein.py             Abbruch mitten im Turn ("Stopp Gaston")
+  wake_gate.py           Score-Gate, geteilt von Wakeword und Barge-in
   config.py              Profile-Dataclass + YAML-Loader (alt + neu)
   workers.py             Workers: start_stt, start_confirmation, start_openclaw_turn
   mcp_actuator.py        stdio-MCP-Server: haus_ziele/haus_schalten für den Brain
@@ -232,6 +237,155 @@ Netz). Der Test haelt genau die Bruchlinie fest, an der es schiefging: jeder
 Fehlerweg muss `ausgefallen` ergeben, jeder gemessene Nicht-Treffer
 `unbekannt`. Verschmelzen die beiden wieder, ist das Loch lautlos zurueck.
 
+## Abbruch mitten im Turn (`barge_in`, optional pro Profil)
+
+Bis zum 2026-09-20 gab es genau ein Zeitfenster für einen Abbruch: das
+Stopp-Wort **in der laufenden Aufnahme**, geprüft am Transkript in
+STATE_PROCESSING (`_is_stop_command`). War die Aufnahme vorbei, lief der Turn
+zu Ende — Bestätigung, Denken, Antwort, und was der Brain dabei tut.
+
+Diese Lücke wurde durch die Ein-Satz-Optimierung größer: wer durchspricht,
+bekommt kein „Ja?" mehr (`_ACK_DELAY_SEC`), merkt einen Fehltrigger also oft
+erst, wenn der Assistent schon antwortet.
+
+Das Fenster ist jetzt **STATE_WAITING** — dort las die Hauptschleife die
+Chunks und warf sie weg. Der Abbruch benutzt dieselbe Wakeword-Erkennung wie
+der Leerlauf, mit denselben Gates: `wake_gate.gate_passed` (aus `assistant.py`
+herausgezogen, damit es die Regel genau einmal gibt) und
+`wake_rms.loudest_window_rms`. Ein Abbruch soll weder leichter noch schwerer
+auslösbar sein als der Ruf selbst.
+
+**Das Stopp-Wort wird nicht am Wakeword-Ereignis erkannt, sondern danach am
+Transkript.** Der Trigger feuert auf „Gaston", das „Stopp" davor steckt im
+Pre-Roll (`_PRE_ROLL_SEC`, dieselbe Begründung wie beim durchgesprochenen
+Kommando). Folge: „Stopp Gaston" und „Gaston, Stopp" wirken gleich, und ein
+Barge-in **ohne** Stopp-Wort ist einfach ein neuer Auftrag. Deshalb braucht der
+Fall auch keinen neuen State: WAITING → RECORDING → PROCESSING, und dort
+entscheidet das vorhandene Stopp-Muster (mit `bargein_round` gilt das
+mildere Ein-Wort-Muster wie bei Follow-up und Klärungs-Rückfrage).
+
+**Was „abbrechen" umfasst** (`state.TurnControl`, `workers._finish_cancelled`):
+Wiedergabe sofort aus (`AudioSink.stop()`), ThinkingWorker aus, SSE-Verbindung
+zu OpenClaw zu — letzteres bricht den Agent-Run **serverseitig** ab
+(dokumentiert in `docs/gateway/openresponses-http-api.md` des Gateways: „Disconnecting
+the HTTP client cancels … the agent run"), kein Telegram-Spiegel, kein
+Follow-up, und mit `notify_brain` eine Systemnachricht in dieselbe Session,
+damit der Brain den Abbruch im Verlauf sieht.
+
+**Die Turn-Nummer ist der Kern, nicht ein Flag.** `TurnControl.begin()` vergibt
+sie in STATE_PROCESSING, bevor irgendetwas gesprochen wird; jeder Worker
+fragt `turn_stopped(nr)`. Ein verwaister Worker des abgebrochenen Turns läuft
+noch Millisekunden weiter, während die Hauptschleife schon den nächsten Turn
+aufnimmt — ohne Nummer würde er in den neuen hineinsprechen. `turn=None` heißt
+ausdrücklich „gehört zu keinem abbrechbaren Turn" und ist nie gestoppt: sonst
+verstummen Ansagen von außen (`voice_speak_text`), Aktuator-Antworten und
+Quittungen nach einem Abbruch, auf den kein neuer Turn folgt — lautlos.
+
+### Gaston erkennt seine eigene Stimme — aber die Echo-Unterdrückung nimmt sie weg
+
+Zwei Läufe von `tools/bargein_echo_test.py` am 2026-09-20 (Messreihe im
+Docstring des Werkzeugs):
+
+| Lauf | Sätze | Selbst-Trigger | höchster Score |
+|---|---|---|---|
+| digital (reines TTS-Signal) | 40 | **5 (12,5 %)** | **0,97** |
+| akustisch (Lautsprecher → XVF3800-AEC → Mikro) | 24 | **0** | **0,07** |
+
+**Digital ist der Befund eindeutig und strukturell:** das Modell ist auf
+synthetischen *thorsten*-Stimmen trainiert, und mit genau so einer spricht der
+Assistent — die eigene Stimme liegt IN der Trainingsverteilung. Die
+Selbst-Trigger verteilten sich über alle drei Gate-Pfade (1 Frame/0,76 und
+0,81; 2 Frames/0,93; 3 Frames/0,97) und über vier verschiedene Sätze, darunter
+„Das dauert noch einen Augenblick" — eine Denk-Phrase **ohne** Wakewort darin.
+Es ist also nicht bloß die Bestätigung, die das Wakewort wiederholt; das Modell
+springt auf diese Stimme an sich an.
+
+**Akustisch fällt derselbe Satz von 0,97 auf 0,07.** Dass Ton ankam, steht in
+denselben Zeilen: Raum-Grundpegel 36, Echo am Mikro 96–479, Wiedergabedauer
+passend zur Dateilänge. Die Echo-Unterdrückung nimmt dem Signal nicht nur
+Pegel, sondern die Wakeword-Eigenschaft — Abstand zur niedrigsten Schwelle
+(`min_peak_single` 0,75) rund zehnfach.
+
+**Die Vorab-Erwartung war falsch, und das steht dort so.** Vor dem Lauf war
+notiert: „eher nicht — AEC dämpft den Pegel, aber das Gate hängt am Score."
+Gemessen ist das Gegenteil. Deshalb steht in dieser Installation
+`while_speaking: true`, der **Code-Default bleibt aber False**: die Zahl gilt
+nur für respeaker-Modus MIT `use_speaker` (nur dann hat der XVF3800 die
+Referenz auf dem I2S-Ausgang) und für `volume 0.8`. Bei `use_speaker: false`
+geht der Ton über ALSA, es gibt keine Echo-Unterdrückung — dort ist die
+digitale Zahl die zutreffende.
+
+Neu messen nach: Wechsel der TTS-Stimme, der Lautstärke, des Wakeword-Modells
+oder der Audio-Hardware.
+
+**Die Folge fürs Training steht in `WAKEWORD_PROCESS.md`** („Das Modell erkennt
+Gastons eigene Stimme"): die eigene TTS-Ausgabe gehört als adversariales
+Negativ in die nächste Runde. Sie ist ohne Aufnahmesession in beliebiger Menge
+herstellbar und trifft eine Fehltrigger-Klasse, die im Archiv fehlt, weil das
+Mikro sie bisher nie zu hören bekam — mit `while_speaking: true` bekommt es sie
+ab jetzt. Ein Modell, das die eigene Stimme kennt, wäre auch ohne
+Echo-Unterdrückung robust; die aktuelle Rettung hängt allein an der Hardware.
+
+Für `while_speaking: false` bleibt ein Detail im Code, das man nicht wegkürzen
+darf: beim Übergang „eigene Ansage zu Ende → wieder zuhören" werden
+`audio_source.flush()` **und** `bargein.reset()` gerufen. openwakeword
+entscheidet aus einem Fenster von rund 1,4 s, die ersten Predictions danach
+liefen also sonst über die eigene Stimme — messbar genau die, die digital zu
+12,5 % triggert.
+
+### Zwei Fallen, die der erste Messlauf aufgedeckt hat
+
+Beide kosteten je einen kompletten Lauf. Festgehalten sind sie **dort, wo man
+hineinläuft** — nicht nur im Messwerkzeug: Falle 1 an
+`RespeakerClient._BUSY_STATES` und in der ReSpeaker-Sektion beider READMEs
+(wer die Hardware nachbaut, stolpert sonst genauso), Falle 2 im Docstring von
+`SpeachesTts.synth()`, also an der Quelle dieser Bytes, plus eine Warnung an
+`RespeakerSink._wav_seconds()`, der einzigen Stelle im Repo, die mit
+`getnframes()` rechnet. Die verallgemeinerbaren Lehren (geratenes
+Gültigkeitskriterium, nicht-deterministisches TTS) stehen bei den
+Mess-Werkzeugen in beiden READMEs, neben den zwei älteren.
+
+1. **Eine Ansage läuft als `PLAYING`, nicht als `ANNOUNCING`.** Die erste
+   Fassung der Senke wartete auf `ANNOUNCING`, das nie kommt — jeder Satz lief
+   in die 5-Sekunden-Startschranke und wurde dann „blind" abgewartet
+   (5 s Zusatzlatenz pro Satz!). Nebenwirkung für die Messung: der Hörrahmen
+   war 5–9 s länger als die Ansage, und was in dieser Zeit im Raum passierte,
+   landete als Score im Ergebnis. Die Werte 0,42–0,70 des ersten Laufs kamen
+   daher — nicht aus dem Echo. Siehe `RespeakerClient._BUSY_STATES`.
+2. **Speaches-WAVs lügen im Header:** `nframes` steht auf dem
+   Streaming-Platzhalter 2147483647, bei 22050 Hz also 97391 Sekunden. Jede
+   Längenrechnung muss aus den gelesenen Bytes kommen. Die Senke ist davon
+   nicht betroffen (sie rechnet auf der selbst geschriebenen 48-kHz-Datei), das
+   Messwerkzeug war es.
+
+Dazu eine Lehre über Messwerkzeuge in diesem Repo: das erste
+Gültigkeitskriterium des Werkzeugs war ein **geratener** Mikrofon-Pegel (200).
+Gemessen liegt das Echo nach AEC bei 96–479 und der Raum bei 36 — die geratene
+Schwelle lag mitten im Messbereich und erklärte gültige Läufe für ungültig.
+Jetzt entscheidet, ob die Wiedergabe stattgefunden hat (Dauer gegen
+Dateilänge), und der Raum-Grundpegel wird gemessen statt angenommen.
+
+### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
+
+`RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die
+`voice_assistant`-Session des ESP (`handle_stop` → EOS), weshalb am Ende der
+Methode `press_start_button()` stand. Folge: der Pi war während **jeder**
+Ansage taub — kein Wakeword, kein Barge-in, nichts. Jetzt geht die Wiedergabe
+direkt über die `media_player`-Entity (`media_player_command(media_url=…,
+announcement=True)`); die VA-Session bleibt unberührt, der Mic-Strom läuft
+durch die Ansage hindurch, und das Echo nimmt der XVF3800 per AEC weg (er hat
+die Referenz auf dem I2S-Ausgang). Zweiter Gewinn: eine Announce-Wiedergabe war
+nicht abbrechbar, ein Media-Player-STOP ist es.
+
+Kein Firmware-Wechsel nötig — die Entity samt `announcement_pipeline` steht
+schon in `esphome/respeaker.yaml`. Das **Ende** der Wiedergabe wird seither am
+Zustand des Players erkannt (ANNOUNCING → nicht mehr ANNOUNCING) statt an der
+Announce-Antwort; bleibt das Zustands-Event aus, fällt die Senke auf die Länge
+der WAV-Datei zurück, damit ein Turn nicht hängt. Die Player-Befehle gehen über
+`loop.call_soon_threadsafe` und nicht wie die LED-Befehle direkt in den
+asyncio-Client: ein verschluckter Wiedergabe-Befehl ließe einen Turn hängen,
+eine verschluckte LED-Farbe nicht.
+
 ## Profile System
 
 Zwei Profile werden automatisch per Hostname oder `GASTON_PROFILE` gewählt:
@@ -281,7 +435,10 @@ Fünf Zustände in der Hauptschleife (`voice_assistant/assistant.py`):
 2. **RECORDING** — Chunks werden gesammelt; endet bei Stille nach Sprache oder
    am Deckel. Zwei Parametersätze, siehe „Endpointing" unten
 3. **PROCESSING** — wartet auf STT-Ergebnis aus `state.stt_queue`
-4. **WAITING** — wartet auf `state.reply_done_event` (openclaw_worker setzt es)
+4. **WAITING** — wartet auf `state.reply_done_event` (openclaw_worker setzt es).
+   Hier läuft zugleich das Barge-in-Fenster: mit `barge_in.enabled` gehen die
+   Chunks durch eine ZWEITE Wakeword-Instanz, statt verworfen zu werden
+   (siehe „Abbruch mitten im Turn")
 5. **PAUSE** — 1 s Totzone bevor es zurück in LISTENING geht
 
 ### Endpointing: Dialog vs. Kommando
@@ -373,7 +530,13 @@ Bundle gegen den Korpus (`messen` — die Vorher-Zahl fürs Nachtraining).
 - `ThinkingWorker` feuert Lebenszeichen-Phrasen mit wachsendem Abstand
   (erster nach gesprochener Länge, dann ~25 s ×1.5 pro Wiederholung, max
   120 s), wenn OpenClaw zu langsam antwortet.
-- `state.tts_lock` verhindert überlappende Audio-Wiedergabe.
+- `state.tts_lock` verhindert überlappende Audio-Wiedergabe. Er ist zugleich die
+  Auskunft „es spricht gerade jemand von uns" — daran hängt das Barge-in-Fenster
+  bei `while_speaking: false`.
+- `state.turn_control` (`TurnControl`) trägt die Nummer des laufenden Turns.
+  Jeder Worker fragt `turn_stopped(nr)` vor folgenreichen Schritten; ein
+  Abbruch schließt registrierte Closer (SSE-Verbindung, Wiedergabe-Prozess).
+  Siehe „Abbruch mitten im Turn".
 
 ## OpenClaw Request Format
 

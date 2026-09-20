@@ -78,6 +78,11 @@ class RespeakerClient:
         self._last_led_phase: int = 1           # 1 = LED_IDLE — nach Reconnect wiederherstellen
         self._buf = b""
         self._in_session = False
+        # Zustand des Media-Players (fuer die Wiedergabe-Verfolgung, siehe
+        # RespeakerSink.play_wav). Condition statt Event, weil auf einen
+        # WECHSEL gewartet wird und nicht auf ein einmaliges Signal.
+        self._player_cv = threading.Condition()
+        self._player_state = None
         self._thread = threading.Thread(
             target=self._run_loop, daemon=True, name="respeaker-api"
         )
@@ -99,6 +104,9 @@ class RespeakerClient:
         self.boot_step_key = None
         self._in_session = False
         self._buf = b""
+        with self._player_cv:
+            self._player_state = None
+            self._player_cv.notify_all()
         while not self._audio_q.empty():
             try:
                 self._audio_q.get_nowait()
@@ -189,11 +197,17 @@ class RespeakerClient:
         )
 
         def on_state(state: object) -> None:
-            if self._beam_key is not None and getattr(state, "key", None) == self._beam_key:
+            key = getattr(state, "key", None)
+            if self._beam_key is not None and key == self._beam_key:
                 new_angle = float(getattr(state, "state", 0.0))
                 if new_angle != self.beam_angle:
                     log.debug("Beam: LED %d → LED %d (%d°)", int(self.beam_angle), int(new_angle), int(new_angle) * 30)
                 self.beam_angle = new_angle
+            elif self._player_key is not None and key == self._player_key:
+                with self._player_cv:
+                    self._player_state = getattr(state, "state", None)
+                    self._player_cv.notify_all()
+                log.debug("Media-Player: state=%s", self._player_state)
 
         self._api.subscribe_states(on_state)
 
@@ -221,6 +235,98 @@ class RespeakerClient:
     # ------------------------------------------------------------------
     # Sync API — State-Machine-Thread
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Wiedergabe über den Media-Player (NICHT über die Announce-API)
+    # ------------------------------------------------------------------
+    #
+    # Die Announce-API (send_voice_assistant_announcement_*) beendet die
+    # voice_assistant-Session des ESP: handle_stop feuert, der Audio-Strom
+    # reisst ab, und danach muss der Start-Button neu gedrueckt werden. Genau
+    # deshalb war der Pi waehrend JEDER Ansage taub — kein Wakeword, kein
+    # Barge-in, nichts. Der Media-Player laesst die VA-Session unberuehrt, der
+    # Mikrofon-Strom laeuft durch die Wiedergabe hindurch (das Echo nimmt der
+    # XVF3800 per AEC weg, er hat die Referenz auf dem I2S-Ausgang).
+    #
+    # Zweiter Gewinn: eine Announce-Wiedergabe war nicht abbrechbar, ein
+    # Media-Player-STOP ist es.
+
+    def _player_command(self, **kwargs) -> bool:
+        """Media-Player-Befehl aus einem fremden Thread absetzen.
+
+        Ueber call_soon_threadsafe und nicht direkt wie die LED-Befehle in
+        services/leds.py: der asyncio-Transport ist nicht threadsicher, und
+        ein verschluckter Wiedergabe-Befehl laesst einen Turn haengen (eine
+        verschluckte LED-Farbe nicht).
+        """
+        loop, api, key = self._loop, self._api, self._player_key
+        if loop is None or api is None or key is None:
+            return False
+        try:
+            loop.call_soon_threadsafe(
+                lambda: api.media_player_command(key, **kwargs)
+            )
+            return True
+        except Exception as exc:
+            log.warning("media_player_command failed: %s", exc)
+            return False
+
+    def play_url(self, url: str) -> bool:
+        """Spielt eine URL als Ansage. True, wenn der Befehl abgesetzt wurde.
+
+        Das ist genau der Aufruf, den ESPHomes voice_assistant-Komponente in
+        ``on_announce`` selbst macht (media_player mit media_url +
+        announcement) — wir umgehen also nur ihre State-Machine, nicht ihren
+        Wiedergabe-Weg. EIN Unterschied bleibt und ist der erste Verdaechtige,
+        falls im Betrieb etwas klemmt: ESPHome setzt dort zusaetzlich
+        ``command=ENQUEUE``. Hier bewusst nicht — "jetzt spielen" ist die
+        Semantik, die wir brauchen, und eine Warteschlange koennte nach einem
+        Abbruch (STOP) einen Rest-Eintrag behalten. Laut ESPHomes eigenem
+        Kommentar spielt auch ein ENQUEUE bei leerer Liste sofort, die beiden
+        Wege fallen im Normalfall also zusammen.
+        """
+        if self._player_key is None:
+            log.warning("play_url: keine API-Verbindung / kein Media-Player")
+            return False
+        with self._player_cv:
+            self._player_state = None
+        return self._player_command(media_url=url, announcement=True)
+
+    def stop_playback(self) -> None:
+        self._player_command(command=aioesphomeapi.MediaPlayerCommand.STOP)
+
+    # Zustaende, die "der Player gibt gerade Ton aus" bedeuten.
+    #
+    # Gemessen am 2026-09-20 gegen die echte Hardware: eine Ansage ueber
+    # media_player_command(media_url=…, announcement=True) laeuft als
+    # **PLAYING** (2 → 1), NICHT als ANNOUNCING (4). Die erste Fassung wartete
+    # nur auf ANNOUNCING, lief deshalb jedes Mal in die Start-Zeitschranke und
+    # kostete 5 s pro Satz. Beide Zustaende zu akzeptieren ist zugleich robust
+    # gegen ESPHome-Versionen, die es anders melden.
+    _BUSY_STATES = (
+        aioesphomeapi.MediaPlayerState.PLAYING,
+        aioesphomeapi.MediaPlayerState.ANNOUNCING,
+    )
+
+    def wait_player(self, busy: bool, timeout: float) -> bool:
+        """Wartet, bis der Player Ton ausgibt (busy=True) bzw. fertig ist.
+
+        False = Zeit abgelaufen, ohne dass der Zustand eintrat. Der Aufrufer
+        faellt dann auf die Laenge der WAV-Datei zurueck; ein ausbleibendes
+        Zustands-Event darf einen Turn nicht haengen lassen.
+        """
+        deadline = time.monotonic() + timeout
+        with self._player_cv:
+            while True:
+                if (self._player_state in self._BUSY_STATES) == busy:
+                    return True
+                rest = deadline - time.monotonic()
+                if rest <= 0:
+                    return False
+                self._player_cv.wait(rest)
+
+    def in_session(self) -> bool:
+        return self._in_session
 
     def read_chunk(self) -> np.ndarray:
         """Gibt genau _SAMPLES_PER_CHUNK int16-Samples (16 kHz mono) zurück."""
@@ -316,11 +422,18 @@ class RespeakerSink:
     """TTS via ESPHome announce API: Pi → HTTP → ESP media_player → aic3104."""
 
     _HTTP_PORT = 18800
+    # Zeit, die der ESP bekommt, um eine abgesetzte Ansage aufzugreifen
+    # (Datei ziehen + Decoder starten).
+    _START_TIMEOUT = 5.0
+    # Zuschlag auf die Laenge der Datei, bis das Ende-Ereignis da sein muss.
+    _END_MARGIN = 5.0
 
     def __init__(self, cfg: RespeakerAudio) -> None:
         self._client = get_client(cfg)
         self._serve_dir = tempfile.mkdtemp(prefix="respeaker_tts_")
         self._pi_ip = _get_local_ip()
+        self._lock = threading.Lock()
+        self._stopped = False
         self._start_http_server()
 
     def _start_http_server(self) -> None:
@@ -363,34 +476,93 @@ class RespeakerSink:
             wf.setframerate(48000)
             wf.writeframes(stereo.tobytes())
 
+    @staticmethod
+    def _wav_seconds(path: str) -> float:
+        """Laenge der Datei in Sekunden (0.0, wenn nicht lesbar).
+
+        Grundlage der Zeitschranken unten: ohne sie muesste ein ausbleibendes
+        Zustands-Event des Players mit einer festen Wartezeit abgefangen
+        werden, die entweder Turns haengen laesst oder lange Antworten
+        abschneidet.
+
+        **Nur auf die von _to_48k_stereo geschriebene Datei anwenden, nie direkt
+        auf eine Speaches-Ausgabe.** Die rechnet hier ueber ``getnframes()``,
+        und Speaches setzt das auf den Streaming-Platzhalter 2147483647 (bei
+        22050 Hz = 97391 Sekunden). Hier ist es sicher, weil ``dest`` von uns
+        selbst mit korrektem Header geschrieben wurde — siehe
+        SpeachesTts.synth() fuer die Falle im Ganzen.
+        """
+        try:
+            with wave.open(path, "rb") as wf:
+                rate = wf.getframerate()
+                return wf.getnframes() / rate if rate else 0.0
+        except Exception:
+            return 0.0
+
     def play_wav(self, path: str) -> None:
         client = self._client
         if client._loop is None or client._api is None:
             log.warning("RespeakerSink: no API client available")
             return
 
+        with self._lock:
+            if self._stopped:
+                return
+
         filename = f"{os.getpid()}_{threading.get_ident()}.wav"
         dest = os.path.join(self._serve_dir, filename)
         self._to_48k_stereo(path, dest)
         url = f"http://{self._pi_ip}:{self._HTTP_PORT}/{filename}"
-        log.info("Announce → %s", url)
+        dauer = self._wav_seconds(dest)
+        log.info("Play → %s (%.1fs)", url, dauer)
 
-        fut = asyncio.run_coroutine_threadsafe(
-            client._api.send_voice_assistant_announcement_await_response(
-                media_id=url, timeout=60.0
-            ),
-            client._loop,
-        )
         try:
-            result = fut.result(timeout=65.0)
-            log.info("Announce completed: success=%s", result.success)
+            if not client.play_url(url):
+                return
+            # Bis der Player Ton ausgibt (PLAYING/ANNOUNCING, siehe
+            # _BUSY_STATES). Faellt das Zustands-Event aus, wird nicht ewig
+            # gewartet, sondern unten ueber die Laenge der Datei
+            # zurueckgefallen.
+            gestartet = client.wait_player(busy=True, timeout=self._START_TIMEOUT)
+            if gestartet:
+                fertig = client.wait_player(
+                    busy=False, timeout=dauer + self._END_MARGIN
+                )
+                if not fertig:
+                    log.warning("Wiedergabe: kein Ende-Zustand nach %.1fs", dauer + self._END_MARGIN)
+            else:
+                log.warning("Wiedergabe: kein Abspiel-Zustand vom Player — warte %.1fs blind", dauer)
+                self._sleep_unless_stopped(dauer + 0.3)
         except Exception as exc:
-            log.error("Announce failed: %s", exc)
+            log.error("Wiedergabe fehlgeschlagen: %s", exc)
         finally:
             try:
                 os.unlink(dest)
             except OSError:
                 pass
 
-        # Neue Mic-Session nach TTS starten
-        client.press_start_button()
+        # Der Media-Player laesst die voice_assistant-Session in Ruhe, ein
+        # Button-Druck ist also im Normalfall nicht mehr noetig. Ist die
+        # Session trotzdem weg (Reconnect, ESP-Neustart mitten in der Ansage),
+        # wird sie hier geholt — sonst bliebe der Pi stumm-taub.
+        if not client.in_session():
+            log.info("Keine Mic-Session nach der Wiedergabe → Start-Button")
+            client.press_start_button()
+
+    def _sleep_unless_stopped(self, sekunden: float) -> None:
+        ende = time.monotonic() + sekunden
+        while time.monotonic() < ende:
+            with self._lock:
+                if self._stopped:
+                    return
+            time.sleep(0.05)
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stopped = True
+        self._client.stop_playback()
+
+    def resume(self) -> None:
+        """Abbruch-Marke loeschen — der naechste Turn darf wieder sprechen."""
+        with self._lock:
+            self._stopped = False

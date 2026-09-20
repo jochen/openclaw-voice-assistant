@@ -152,6 +152,32 @@ profiles:
     #   - bundle: hey_jarvis                    # eingebautes openwakeword-Modell
     #     session: "agent:zweiter:telegram:group:ANDERE_CHAT_ID"
 
+    # Abbruch mitten im Turn ("Stopp Gaston") — optional, standardmäßig AUS.
+    # Ohne den Block verhält sich ein Profil exakt wie vorher: abgebrochen
+    # werden kann nur innerhalb der laufenden Aufnahme (Stopp-Wort im
+    # Transkript). Mit dem Block wird das Wakewort auch gehört, während der
+    # Assistent selbst dran ist — dann bricht "Stopp <Wakewort>" die Wiedergabe
+    # ab, beendet die Verbindung zum Brain (was den Agent-Run serverseitig
+    # abbricht) und unterdrückt Spiegel und Follow-up. Details: README.
+    # barge_in:
+    #   enabled: true
+    #   # Auch hören, während der Assistent SELBST spricht. Default false, und
+    #   # das ist gemessen: ein Wakeword-Modell, das auf synthetischen Stimmen
+    #   # trainiert wurde, erkennt die eigene TTS-Stimme wieder (bei uns Peak
+    #   # 0,975 auf die eigene Bestätigung). Erst messen, dann einschalten:
+    #   #   ow-venv/bin/python -m tools.bargein_echo_test digital
+    #   #   ow-venv/bin/python -m tools.bargein_echo_test akustisch
+    #   while_speaking: false
+    #   rms_min: 400            # optional, Default: wake_rms_min des Profils
+    #   ack: "Okay."            # kurze Quittung nach dem Abbruch; "" = stumm
+    #   notify_brain: true      # Systemnachricht über den Abbruch in die Session
+    #   # Optional ein EIGENES Bundle für den Abbruch (empfohlen, sobald eines
+    #   # nachtrainiert ist): die Zwei-Wort-Phrase fällt in der eigenen Ansage
+    #   # praktisch nicht. Ohne Eintrag gelten die Wakewords des Profils.
+    #   wakewords:
+    #     - bundle: stopp_gaston
+    #       min_hits: 2
+
   # ---------------------------------------------------------------------
   # Beispiel "respeaker" - Mic + LED-Ring + Speaker am ReSpeaker
   # ---------------------------------------------------------------------

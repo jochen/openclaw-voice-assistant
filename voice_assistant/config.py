@@ -232,6 +232,55 @@ class WatcherConfig:
 
 
 @dataclass
+class BargeInConfig:
+    """Abbruch mitten im Turn ("Stopp Gaston"), optional pro Profil.
+
+    Ohne den Profil-Block `barge_in:` verhaelt sich ein Profil exakt wie vor
+    dem Einbau (enabled=False). Das Fenster ist STATE_WAITING: Bestaetigung
+    ("Ich habe verstanden: ..."), Denk-Phrasen und das Vorlesen der Antwort.
+
+    wakewords: leer = dieselben Bundles wie im `wakewords:`-Block des Profils.
+        Ein eigenes Bundle (z.B. ein nachtrainiertes "stopp_gaston") wird hier
+        eingetragen und ist dann eine reine Config-Aenderung — der Code kennt
+        keinen Bundle-Namen.
+    rms_min: None = wake_rms_min des Profils uebernehmen. Eigener Wert nur mit
+        eigener Messung (tools/bargein_echo_test.py), denn das Fenster liegt
+        NEBEN der eigenen Wiedergabe und hat damit eine andere Grundlast als
+        das Wakeword-Gate im Leerlauf.
+    ack: kurze Quittung nach einem Abbruch. Leer = stumm (nur LED).
+    notify_brain: nach dem Abbruch eine Systemnachricht in dieselbe Session
+        posten, damit der Brain den Abbruch im Verlauf sieht und beim naechsten
+        Turn nicht weiterarbeitet. Kostet einen zusaetzlichen Turn.
+    """
+    enabled: bool = False
+    wakewords: list = field(default_factory=list)
+    rms_min: float | None = None
+    ack: str = "Okay."
+    notify_brain: bool = True
+    # Auch waehrend der EIGENEN Ansage lauschen (Bestaetigung, Denk-Phrasen,
+    # Vorlesen) — oder nur in den Luecken dazwischen.
+    #
+    # Default False, und das ist gemessen, nicht vorsichtig geraten
+    # (tools/bargein_echo_test.py digital, 2026-09-20): das gaston-Modell
+    # erkennt Gastons EIGENE Stimme. Der Satz "Ich habe verstanden: Gastau,
+    # Wohnzimmerrollo auf siebzig Prozent" ergab zwei Frames mit Peak 0.975 und
+    # haette den Turn selbst abgebrochen. Der Grund ist strukturell: das Modell
+    # ist auf synthetischen thorsten-Stimmen trainiert, und genau damit spricht
+    # der Assistent (speaches_tts_voice: de_DE-thorsten-medium) — die eigene
+    # Stimme liegt in der Trainingsverteilung. Dazu kommt, dass die
+    # Bestaetigung das Transkript wiederholt, in dem wegen des Pre-Rolls sehr
+    # oft das Wakewort steht.
+    #
+    # Mit False ist Selbst-Abbruch strukturell unmoeglich (es wird nur gehoert,
+    # wenn nichts gesprochen wird) und der Abbruch greift trotzdem beim Denken
+    # und Warten — also im Fall, der wirklich weh tut: der Brain arbeitet
+    # Sekunden bis Minuten. True gehoert erst zusammen mit einem eigenen
+    # Bundle ("stopp_gaston") oder nach einem akustischen Lauf, der zeigt,
+    # dass die Echo-Unterdrueckung das wegnimmt.
+    while_speaking: bool = False
+
+
+@dataclass
 class WakewordConfig:
     """Ein aktives Wakeword + sein Routing-Ziel (Multi-Wakeword, Meilenstein 1
     der Wakeword-Studio-Spec, siehe Wakeword_Studio_Spec.md Teil 2).
@@ -345,6 +394,9 @@ class Profile:
     # Überwacher Stufe 1 — fehlt der Block: kein Watcher-Thread.
     watcher: WatcherConfig = field(default_factory=WatcherConfig)
 
+    # Abbruch mitten im Turn ("Stopp Gaston"). Default: aus.
+    barge_in: BargeInConfig = field(default_factory=BargeInConfig)
+
 
 def _load_yaml() -> dict[str, Any]:
     try:
@@ -382,6 +434,41 @@ def _detect_profile_name(cfg: dict[str, Any]) -> str:
     sys.exit(1)
 
 
+def _parse_wakeword_entry(
+    entry: dict[str, Any] | None,
+    openclaw_session: str,
+    speaches_tts_voice: str,
+    wakeword_ack: str,
+) -> WakewordConfig | None:
+    """Ein Eintrag aus einem `wakewords:`-artigen Block → WakewordConfig.
+
+    Eigene Funktion, weil der Barge-in-Block (`barge_in.wakewords:`) dasselbe
+    Schema benutzt — ein zweiter Parser wuerde beim naechsten neuen Feld
+    auseinanderlaufen.
+    """
+    entry = entry or {}
+    bundle = str(entry.get("bundle", "")).strip()
+    if not bundle:
+        print("⚠️  wakewords-Eintrag ohne 'bundle' übersprungen")
+        return None
+    threshold_raw = entry.get("threshold")
+    min_hits_raw = entry.get("min_hits")
+    min_peak_raw = entry.get("min_peak")
+    min_peak_short_raw = entry.get("min_peak_short")
+    min_peak_single_raw = entry.get("min_peak_single")
+    return WakewordConfig(
+        bundle=bundle,
+        session=str(entry.get("session") or openclaw_session),
+        ack=str(entry.get("ack") or wakeword_ack),
+        tts_voice=str(entry.get("tts_voice") or speaches_tts_voice),
+        threshold=float(threshold_raw) if threshold_raw is not None else None,
+        min_hits=int(min_hits_raw) if min_hits_raw is not None else None,
+        min_peak=float(min_peak_raw) if min_peak_raw is not None else None,
+        min_peak_short=float(min_peak_short_raw) if min_peak_short_raw is not None else None,
+        min_peak_single=float(min_peak_single_raw) if min_peak_single_raw is not None else None,
+    )
+
+
 def _parse_wakewords(
     raw: dict[str, Any], openclaw_session: str, speaches_tts_voice: str, wakeword_ack: str
 ) -> list[WakewordConfig]:
@@ -404,28 +491,9 @@ def _parse_wakewords(
 
     result: list[WakewordConfig] = []
     for entry in entries_raw:
-        bundle = str((entry or {}).get("bundle", "")).strip()
-        if not bundle:
-            print("⚠️  wakewords-Eintrag ohne 'bundle' übersprungen")
-            continue
-        threshold_raw = entry.get("threshold")
-        min_hits_raw = entry.get("min_hits")
-        min_peak_raw = entry.get("min_peak")
-        min_peak_short_raw = entry.get("min_peak_short")
-        min_peak_single_raw = entry.get("min_peak_single")
-        result.append(
-            WakewordConfig(
-                bundle=bundle,
-                session=str(entry.get("session") or openclaw_session),
-                ack=str(entry.get("ack") or wakeword_ack),
-                tts_voice=str(entry.get("tts_voice") or speaches_tts_voice),
-                threshold=float(threshold_raw) if threshold_raw is not None else None,
-                min_hits=int(min_hits_raw) if min_hits_raw is not None else None,
-                min_peak=float(min_peak_raw) if min_peak_raw is not None else None,
-                min_peak_short=float(min_peak_short_raw) if min_peak_short_raw is not None else None,
-                min_peak_single=float(min_peak_single_raw) if min_peak_single_raw is not None else None,
-            )
-        )
+        wc = _parse_wakeword_entry(entry, openclaw_session, speaches_tts_voice, wakeword_ack)
+        if wc is not None:
+            result.append(wc)
     if not result:
         print("⚠️  wakewords-Block leer/ungültig → Fallback auf 'hey_jarvis'")
         return [
@@ -437,6 +505,47 @@ def _parse_wakewords(
             )
         ]
     return result
+
+
+def _parse_barge_in(
+    raw: dict[str, Any],
+    profile_wakewords: list[WakewordConfig],
+    wake_rms_min: float,
+    openclaw_session: str,
+    speaches_tts_voice: str,
+    wakeword_ack: str,
+) -> BargeInConfig:
+    """Baut den optionalen `barge_in:`-Block. Fehlt er, ist Barge-in aus.
+
+    Die Wakeword-Liste faellt bewusst auf die Profil-Wakewords zurueck: Stufe 1
+    des Abbruchs benutzt dasselbe, bereits gemessene Modell ("Stopp Gaston" —
+    das "Stopp" steckt im Pre-Roll und wird per STT geprueft). Ein eigenes,
+    nachtrainiertes Bundle ist spaeter nur ein Eintrag hier.
+    """
+    raw_bi = raw.get("barge_in") or {}
+    _d = BargeInConfig()
+    if not raw_bi:
+        return _d
+
+    entries_raw = raw_bi.get("wakewords") or []
+    wakewords: list[WakewordConfig] = []
+    for entry in entries_raw:
+        wc = _parse_wakeword_entry(entry, openclaw_session, speaches_tts_voice, wakeword_ack)
+        if wc is not None:
+            wakewords.append(wc)
+    if not wakewords:
+        wakewords = list(profile_wakewords)
+
+    rms_raw = raw_bi.get("rms_min")
+    ack_raw = raw_bi.get("ack")
+    return BargeInConfig(
+        enabled=bool(raw_bi.get("enabled", _d.enabled)),
+        wakewords=wakewords,
+        rms_min=float(rms_raw) if rms_raw is not None else wake_rms_min,
+        ack=_d.ack if ack_raw is None else str(ack_raw),
+        notify_brain=bool(raw_bi.get("notify_brain", _d.notify_brain)),
+        while_speaking=bool(raw_bi.get("while_speaking", _d.while_speaking)),
+    )
 
 
 def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
@@ -527,6 +636,21 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
 
+    wakewords = _parse_wakewords(
+        raw,
+        openclaw_session=str(raw.get("openclaw_session", "")),
+        speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
+        wakeword_ack=locale.wakeword_ack,
+    )
+    barge_in = _parse_barge_in(
+        raw,
+        profile_wakewords=wakewords,
+        wake_rms_min=float(raw.get("wake_rms_min", 0.0)),
+        openclaw_session=str(raw.get("openclaw_session", "")),
+        speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
+        wakeword_ack=locale.wakeword_ack,
+    )
+
     return Profile(
         name=name,
         mode=mode,
@@ -553,12 +677,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         locale=locale,
         actuator=actuator,
         watcher=watcher,
-        wakewords=_parse_wakewords(
-            raw,
-            openclaw_session=str(raw.get("openclaw_session", "")),
-            speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
-            wakeword_ack=locale.wakeword_ack,
-        ),
+        wakewords=wakewords,
+        barge_in=barge_in,
     )
 
 

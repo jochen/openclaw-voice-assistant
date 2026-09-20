@@ -187,9 +187,33 @@ python -m venv esphome-venv
 esphome-venv/bin/pip install esphome
 ```
 
-**How it works:** The Pi connects to the ESP via ESPHome Native API (port 6053, `aioesphomeapi`). Audio streams continuously via the `voice_assistant` component in API_AUDIO mode. TTS output is sent back as WAV via the ESP's `media_player` announce API — the Pi serves the WAV over HTTP (port 18800) and the ESP fetches and plays it.
+**How it works:** The Pi connects to the ESP via ESPHome Native API (port 6053, `aioesphomeapi`). Audio streams continuously via the `voice_assistant` component in API_AUDIO mode. TTS output is sent back as WAV — the Pi serves the WAV over HTTP (port 18800) and the ESP fetches and plays it.
 
 Wakeword detection (`openwakeword`) runs on the Pi against the audio stream.
+
+**Playback goes through the `media_player` entity, not the voice-assistant
+announce API — and that is deliberate.** The announce API
+(`send_voice_assistant_announcement_*`) ends the ESP's `voice_assistant`
+session: `handle_stop` fires, the audio stream breaks off, and the session has
+to be restarted afterwards. The consequence is easy to miss and hard to debug:
+**the Pi is deaf for the entire duration of every spoken reply.** No wake word,
+no interruption, nothing. Sending the URL to the `media_player` entity instead
+(`media_player_command(media_url=…, announcement=True)`) leaves the session
+untouched, so the microphone streams straight through playback — and unlike an
+announcement, playback can be stopped mid-sentence. No firmware change is
+needed for this; ESPHome's own `on_announce` performs exactly the same
+media-player call internally.
+
+Two things to know if you build on this:
+
+- **An announcement reports itself as `PLAYING`, not `ANNOUNCING`.** Waiting for
+  `MediaPlayerState.ANNOUNCING` to detect playback means waiting for something
+  that never arrives — every sentence then runs into your start timeout. Accept
+  both states (see `RespeakerClient._BUSY_STATES`). This cost us 5 seconds of
+  added latency per sentence before we noticed.
+- **Always keep a fallback for the end of playback.** If the state event fails
+  to arrive, fall back to the length of the WAV file rather than waiting
+  forever — otherwise a missing event hangs a whole turn.
 
 ## Wake-word level gate (`wake_rms_min`)
 
@@ -267,6 +291,102 @@ ow-venv/bin/python -m tools.wake_corpus sichern   # copy labelled clips out of t
 ow-venv/bin/python -m tools.wake_corpus bilanz    # what is secured, and which labels lost their audio
 ow-venv/bin/python -m tools.wake_corpus messen    # score the current bundle against that corpus
 ```
+
+## Cancelling a turn while it runs (`barge_in`, optional)
+
+A false wake-word trigger is not the expensive part. The expensive part is
+what follows it: the assistant repeats what it thinks it heard, the language
+model starts working, and whatever that model decides to do, it does. Until
+now there was exactly one way out — a stop word **inside the recording**,
+checked against the transcript. Once the recording had ended, the turn ran to
+completion.
+
+That gap got wider the moment the spoken acknowledgement ("Yes?") stopped
+being played for single-sentence commands: without that audible cue, a false
+trigger is often noticed only when the assistant is already answering.
+
+With `barge_in` enabled, the wake word is also listened for **while the
+assistant itself holds the floor**. Saying "stop <wake word>" then aborts the
+running turn:
+
+- playback stops mid-sentence,
+- the heartbeat phrases stop,
+- the HTTP connection to the backend is closed, which **cancels the agent run
+  server-side** (documented behaviour of `/v1/responses`: disconnecting the
+  client cancels the run),
+- nothing is mirrored to the chat, no follow-up round is started,
+- and optionally a short system note goes into the same session, so the model
+  sees the abort in its history instead of treating the next turn as a
+  continuation.
+
+The stop word itself is **not** matched on the wake word event — it is matched
+on the transcript afterwards. The trigger fires on the wake word, and the
+"stop" you said just before it sits in the pre-roll buffer. That is why both
+"stop <wake word>" and "<wake word>, stop" work, and why a barge-in *without* a
+stop word is simply treated as a new request — the classic interruption.
+
+```yaml
+profiles:
+  yourprofile:
+    barge_in:
+      enabled: true
+      # Listen while the assistant itself is speaking? See the warning below.
+      while_speaking: false
+      # Level gate for the abort. Omit it and the profile's wake_rms_min applies.
+      rms_min: 400
+      # Short spoken confirmation after an abort. Empty string = silent.
+      ack: "Okay."
+      # Post a system note about the abort into the same session.
+      notify_brain: true
+      # Optional: a dedicated bundle for the abort. Omit it and the profile's
+      # own wake words are used.
+      wakewords:
+        - bundle: stopp_gaston
+          min_hits: 2
+```
+
+> **Measure whether your assistant recognises its own voice before setting
+> `while_speaking: true`.** This is not a theoretical risk, and the two numbers
+> below are far apart:
+>
+> ```bash
+> ow-venv/bin/python -m tools.bargein_echo_test digital --wiederholungen 5
+> ow-venv/bin/python -m tools.bargein_echo_test akustisch --wiederholungen 3
+> ```
+>
+> | run | self-triggers | highest score |
+> |---|---|---|
+> | `digital` — pure TTS signal, no room, no echo cancellation | **5 of 40** | **0.97** |
+> | `akustisch` — real speaker → echo cancellation → real mic | **0 of 24** | **0.07** |
+>
+> Digitally the finding is structural: a wake-word model trained on synthetic
+> voices recognises the *synthetic voice your assistant speaks with* — that
+> voice sits inside its training distribution. It hit all three gate paths and
+> four different sentences, including a thinking phrase with no wake word in
+> it at all. So it is not merely the confirmation repeating the transcript.
+>
+> Acoustically, the same material dropped to 0.07 on our hardware: echo
+> cancellation takes away not just level but the wake-word character of the
+> signal. That is why **the default is `while_speaking: false`** while our own
+> installation runs `true` — the good number depends entirely on having echo
+> cancellation in the audio path (for the ReSpeaker: only with
+> `use_speaker: true`, where the XVF3800 has the loudspeaker reference). Route
+> playback through a plain ALSA speaker instead and the digital number is the
+> one that applies.
+>
+> With `while_speaking: false`, self-abortion is structurally impossible — it
+> only listens while nothing is being said — and the abort still covers the
+> thinking and waiting phase, the one that lasts seconds to minutes. Re-measure
+> after changing voice, volume, model or audio hardware.
+
+**What an abort cannot do:** a switching command handled by the voice actuator
+is already executed about half a second after the recording ends. No spoken
+"stop" beats that. Stopping the speech does not un-switch the light. Barge-in
+protects you from the language model, not from a lamp.
+
+Every abort and every near-miss is logged to `wake_events.log`
+(`result: "bargein"` / `"bargein_nearmiss"`) with its own audio clip, so the
+gate can be swept offline like the wake word itself.
 
 ## Voice actuator (optional)
 
@@ -625,7 +745,7 @@ not in someone's head. Several of these tools appear in their respective
 sections above (actuator, wakeword, endpointing); this lists them all, ordered
 by how soon you can use them.
 
-Two lessons shaped this discipline, both learned the hard way:
+Four lessons shaped this discipline, all learned the hard way:
 
 - A measurement that existed only in a scratchpad was, one day later, neither
   reproducible nor valid. Numbers that aren't committed alongside the tool are
@@ -633,6 +753,19 @@ Two lessons shaped this discipline, both learned the hard way:
 - A tool once printed its conclusion as fixed text instead of computing it —
   asserting an effect for four days that its own numbers contradicted. A tool
   must *calculate* its verdict from the current data, not state it.
+- **A tool needs to know when it has measured nothing.** One of them declared a
+  run invalid below a *guessed* microphone level. Measured, the signal it was
+  supposed to detect sat right at that guessed threshold — so the tool rejected
+  valid runs and would have hidden a real finding. If a tool has a validity
+  criterion, that criterion has to be derived from something observable (did
+  playback happen at all? what is this room's baseline level?), not from a
+  number that felt about right.
+- **Where a generative component is involved, one run is a sample of one.** Our
+  TTS renders the same sentence differently every time (three renderings of one
+  sentence: 137294 / 130638 / 133710 bytes). A self-trigger therefore showed up
+  in different sentences on different runs, and a single pass over eight
+  sentences found nothing on its first try. Repetitions are the normal case
+  there, not a refinement.
 
 Most of these tools need **a few days of operation** before they yield
 anything, because they build on the trigger archive and `wake_events.log`.
@@ -655,6 +788,15 @@ archived wake/record/near-miss WAVs).
   takes alone, no daily archive needed (see the level-gate section above).
   ```bash
   ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
+  ```
+- `bargein_echo_test` — measures whether the assistant's **own voice** sets off
+  the abort detector (see the barge-in section above). `digital` needs no
+  hardware and gives the lower bound; `akustisch` plays through the real
+  speaker while the real microphone listens, and that is the number that
+  decides whether `while_speaking: true` is safe.
+  ```bash
+  ow-venv/bin/python -m tools.bargein_echo_test digital
+  ow-venv/bin/python -m tools.bargein_echo_test akustisch
   ```
 
 **After a few days of operation (once the archive exists):**
