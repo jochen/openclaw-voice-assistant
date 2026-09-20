@@ -386,12 +386,14 @@ und deshalb ist das Rot hier keine Anleihe aus Verlegenheit, sondern das
 passende Mittel: ein kurzes Aufleuchten, das sofort dem Aufnahme-Grün weicht.
 Wer das erneut vorschlägt, ändert damit eine Entscheidung, nicht eine Lücke.
 
-### Zwei Fallen, die der erste Messlauf aufgedeckt hat
+### Drei Fallen im Zusammenspiel mit dem ESP
 
-Beide kosteten je einen kompletten Lauf. Festgehalten sind sie **dort, wo man
-hineinläuft** — nicht nur im Messwerkzeug: Falle 1 an
-`RespeakerClient._BUSY_STATES` und in der ReSpeaker-Sektion beider READMEs
-(wer die Hardware nachbaut, stolpert sonst genauso), Falle 2 im Docstring von
+Die ersten zwei kosteten je einen Messlauf, die dritte eine abgehackte Antwort
+im echten Betrieb. Festgehalten sind sie **dort, wo man hineinläuft** — nicht
+nur im Messwerkzeug: Falle 1 und 3 an
+`RespeakerSink.play_wav` / `RespeakerClient._BUSY_STATES` und in der
+ReSpeaker-Sektion beider READMEs (wer die Hardware nachbaut, stolpert sonst
+genauso), Falle 2 im Docstring von
 `SpeachesTts.synth()`, also an der Quelle dieser Bytes, plus eine Warnung an
 `RespeakerSink._wav_seconds()`, der einzigen Stelle im Repo, die mit
 `getnframes()` rechnet. Die verallgemeinerbaren Lehren (geratenes
@@ -410,6 +412,23 @@ Mess-Werkzeugen in beiden READMEs, neben den zwei älteren.
    Längenrechnung muss aus den gelesenen Bytes kommen. Die Senke ist davon
    nicht betroffen (sie rechnet auf der selbst geschriebenen 48-kHz-Datei), das
    Messwerkzeug war es.
+3. **Der Player-Zustand taugt als Anker, nicht als Bedingung** — und das ist
+   dieselbe Falle wie 1, einen Schritt weiter gedacht. Nachdem `_BUSY_STATES`
+   das Abspielen erkannte, hing die Wiedergabe trotzdem am *Ende*-Ereignis. Das
+   kommt aber nicht zuverlässig: ESPHome meldet nur **Änderungen**, und bleibt
+   der Player von einem Satz zum nächsten durchgehend im Abspiel-Zustand, gibt
+   es gar kein Event. Jeder solche Satz lief dann in eine Zeitschranke.
+   Gemessen am 2026-09-20 in einer vorgelesenen Antwort: Überhänge von
+   **+5,4 s und +5,5 s** zwischen den Sätzen, die Ausgabe klang abgehackt — und
+   im Log stand nur zweimal „kein Ende-Zustand", die Lücken selbst musste man
+   ausrechnen. Jetzt ist die **Länge der WAV-Datei** die Hauptgröße, der
+   Zustand nur der Anker für den Startpunkt (bleibt er aus, gilt eine gemessene
+   Hol-/Decoder-Annahme von 0,6 s). Überhang danach: +0,48 bis +0,54 s über vier
+   Sätze, keine Warnung. Zwei Konsequenzen, die man nicht wegkürzen darf: jede
+   Ansage bekommt eine **eigene URL** (vorher trugen alle Sätze einer Antwort
+   dieselbe, `pid_threadid.wav` — dieselbe Adresse zweimal hintereinander), und
+   ein Überhang über `_UEBERHANG_WARNUNG` (2 s) **meldet sich selbst im Log**,
+   damit die nächste Regression dieser Art nicht erst im Ohr auffällt.
 
 Dazu eine Lehre über Messwerkzeuge in diesem Repo: das erste
 Gültigkeitskriterium des Werkzeugs war ein **geratener** Mikrofon-Pegel (200).

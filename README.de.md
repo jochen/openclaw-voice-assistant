@@ -213,9 +213,23 @@ Zwei Dinge, die man wissen muss, wenn man darauf aufbaut:
   Start-Zeitschranke. Beide Zustände akzeptieren (siehe
   `RespeakerClient._BUSY_STATES`). Uns hat das 5 Sekunden Zusatzlatenz pro
   Satz gekostet, bevor es auffiel.
-- **Für das Ende der Wiedergabe immer einen Rückfallweg vorsehen.** Bleibt das
-  Zustands-Ereignis aus, lieber auf die Länge der WAV-Datei zurückfallen als
-  endlos warten — sonst hängt ein fehlendes Ereignis einen ganzen Turn.
+- **Mach das Zustands-Ereignis nicht zur *Bedingung* für „Wiedergabe fertig" —
+  die Bedingung ist die Dateilänge, der Zustand nur ein Anker.** ESPHome meldet
+  nur Zustands*änderungen*; bleibt der Player von einem Satz zum nächsten im
+  Abspiel-Zustand, kommt gar kein Ereignis. Unser erster Versuch wartete darauf
+  und lief bei jedem solchen Satz in die Zeitschranke: gemessene Überhänge von
+  **+5,4 s und +5,5 s** zwischen den Sätzen einer vorgelesenen Antwort — das
+  klingt genau wie ein stotternder Assistent. Mit der WAV-Länge als Hauptgröße
+  (und einer gemessenen Annahme von ~0,6 s fürs Datei-Holen, wenn der Anker
+  ausbleibt) sind es +0,48 bis +0,54 s.
+- **Gib jeder Ansage ihre eigene URL.** Bei uns hieß die Datei pro Worker-Thread
+  gleich, alle Sätze einer Antwort liefen also über dieselbe Adresse — ein
+  weiterer Grund für einen Player, keine Änderung zu melden.
+- **Lass die Senke einen auffälligen Überhang selbst melden.** Als es bei uns
+  schiefging, stand im Log nur zweimal eine knappe Warnung; die Lücken musste
+  man ausrechnen. Eine Zeile, die feuert, sobald die Wiedergabe mehr als ~2 s
+  länger dauert als das Audio, macht aus der nächsten Regression dieser Art
+  etwas zum Lesen statt zum Hören.
 
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 

@@ -211,9 +211,23 @@ Two things to know if you build on this:
   that never arrives — every sentence then runs into your start timeout. Accept
   both states (see `RespeakerClient._BUSY_STATES`). This cost us 5 seconds of
   added latency per sentence before we noticed.
-- **Always keep a fallback for the end of playback.** If the state event fails
-  to arrive, fall back to the length of the WAV file rather than waiting
-  forever — otherwise a missing event hangs a whole turn.
+- **Do not make the state event the *condition* for "playback finished" — make
+  the file length the condition and the state merely an anchor.** ESPHome only
+  reports state *changes*, so if the player stays in a playing state from one
+  sentence to the next, no event arrives at all. Our first attempt waited for
+  that event and ran into its timeout on every such sentence: measured overhangs
+  of **+5.4 s and +5.5 s** between sentences of one spoken answer, which sounds
+  exactly like the assistant stuttering. Using the WAV length as the primary
+  measure (with a measured ~0.6 s fetch/decode assumption when the anchor is
+  missing) brought it to +0.48…+0.54 s.
+- **Give every announcement its own URL.** Ours reused one filename per worker
+  thread, so all sentences of a reply were served under the same address — one
+  more reason for a player not to report a change.
+- **Have the sink report an unusual overhang itself.** When ours went wrong, the
+  log held only two terse warnings; the gaps had to be computed by hand. A line
+  that fires when playback takes more than ~2 s longer than the audio turns the
+  next regression of this kind into something you read instead of something you
+  hear.
 
 ## Wake-word level gate (`wake_rms_min`)
 

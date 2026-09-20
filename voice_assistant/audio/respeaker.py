@@ -422,11 +422,20 @@ class RespeakerSink:
     """TTS via ESPHome announce API: Pi → HTTP → ESP media_player → aic3104."""
 
     _HTTP_PORT = 18800
-    # Zeit, die der ESP bekommt, um eine abgesetzte Ansage aufzugreifen
-    # (Datei ziehen + Decoder starten).
-    _START_TIMEOUT = 5.0
-    # Zuschlag auf die Laenge der Datei, bis das Ende-Ereignis da sein muss.
-    _END_MARGIN = 5.0
+    # Zeit, in der der Player den Beginn des Abspielens melden DARF. Laeuft sie
+    # ab, wird trotzdem weitergemacht — der Zustand ist hier nur ein Anker, um
+    # den Startzeitpunkt genauer zu kennen, keine Bedingung (siehe play_wav).
+    _START_ANKER_TIMEOUT = 2.0
+    # Annahme fuer Datei-Holen + Decoder-Start, wenn der Anker ausbleibt.
+    # Gemessen 2026-09-20 ueber mehrere Ansagen: 0,2-0,6 s.
+    _FETCH_ANNAHME = 0.6
+    # Nachfrist am Ende: so lange wird dem Player noch zugehoert, ob er das
+    # Abspielen beendet meldet. Kurz, weil die Dateilaenge die Hauptgroesse ist.
+    _END_NACHFRIST = 1.0
+    # Ab diesem Ueberhang ueber die Dateilaenge wird gewarnt. Im gesunden
+    # Betrieb liegt er bei 0,5 s (TTS-Synthese des naechsten Satzes + Datei
+    # holen), gemessen 2026-09-20 ueber vier aufeinanderfolgende Saetze.
+    _UEBERHANG_WARNUNG = 2.0
 
     def __init__(self, cfg: RespeakerAudio) -> None:
         self._client = get_client(cfg)
@@ -434,6 +443,12 @@ class RespeakerSink:
         self._pi_ip = _get_local_ip()
         self._lock = threading.Lock()
         self._stopped = False
+        # Laufende Nummer je Ansage. Vorher hiess die Datei
+        # f"{pid}_{thread_id}.wav" und war damit fuer JEDEN Satz einer Antwort
+        # dieselbe URL — der Player bekam zweimal hintereinander exakt
+        # dieselbe Adresse. Eine eindeutige URL nimmt jede Frage nach
+        # Zwischenspeichern und Entdoppeln aus dem Weg.
+        self._folge = 0
         self._start_http_server()
 
     def _start_http_server(self) -> None:
@@ -509,30 +524,56 @@ class RespeakerSink:
             if self._stopped:
                 return
 
-        filename = f"{os.getpid()}_{threading.get_ident()}.wav"
+        with self._lock:
+            self._folge += 1
+            folge = self._folge
+        filename = f"{os.getpid()}_{threading.get_ident()}_{folge}.wav"
         dest = os.path.join(self._serve_dir, filename)
         self._to_48k_stereo(path, dest)
         url = f"http://{self._pi_ip}:{self._HTTP_PORT}/{filename}"
         dauer = self._wav_seconds(dest)
         log.info("Play → %s (%.1fs)", url, dauer)
 
+        t_start = time.monotonic()
         try:
             if not client.play_url(url):
                 return
-            # Bis der Player Ton ausgibt (PLAYING/ANNOUNCING, siehe
-            # _BUSY_STATES). Faellt das Zustands-Event aus, wird nicht ewig
-            # gewartet, sondern unten ueber die Laenge der Datei
-            # zurueckgefallen.
-            gestartet = client.wait_player(busy=True, timeout=self._START_TIMEOUT)
-            if gestartet:
-                fertig = client.wait_player(
-                    busy=False, timeout=dauer + self._END_MARGIN
+            # Die LAENGE DER DATEI ist die verlaessliche Groesse, nicht der
+            # Zustand des Players.
+            #
+            # Die erste Fassung hatte das umgekehrt und wartete auf
+            # Zustandswechsel. Das ging schief, weil ESPHome nur AENDERUNGEN
+            # meldet: bleibt der Player von einem Satz zum naechsten
+            # durchgehend im Abspiel-Zustand, kommt gar kein Event — und dann
+            # lief jeder Satz in eine 5-Sekunden-Zeitschranke. Live gemessen am
+            # 2026-09-20 in einer vorgelesenen Antwort: Luecken von +5,4 s und
+            # +5,5 s zwischen den Saetzen ("kein Ende-Zustand", "kein
+            # Abspiel-Zustand"), die Ausgabe klang abgehackt.
+            #
+            # Jetzt dient der Zustand nur noch als ANKER fuer den Startpunkt;
+            # bleibt er aus, wird die gemessene Hol-/Decoder-Zeit angenommen.
+            gestartet = client.wait_player(
+                busy=True, timeout=self._START_ANKER_TIMEOUT
+            )
+            self._sleep_unless_stopped(
+                dauer if gestartet else dauer + self._FETCH_ANNAHME
+            )
+            # Nachfrist: laeuft der Player noch (laengere Datei als gedacht,
+            # langsamer Decoder), kurz zuhoeren statt sofort den naechsten Satz
+            # darueber zu legen.
+            client.wait_player(busy=False, timeout=self._END_NACHFRIST)
+            # Ueberhang mitschreiben, sobald er auffaellt. Die abgehackte
+            # Ausgabe vom 2026-09-20 war im Log nur an zwei Warnungen zu
+            # erkennen; die Luecken selbst (+5,4 s) musste man ausrechnen. Eine
+            # Regression im Zusammenspiel mit dem ESP soll sich kuenftig selbst
+            # melden, statt nur hoerbar zu sein.
+            ueberhang = time.monotonic() - t_start - dauer
+            if ueberhang > self._UEBERHANG_WARNUNG:
+                log.warning(
+                    "Wiedergabe: %.1fs Ueberhang auf %.1fs Audio "
+                    "(Anker %s) — Ausgabe klingt abgehackt",
+                    ueberhang, dauer, "ja" if gestartet else "NEIN",
                 )
-                if not fertig:
-                    log.warning("Wiedergabe: kein Ende-Zustand nach %.1fs", dauer + self._END_MARGIN)
-            else:
-                log.warning("Wiedergabe: kein Abspiel-Zustand vom Player — warte %.1fs blind", dauer)
-                self._sleep_unless_stopped(dauer + 0.3)
         except Exception as exc:
             log.error("Wiedergabe fehlgeschlagen: %s", exc)
         finally:
