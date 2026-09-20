@@ -20,6 +20,7 @@ import wave
 from typing import Callable
 
 from voice_assistant.config import (
+    ABORT_BEEP_PATH,
     FOLLOWUP_BEEP_PATH,
     LAST_REPLY_TXT,
     LAST_REPLY_WAV,
@@ -390,6 +391,44 @@ def prerender_followup_beep() -> None:
         print(f"⚠️  Follow-up beep failed: {e}")
 
 
+def prerender_abort_beep() -> None:
+    """Zwei kurze FALLENDE Toene als Abbruch-Signal (Barge-in).
+
+    Bewusst fallend und zweitoenig: der Follow-up-Beep ist ein einzelner
+    steigender Ton, und die beiden duerfen nicht zu verwechseln sein. Der eine
+    sagt "ich hoere jetzt zu", der andere "ich habe mitten im Satz aufgehoert".
+
+    Ein Beep und keine Sprachausgabe, weil es sofort kommen muss: TTS ueber
+    Speaches braucht rund eine Sekunde, und in dieser Sekunde wartet der Nutzer
+    darauf, ob sein Abbruch ankam.
+    """
+    import wave as _wave
+    import numpy as np
+
+    rate = 16000
+    ton_sec = 0.085
+    pause_sec = 0.03
+    teile = []
+    for hz in (740, 466):          # fis'' -> b' , deutlich fallend
+        t = np.linspace(0, ton_sec, int(rate * ton_sec), endpoint=False)
+        ton = (np.sin(2 * np.pi * hz * t) * 16384).astype(np.int16)
+        fade = int(rate * 0.008)
+        ton[:fade] = (ton[:fade] * np.linspace(0, 1, fade)).astype(np.int16)
+        ton[-fade:] = (ton[-fade:] * np.linspace(1, 0, fade)).astype(np.int16)
+        teile.append(ton)
+        teile.append(np.zeros(int(rate * pause_sec), dtype=np.int16))
+    samples = np.concatenate(teile[:-1])
+    try:
+        with _wave.open(ABORT_BEEP_PATH, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes(samples.tobytes())
+        print(f"✅ Abbruch-Beep erzeugt: {ABORT_BEEP_PATH}")
+    except Exception as e:
+        print(f"⚠️  Abbruch-Beep fehlgeschlagen: {e}")
+
+
 def prerender_ja(text: str = "Ja?", out_path: str = PIPER_OUT) -> None:
     """Pre-renders the wakeword acknowledgement with Piper.
 
@@ -543,6 +582,17 @@ class ReplySpeaker:
         if turn_stopped(turn):
             return
         with tts_lock:
+            # Zweite Pruefung INNERHALB des Locks, und die ist der eigentliche
+            # Punkt: auf tts_lock wird gewartet, oft Sekunden (die Bestaetigung
+            # haelt ihn, waehrend sie Satz fuer Satz spricht). Ein Abbruch in
+            # dieser Wartezeit wuerde von der Pruefung oben nicht gesehen — der
+            # Aufrufer haette sie passiert, als der Turn noch lebte. Live
+            # beobachtet am 2026-09-20 15:45:49: der Abbruch kam 0,5 s bevor
+            # die Bestaetigung den Lock freigab, und der erste Satz der
+            # abgebrochenen Antwort ("Alles klar, Jochen.") wurde trotzdem
+            # gesprochen.
+            if turn_stopped(turn):
+                return
             clean = self.tts_prefix + clean_for_tts(text)
             if not clean.strip():
                 return
@@ -626,6 +676,12 @@ class ReplyStreamSession:
         if not clean.strip():
             return
         with tts_lock:
+            # Zweite Pruefung im Lock — siehe ReplySpeaker.speak(). Genau hier
+            # ist ein abgebrochener Satz durchgekommen: feed() hatte die
+            # Pruefung oben schon passiert und hing dann am Lock, den die
+            # Bestaetigung hielt.
+            if turn_stopped(self.turn):
+                return
             if not self._led_set:
                 self.sp.leds.set_phase(
                     LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW

@@ -169,7 +169,13 @@ profiles:
     #   #   ow-venv/bin/python -m tools.bargein_echo_test akustisch
     #   while_speaking: false
     #   rms_min: 400            # optional, Default: wake_rms_min des Profils
-    #   ack: "Okay."            # kurze Quittung nach dem Abbruch; "" = stumm
+    #   # Fallender Doppelton + kurz rote LED im MOMENT des Abbruchs. Kommt
+    #   # sofort, ohne auf die STT zu warten — ohne ihn ist ein Abbruch an
+    #   # nichts zu erkennen ausser daran, dass die Stimme aufhoert.
+    #   beep: true
+    #   # Quittiert hinterher den VERSTANDENEN Abbruch (nur wenn im Transkript
+    #   # ein Stopp-Wort stand); "" = stumm.
+    #   ack: "Okay."
     #   notify_brain: true      # Systemnachricht über den Abbruch in die Session
     #   # Optional ein EIGENES Bundle für den Abbruch (empfohlen, sobald eines
     #   # nachtrainiert ist): die Zwei-Wort-Phrase fällt in der eigenen Ansage

@@ -339,6 +339,8 @@ profiles:
       enabled: true
       # Auch hören, während der Assistent selbst spricht? Siehe Warnung unten.
       while_speaking: false
+      # Fallender Doppelton + kurz rote LED im Moment des Abbruchs.
+      beep: true
       # Pegel-Gate für den Abbruch. Ohne Eintrag gilt wake_rms_min des Profils.
       rms_min: 400
       # Kurze gesprochene Quittung nach einem Abbruch. Leer = stumm.
@@ -388,6 +390,41 @@ profiles:
 > weiterhin beim Denken und Warten, also im Fenster, das Sekunden bis Minuten
 > dauert. Nach einem Wechsel von Stimme, Lautstärke, Modell oder Audio-Hardware
 > neu messen.
+
+**Mach den Abbruch wahrnehmbar.** Das einzige Signal, dass ein Abbruch ankam,
+ist sonst die mitten im Satz abbrechende Stimme — und das reicht nicht: in
+unserem ersten Live-Test lief die folgende Aufnahme 18 Sekunden ohne weiteres
+Zeichen. Zwei Dinge beheben das, und sie quittieren Verschiedenes:
+
+- `beep` spielt im Moment des Abbruchs einen kurzen **fallenden Doppelton**,
+  dazu kurz eine rote LED. Er sagt „ich habe mitten im Satz aufgehört und höre
+  jetzt zu", und er kommt sofort — ohne auf die Spracherkennung zu warten, die
+  rund eine Sekunde braucht.
+- `ack` wird hinterher gesprochen und nur dann, wenn im Transkript wirklich ein
+  Stopp-Wort stand. Er sagt „ich habe das als Abbruch verstanden".
+
+Beim ersten bewusst ein Beep und keine Sprache: der Moment, in dem der Nutzer
+auf eine Antwort auf „ist das angekommen?" wartet, ist genau die Sekunde, die
+dein TTS braucht. Und mach ihn deutlich anders als das Geräusch für „ich höre
+zu" — unseres ist ein einzelner *steigender* Ton, der Abbruch ein *fallendes*
+Paar.
+
+**Halte die Aufnahme nach einem Abbruch kurz.** Ein Barge-in wird in einem
+Atemzug gesagt — ein Stopp-Wort oder ein knapper neuer Auftrag; niemand hält
+dort eine Denkpause. Mit unserem normalen Dialog-Endpointing (2 s Nachlauf,
+30 s Deckel) blieb die Aufnahme nach dem Abbruch 18,2 Sekunden offen und fing
+die Frage einer **unbeteiligten zweiten Person** ein, die dann als neuer Auftrag
+beantwortet wurde. Für diesen Zustand ist das Kommando-Endpointing (1 s, 8 s)
+das richtige.
+
+**Wenn du etwas Ähnliches baust: prüfe das Abbruch-Kennzeichen erneut, nachdem
+du dein Audio-Lock bekommen hast.** Unser erster Live-Abbruch sprach noch einen
+Satz — weil dieser Satz die Abbruch-Prüfung schon passiert hatte und dann am
+Wiedergabe-Lock hing, das die noch vorgelesene Bestätigung hielt. Als die
+korrekt abbrach, gab sie das Lock frei, und der wartende Satz lief mit
+veralteter Prüfung durch. Der Abbruch hatte die Antwort also nicht verhindert,
+nur verzögert. Ein einzelner Satz genügt, damit sich die ganze Funktion kaputt
+anfühlt.
 
 **Was ein Abbruch nicht kann:** ein Schaltbefehl, den der Voice-Aktuator
 erledigt, ist etwa eine halbe Sekunde nach Aufnahmeende schon ausgeführt. Da

@@ -363,6 +363,125 @@ class StoppWortImBargeInTest(unittest.TestCase):
         )
 
 
+class TtsLockWettlaufTest(unittest.TestCase):
+    """(8) Der Abbruch muss auch den Satz stoppen, der schon am tts_lock haengt.
+
+    Live beobachtet am 2026-09-20 um 15:45:49, und es war der schlechteste
+    denkbare Satz: die Bestaetigung sprach noch (haelt tts_lock), der erste Satz
+    der Antwort stand fertig in der Warteschlange und hatte die
+    Abbruch-Pruefung schon passiert. Dann kam "Stopp Gaston". Die Bestaetigung
+    brach korrekt ab — und gab damit den Lock frei, worauf der wartende Satz
+    ("Alles klar, Jochen.") gesprochen wurde. Aus Sicht des Nutzers hat der
+    Abbruch also eine Antwort NICHT verhindert, sondern nur verzoegert.
+
+    Deshalb wird innerhalb des Locks ein zweites Mal geprueft. Verschwindet
+    diese zweite Pruefung, ist der Fehler lautlos zurueck — er braucht nur die
+    richtige halbe Sekunde.
+    """
+
+    def test_satz_der_am_lock_wartete_wird_nicht_mehr_gesprochen(self) -> None:
+        import threading
+
+        from voice_assistant.services import tts as tts_mod
+        from voice_assistant.state import tts_lock
+
+        gespielt: list = []
+
+        class FakeSpeaches:
+            class state:
+                @staticmethod
+                def tts_ok():
+                    return True
+
+            @staticmethod
+            def synth(text):
+                return None  # Piper-Fallback greift, wird unten abgefangen
+
+        class FakeLeds:
+            def set_phase(self, *_a, **_k):
+                pass
+
+        sp = tts_mod.ReplySpeaker(
+            FakeSpeaches(), lambda pfad: gespielt.append(pfad), FakeLeds()
+        )
+        # Piper-Rendering ersetzen: kein Modell, kein Audio — nur Buchfuehrung.
+        orig_piper = tts_mod.piper_synth
+        tts_mod.piper_synth = lambda text, model=None: gespielt.append(text) or None
+
+        turn = turn_control.begin()
+        try:
+            # Lock belegen, wie es die laufende Bestaetigung tut.
+            tts_lock.acquire()
+            t = threading.Thread(
+                target=sp.speak, args=("Alles klar, Jochen.",), kwargs={"turn": turn},
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.3)          # Satz haengt jetzt am Lock
+            self.assertTrue(t.is_alive())
+            turn_control.cancel("barge_in")   # Abbruch WAEHREND des Wartens
+            tts_lock.release()                # Bestaetigung bricht ab, Lock frei
+            t.join(timeout=5.0)
+            self.assertFalse(t.is_alive())
+            self.assertEqual(
+                gespielt, [],
+                "der am Lock wartende Satz darf nach dem Abbruch nicht mehr "
+                "gesprochen werden — genau das passierte am 2026-09-20",
+            )
+        finally:
+            tts_mod.piper_synth = orig_piper
+            if tts_lock.locked():
+                try:
+                    tts_lock.release()
+                except RuntimeError:
+                    pass
+
+    def test_ohne_abbruch_wird_der_satz_normal_gesprochen(self) -> None:
+        """Gegenprobe: die zweite Pruefung darf nicht alles verschlucken."""
+        import threading
+
+        from voice_assistant.services import tts as tts_mod
+        from voice_assistant.state import tts_lock
+
+        gespielt: list = []
+
+        class FakeSpeaches:
+            class state:
+                @staticmethod
+                def tts_ok():
+                    return False   # direkt in den Piper-Zweig
+
+        class FakeLeds:
+            def set_phase(self, *_a, **_k):
+                pass
+
+        sp = tts_mod.ReplySpeaker(
+            FakeSpeaches(), lambda pfad: gespielt.append(pfad), FakeLeds()
+        )
+        orig_piper = tts_mod.piper_synth
+        tts_mod.piper_synth = lambda text, model=None: gespielt.append(text) or None
+
+        turn = turn_control.begin()
+        try:
+            tts_lock.acquire()
+            t = threading.Thread(
+                target=sp.speak, args=("Alles klar, Jochen.",), kwargs={"turn": turn},
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.3)
+            tts_lock.release()       # kein Abbruch
+            t.join(timeout=5.0)
+            self.assertTrue(gespielt, "ohne Abbruch muss gesprochen werden")
+        finally:
+            tts_mod.piper_synth = orig_piper
+            if tts_lock.locked():
+                try:
+                    tts_lock.release()
+                except RuntimeError:
+                    pass
+
+
 class StreamAbbruchTest(unittest.TestCase):
     """(7) Der Abbruch muss die SSE-Verbindung wirklich schliessen.
 

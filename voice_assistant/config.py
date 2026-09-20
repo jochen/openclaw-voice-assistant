@@ -257,6 +257,14 @@ class BargeInConfig:
     rms_min: float | None = None
     ack: str = "Okay."
     notify_brain: bool = True
+    # Kurzes Signal im Moment des Abbruchs (fallender Doppelton + rote LED).
+    #
+    # Es quittiert etwas anderes als `ack`: der Beep sagt "ich habe mitten im
+    # Satz aufgehoert und hoere jetzt zu" und kommt SOFORT, ohne auf die STT zu
+    # warten. `ack` bestaetigt hinterher den verstandenen Abbruch. Am
+    # 2026-09-20 fehlte der Beep und der Abbruch war 18 Sekunden lang an
+    # nichts zu erkennen — ausser daran, dass die Stimme aufhoerte.
+    beep: bool = True
     # Auch waehrend der EIGENEN Ansage lauschen (Bestaetigung, Denk-Phrasen,
     # Vorlesen) — oder nur in den Luecken dazwischen.
     #
@@ -545,6 +553,7 @@ def _parse_barge_in(
         ack=_d.ack if ack_raw is None else str(ack_raw),
         notify_brain=bool(raw_bi.get("notify_brain", _d.notify_brain)),
         while_speaking=bool(raw_bi.get("while_speaking", _d.while_speaking)),
+        beep=bool(raw_bi.get("beep", _d.beep)),
     )
 
 
@@ -738,6 +747,10 @@ MAX_FOLLOWUP_ROUNDS = 3
 # es wieder gleich falsch — sie nervt nur.
 MAX_UNKLAR_ROUNDS = 1
 FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
+# Abbruch-Signal (Barge-in): zwei kurze FALLENDE Toene, damit es sich vom
+# steigenden Follow-up-Beep hoerbar unterscheidet — "ich habe aufgehoert"
+# gegen "ich hoere jetzt zu".
+ABORT_BEEP_PATH = os.path.join(WORKSPACE, "abort_beep.wav")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
 

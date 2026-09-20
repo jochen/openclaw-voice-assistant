@@ -332,6 +332,8 @@ profiles:
       enabled: true
       # Listen while the assistant itself is speaking? See the warning below.
       while_speaking: false
+      # Falling two-tone + brief red LED the moment the abort fires.
+      beep: true
       # Level gate for the abort. Omit it and the profile's wake_rms_min applies.
       rms_min: 400
       # Short spoken confirmation after an abort. Empty string = silent.
@@ -378,6 +380,38 @@ profiles:
 > only listens while nothing is being said — and the abort still covers the
 > thinking and waiting phase, the one that lasts seconds to minutes. Re-measure
 > after changing voice, volume, model or audio hardware.
+
+**Make the abort perceptible.** The only signal that an abort landed is
+otherwise the voice stopping mid-sentence, and that is not enough: in our first
+live test the following recording ran for 18 seconds with no further cue. Two
+things fix that, and they acknowledge different facts:
+
+- `beep` plays a short **falling two-tone** the moment the abort fires, plus a
+  brief red LED. It says "I stopped mid-sentence and I am listening now", and it
+  arrives immediately — no waiting for speech recognition, which takes about a
+  second.
+- `ack` is spoken afterwards and only when a stop word was actually found in
+  the transcript. It says "I understood that as an abort".
+
+Deliberately a beep and not speech for the first one: the moment the user is
+waiting for an answer to "did that land?" is exactly the second your TTS needs.
+Make it clearly different from whatever sound you use for "I'm listening" —
+ours is a single *rising* tone, the abort is a *falling* pair.
+
+**Keep the recording after an abort short.** A barge-in is said in one breath —
+a stop word, or a brief new request; nobody pauses to think there. With our
+normal dialog endpointing (2 s trailing silence, 30 s ceiling) the recording
+after the abort stayed open for 18.2 seconds and picked up a *bystander's*
+question, which was then answered as a new request. Command endpointing (1 s,
+8 s) is the right setting for this state.
+
+**If you build something like this: re-check the abort flag after acquiring your
+audio lock.** Our first live abort still spoke one sentence, because that
+sentence had already passed the abort check and was then blocked on the playback
+lock held by the confirmation still being read out. When the confirmation broke
+off correctly, it released the lock — and the waiting sentence went ahead with a
+stale check. The abort had not prevented the answer, only delayed it. One
+sentence is enough to make the whole feature feel broken.
 
 **What an abort cannot do:** a switching command handled by the voice actuator
 is already executed about half a second after the recording ends. No spoken

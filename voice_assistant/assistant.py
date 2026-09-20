@@ -19,6 +19,7 @@ from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
 from voice_assistant.config import (
     ACTUATOR_LOG_PATH,
     DIARIZATION_JOIN_TIMEOUT,
+    ABORT_BEEP_PATH,
     ENDPOINT_LOG_PATH,
     FOLLOWUP_BEEP_PATH,
     LAST_RECORDING_PATH,
@@ -69,6 +70,7 @@ from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import LocalWhisperStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes
 from voice_assistant.services.tts import (
     ReplySpeaker,
+    prerender_abort_beep,
     SpeachesTts,
     ThinkingWorker,
     prerender_followup_beep,
@@ -687,6 +689,8 @@ def run() -> None:
         ack_paths[_ww.bundle] = _path
         prerender_ja(_ww.ack, out_path=_path)
     prerender_followup_beep()
+    if profile.barge_in.enabled and profile.barge_in.beep:
+        prerender_abort_beep()
 
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)
@@ -1895,6 +1899,18 @@ def run() -> None:
                         _sink_stop(audio_sink)
                         abgebrochen = turn_control.cancel("barge_in")
                         _sink_resume(audio_sink)
+                        # Signal SOFORT, nicht erst wenn die STT den Abbruch
+                        # bestaetigt: bis dahin vergehen Sekunden, und bis zum
+                        # 2026-09-20 war der Abbruch in dieser Zeit an nichts zu
+                        # erkennen — ausser daran, dass die Stimme aufhoerte.
+                        # Die rote Haelfte steht, solange der Beep laeuft
+                        # (~0,2 s Datei, mit Uebertragung knapp unter 1 s), und
+                        # geht dann in das Aufnahme-Gruen ueber. Bewusst ohne
+                        # eigene LED-Phase: alle zwoelf sind belegt, eine
+                        # dreizehnte braeuchte einen Flash des ESP.
+                        if _barge_cfg.beep and os.path.exists(ABORT_BEEP_PATH):
+                            leds.set_phase(LED_ERROR)
+                            audio_sink.play_wav(ABORT_BEEP_PATH)
                         trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                         trigger_audio_bundle = barge_res.bundle
                         _save_trigger_audio(
@@ -1933,10 +1949,27 @@ def run() -> None:
                         silence_counter = 0
                         max_internal_pause = 0
                         speech_detected = False
-                        turn_mode = "dialog"
-                        turn_silence_limit = _silence_limit
-                        turn_max_sec = RECORDING_MAX_SEC
-                        turn_ein_satz = False
+                        # Kommando-Endpointing SOFORT, nicht Dialog. Ein
+                        # Barge-in ist eine Unterbrechung, die in einem Atemzug
+                        # gesagt wird ("Stopp Gaston" oder ein kurzer neuer
+                        # Auftrag) — niemand haelt hier eine Denkpause. Die
+                        # Dialog-Parameter (2 s Nachlauf, 30 s Deckel) haben am
+                        # 2026-09-20 genau den beobachteten Schaden angerichtet:
+                        # die Abbruch-Aufnahme lief 18,2 s, der Ring blieb die
+                        # ganze Zeit gruen, und sie sammelte die Frage einer
+                        # ZWEITEN Person ein ("hat das jetzt funktioniert?"),
+                        # die dann als neuer Auftrag beantwortet wurde.
+                        # Anders als beim durchgesprochenen Kommando gibt es
+                        # hier keine _COMMAND_MIN_SPEECH_SEC-Sperre: die ist
+                        # gegen den Ausklang des Wakeworts gerichtet, und dass
+                        # hier gerade gesprochen wurde, ist nicht geraten,
+                        # sondern der Anlass. Steht im endpoint.log als
+                        # mode=kommando mit followup_round=0 — damit ist ein
+                        # spaeteres Nachjustieren messbar.
+                        turn_mode = "kommando"
+                        turn_silence_limit = _command_silence_limit
+                        turn_max_sec = profile.command_max_seconds
+                        turn_ein_satz = True
                         turn_speech_chunks = 0
                         turn_rms = []
                         turn_frames_speech = 0

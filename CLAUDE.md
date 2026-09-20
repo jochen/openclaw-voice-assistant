@@ -333,6 +333,56 @@ entscheidet aus einem Fenster von rund 1,4 s, die ersten Predictions danach
 liefen also sonst über die eigene Stimme — messbar genau die, die digital zu
 12,5 % triggert.
 
+### Was der erste Live-Abbruch gezeigt hat (2026-09-20 15:45)
+
+Der Abbruch selbst funktionierte auf Anhieb: Peak 0,94 über 5 Frames mitten in
+der Bestätigung, „Rest der Ansage entfällt (3 Sätze)", kein Telegram, kein
+Follow-up. Drei Dinge waren trotzdem falsch, und alle drei zeigt nur ein
+echter Lauf:
+
+**1. Ein Satz kam durch — der Wettlauf am `tts_lock`.** Um 15:45:49,29 kam der
+Abbruch; um 15:45:49,82 wurde „Alles klar, Jochen." gesprochen. Der erste Satz
+der Antwort hatte die Abbruch-Prüfung in `ReplyStreamSession.feed()` bereits
+passiert und hing dann **am Lock**, den die noch sprechende Bestätigung hielt.
+Als die korrekt abbrach, gab sie den Lock frei — und der wartende Satz lief mit
+veralteter Prüfung durch. Aus Sicht des Nutzers hatte der Abbruch die Antwort
+also nicht verhindert, nur verzögert. Behoben durch eine **zweite Prüfung
+innerhalb des Locks**, in `speak()` und in `feed()`. Festgehalten in
+`tests/test_bargein.py::TtsLockWettlaufTest` samt Gegenprobe — der Fehler
+braucht nur die richtige halbe Sekunde, um lautlos zurückzukommen.
+
+**2. Die Abbruch-Aufnahme lief 18,2 Sekunden.** Sie stand im Dialog-Modus
+(2 s Nachlauf, 30 s Deckel), und in diesem Fenster sammelte sie die Frage einer
+**zweiten Person** ein („hat das jetzt funktioniert?"), die anschließend als
+neuer Auftrag beantwortet wurde. Der Ring blieb die ganze Zeit grün. Ein
+Barge-in wird aber in einem Atemzug gesagt — „Stopp Gaston" oder ein kurzer
+neuer Auftrag, niemand hält hier eine Denkpause. Deshalb greift jetzt sofort
+das **Kommando-Endpointing** (1 s Nachlauf, 8 s Deckel), ohne die
+`_COMMAND_MIN_SPEECH_SEC`-Sperre: die ist gegen den Ausklang des Wakeworts
+gerichtet, und dass hier gerade gesprochen wurde, ist nicht geraten, sondern
+der Anlass. Im `endpoint.log` steht so ein Turn als `mode=kommando` mit
+`followup_round=0` — nachjustierbar gegen `tools/endpoint_replay.py`.
+
+**3. Der Abbruch war an nichts zu erkennen.** Das einzige Signal war, dass die
+Stimme aufhörte; danach 18 s grüner Ring und Stille. Jetzt kommt im Moment des
+Abbruchs ein **fallender Doppelton** (740 → 466 Hz, `prerender_abort_beep()`)
+und für dessen Dauer die rote Ring-Hälfte, dann das Aufnahme-Grün. Fallend und
+zweitönig, damit er sich vom einzelnen steigenden Follow-up-Beep unterscheidet:
+der eine sagt „ich höre jetzt zu", der andere „ich habe mitten im Satz
+aufgehört". Ein Beep und keine Sprachausgabe, weil er sofort kommen muss —
+Speaches braucht rund eine Sekunde, und genau in dieser Sekunde wartet der
+Nutzer darauf, ob sein Abbruch ankam.
+
+`barge_in.beep` schaltet ihn ab, `barge_in.ack` bleibt davon unberührt: der
+Beep quittiert den **Abbruch**, das gesprochene „Okay." den **verstandenen**
+Abbruch (also nur, wenn im Transkript ein Stopp-Wort stand).
+
+> **Offen, bräuchte einen OTA-Flash des ESP:** eine eigene LED-Phase für den
+> Abbruch. Die zwölf Phasen 0–12 sind alle belegt (`max_value: 12` in
+> `esphome/respeaker.yaml`), deshalb leiht sich der Abbruch derzeit das Rot der
+> Fehler-Phase. Semantisch ist das eine Anleihe, keine Aussage — eine Phase 13
+> (z.B. rote Sichel, die einmal ausläuft) wäre die saubere Lösung.
+
 ### Zwei Fallen, die der erste Messlauf aufgedeckt hat
 
 Beide kosteten je einen kompletten Lauf. Festgehalten sind sie **dort, wo man
