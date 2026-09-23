@@ -18,6 +18,7 @@ from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
 from voice_assistant.config import (
     ACTUATOR_LOG_PATH,
+    ACTUATOR_TOR_LOG_PATH,
     DIARIZATION_JOIN_TIMEOUT,
     ABORT_BEEP_PATH,
     ENDPOINT_LOG_PATH,
@@ -248,6 +249,22 @@ def _log_wake_event(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:  # Logging darf den Loop nie crashen
         print(f"⚠️  wake-log: {exc}")
+
+
+def _log_tor(meta: dict) -> None:
+    """Eine JSONL-Zeile je Torfrage (ja, nein, Ausfall) in actuator_tor.log.
+
+    Rohmaterial zum Nachtunen: welche Sätze das Tor ablehnt, landen sonst
+    nirgends als Aktuator-Entscheidung — nur als Brain-Turn. Eigene Datei,
+    weil der Überwacher in actuator_turns.log jede Nicht-"ausgefuehrt"-Zeile
+    meldet. Best-effort.
+    """
+    try:
+        meta = {"ts": datetime.now().isoformat(timespec="seconds"), **meta}
+        with open(ACTUATOR_TOR_LOG_PATH, "a") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    except Exception as exc:  # Logging darf den Loop nie crashen
+        print(f"⚠️  tor-log: {exc}")
 
 
 def _log_actuator_turn(meta: dict) -> None:
@@ -1570,9 +1587,28 @@ def run() -> None:
                         intent = None
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         aktuator_gesperrt = followup_round > 0 or bool(war_bargein)
+                        # Torfrage (tor_enabled): erst "will hier jemand
+                        # schalten?", dann erst welches Ziel. Nein oder Ausfall
+                        # -> Brain. Jede Entscheidung landet in actuator_tor.log.
+                        tor_urteil = None
                         if actuator is not None and actuator.ready and not aktuator_gesperrt:
-                            intent = actuator.classify(text)
-                            verdict, unklar_grund = actuator.verdict(intent, text)
+                            if actuator.cfg.tor_enabled:
+                                tor_urteil = actuator.tor(text)
+                            if tor_urteil is None or tor_urteil.ja:
+                                intent = actuator.classify(text)
+                                verdict, unklar_grund = actuator.verdict(intent, text)
+                            if tor_urteil is not None:
+                                _log_tor({
+                                    "transcript": text,
+                                    "wakeword": current_wakeword.bundle,
+                                    "tor": {True: "ja", False: "nein"}.get(tor_urteil.ja, "ausfall"),
+                                    "p_ja": None if tor_urteil.p_ja is None else round(tor_urteil.p_ja, 4),
+                                    "tor_ms": round(tor_urteil.ms),
+                                    "fehler": tor_urteil.fehler,
+                                    "intent": intent,
+                                    "verdict": verdict if tor_urteil.ja else None,
+                                    "classify_ms": round(actuator.last_latency_ms) if tor_urteil.ja else None,
+                                })
                         if verdict == VERDICT_AUSFUEHRBAR:
                             # Sprecher wird hier nur MITGESCHRIEBEN, nicht
                             # angewandt: der Aktuator antwortet mit Node-REDs
@@ -1608,6 +1644,8 @@ def run() -> None:
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
                                 "latency_ms": round(actuator.last_latency_ms),
+                                "tor_p_ja": None if tor_urteil is None or tor_urteil.p_ja is None else round(tor_urteil.p_ja, 4),
+                                "tor_ms": None if tor_urteil is None else round(tor_urteil.ms),
                                 "status": (resp or {}).get("status", "keine_antwort"),
                                 "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
                                 "grund": (resp or {}).get("grund"),
@@ -1647,9 +1685,11 @@ def run() -> None:
                                 state_start = time.time()
                             else:
                                 status = resp.get("status")
+                                tor_info = (f" + Tor {tor_urteil.ms:.0f} ms"
+                                            if tor_urteil is not None else "")
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
-                                    f"({actuator.last_latency_ms:.0f} ms) → {status}"
+                                    f"({actuator.last_latency_ms:.0f} ms{tor_info}) → {status}"
                                 )
                                 if status == "zurueckgestellt":
                                     # Handshake: Rückfrage sprechen, direkt in
@@ -1717,6 +1757,8 @@ def run() -> None:
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
                                 "latency_ms": round(actuator.last_latency_ms),
+                                "tor_p_ja": None if tor_urteil is None or tor_urteil.p_ja is None else round(tor_urteil.p_ja, 4),
+                                "tor_ms": None if tor_urteil is None else round(tor_urteil.ms),
                                 "status": "unklar",
                                 "grund": unklar_grund,
                                 "runde": unklar_round,
@@ -1762,10 +1804,19 @@ def run() -> None:
                                     + ("Barge-in" if war_bargein else f"Follow-up-Runde {followup_round}")
                                     + ") → Brain"
                                 )
+                            elif tor_urteil is not None and not tor_urteil.ja:
+                                p = "?" if tor_urteil.p_ja is None else f"{tor_urteil.p_ja:.3f}"
+                                grund = "nein" if tor_urteil.ja is False else f"Ausfall: {tor_urteil.fehler}"
+                                print(
+                                    f"[{now:.1f}s] 🔌 Aktuator-Tor: {grund} "
+                                    f"(P(ja)={p}, {tor_urteil.ms:.0f} ms) → Brain"
+                                )
                             elif actuator is not None and actuator.ready:
+                                tor_info = (f", Tor ja {tor_urteil.ms:.0f} ms"
+                                            if tor_urteil is not None else "")
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: kein Kommando "
-                                    f"({actuator.last_latency_ms:.0f} ms) → Brain"
+                                    f"({actuator.last_latency_ms:.0f} ms{tor_info}) → Brain"
                                 )
                             # --- Brain-Pfad wie bisher (unverändert) ---
                             _save_last_recording(recorded_chunks)

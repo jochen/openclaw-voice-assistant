@@ -34,6 +34,9 @@ profiles:
   #     refresh_poll_sec: 600
   #     llm_timeout: 5.0
   #     intent_timeout: 1.5
+  #     # Torfrage vor der Klassifikation ("will der Sprecher schalten?").
+  #     # Default aus. Prompt: tor_prompt (deutsch, siehe config.py).
+  #     tor_enabled: false
   #
   #     # Der Prompt ist die einzige sprachabhaengige Stelle des Projekts. Der
   #     # Default ist deutsch und nennt Beispiel-Geraete DIESER Installation.

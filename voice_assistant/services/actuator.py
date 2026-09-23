@@ -6,9 +6,12 @@ bevor der langsame Remote-Brain (OpenClaw) bemüht wird. Pfad:
     STT-Text -> Intent-Klassifikation (kleines LLM, Schema+Prompt aus
     GET /capabilities) -> POST /intent an Node-RED -> {status, gesprochen}
 
+Optional davor eine Torfrage (tor_enabled): dasselbe LLM entscheidet nur
+ja/nein, ob überhaupt geschaltet werden soll — siehe tor().
+
 Node-RED (noderedpi4) bleibt die einzige inhaltliche Validierungs- und
 Ausführungsinstanz; dieses Modul erzwingt nur die geschlossene FORM des
-Intents (response_format json_schema) und macht zusätzlich eine
+Intents (GBNF-Grammatik, kompaktes JSON — siehe _intent_grammatik) und macht zusätzlich eine
 client-seitige Sanity-Prüfung gegen den Digest (is_actionable), bevor
 überhaupt gepostet wird.
 
@@ -29,6 +32,7 @@ ist).
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 import time
@@ -333,6 +337,60 @@ def _build_system_prompt(vorlage: str, ziel_liste: str, kontrast: str,
                    .replace("{gruppen_regel}", gruppen_regel))
 
 
+def _gbnf_literal(s: str) -> str:
+    """Ein GBNF-String-Literal, das genau `s` erzeugt."""
+    return json.dumps(s, ensure_ascii=False)
+
+
+def _intent_grammatik(ids: list, verbs: list, einheiten: list) -> str:
+    """GBNF für den Intent als KOMPAKTES JSON — dieselben Felder wie das Schema.
+
+    Vorher: response_format json_schema. Das erzwingt die Felder, lässt dem
+    Modell aber Leerraum frei, und Gemma schrieb das JSON eingerückt mit
+    Zeilenumbrüchen — ~52 Token, von denen ~9 Information tragen. Jedes
+    erzwungene Token kostet trotzdem einen vollen Durchlauf durchs Modell.
+
+    Gemessen 2026-09-23 (182 Sätze, Gemma-4-E2B): 3060 Ti 439 -> 232 ms,
+    Vega-iGPU 2356 -> 1364 ms, Treffer unverändert (172 gegen 172). Die
+    Feldreihenfolge folgt den Prompt-Beispielen (ist_kommando, aktion, ziel),
+    nicht dem Schema.
+
+    Nicht übernommen, obwohl schneller: reine Zeilenformate ("ziel aktion
+    wert", 6 Token). Ohne die JSON-Entscheidung "ist_kommando" sagt das
+    Modell zu leicht ja — 17 statt 3 Falsch-Schaltungen, darunter
+    "Ja, ja." -> wohnzimmerrollo auf. Ebenfalls bewusst NICHT eingeschränkt:
+    welche Aktion zu welchem Ziel passt. Das klingt strenger, nimmt aber ein
+    Sicherheitsnetz weg — bei Kauderwelsch wählt das Modell oft eine
+    ungültige Kombination, die verdict() dann abfängt.
+    """
+    alt = lambda xs: " | ".join(xs)
+    return "\n".join([
+        'root ::= "{\\"ist_kommando\\":" b ",\\"aktion\\":" akt '
+        '",\\"ziel\\":" ziel ",\\"wert\\":" wert ",\\"einheit\\":" ein "}"',
+        'b ::= "true" | "false"',
+        "akt ::= " + alt([_gbnf_literal(_gbnf_literal(v)) for v in verbs] + ['"null"']),
+        "ziel ::= " + alt([_gbnf_literal(_gbnf_literal(z)) for z in ids] + [_gbnf_literal('""')]),
+        'wert ::= "null" | "-"? [0-9] [0-9]? [0-9]?',
+        "ein ::= " + alt([_gbnf_literal(_gbnf_literal(e)) for e in einheiten] + ['"null"']),
+    ])
+
+
+# Torfrage: "nein" ist bei Gemma zwei Token (ne+in), "ja" eines. Entschieden
+# wird am ersten Token; dessen Verteilung liefert P(ja).
+_TOR_GRAMMATIK = 'root ::= "ja" | "nein"'
+
+
+class TorUrteil:
+    """Ergebnis der Torfrage. `ja` ist None, wenn die Frage nicht beantwortet
+    werden konnte (Timeout, Fehler) — der Aufrufer behandelt das wie nein."""
+
+    __slots__ = ("ja", "p_ja", "ms", "fehler")
+
+    def __init__(self, ja: bool | None, p_ja: float | None, ms: float,
+                 fehler: str | None = None) -> None:
+        self.ja, self.p_ja, self.ms, self.fehler = ja, p_ja, ms, fehler
+
+
 
 class Actuator:
     def __init__(self, cfg: ActuatorConfig) -> None:
@@ -356,6 +414,10 @@ class Actuator:
         # Felder, damit der Brain Kosten und Reversibilität reasonieren kann.
         self.ziele: list | None = None
         self.system_prompt: str | None = None
+        # Prompt der Torfrage — None, solange tor_enabled aus ist oder noch
+        # kein refresh() lief.
+        self.tor_prompt: str | None = None
+        self._aufwaermen_laeuft = False
         # [(Muster, ziel_id)] aus den capabilities — siehe _mehrzahl_muster
         self.mehrzahl_muster: list = []
         # Regel A: id -> Beleg-Menge (Tokens der Gruppennamen). Nur Gruppen
@@ -410,11 +472,10 @@ class Actuator:
                     "einheit": {"enum": einheiten + [None]},
                 },
             }
+            # Das Schema bleibt als Beschreibung der Form erhalten; erzwungen
+            # wird sie über die kompakte Grammatik (siehe _intent_grammatik).
             request_template = {
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {"name": "intent", "strict": True, "schema": schema},
-                },
+                "grammar": _intent_grammatik(ids, verbs, einheiten),
                 "chat_template_kwargs": {"enable_thinking": False},
                 "temperature": 0,
                 "max_tokens": 200,
@@ -462,6 +523,14 @@ class Actuator:
                                    set(self.cfg.beispiel_typen)),
                 _gruppen_regeln(digest, mehrzahl, self.cfg.gruppen_regel),
             )
+            tor_prompt = None
+            if self.cfg.tor_enabled:
+                tor_prompt = (
+                    self.cfg.tor_prompt
+                    .replace("{ziel_liste}", "\n".join(lines))
+                    .replace("{gruppen_regel}",
+                             _gruppen_regeln(digest, mehrzahl, self.cfg.tor_gruppen_regel))
+                )
             version = caps.get("version")
 
             with self._lock:
@@ -470,6 +539,7 @@ class Actuator:
                 self.digest = digest
                 self.ziele = ziele
                 self.system_prompt = system_prompt
+                self.tor_prompt = tor_prompt
                 self.mehrzahl_muster = mehrzahl
                 self.gruppen_beleg = gruppen_beleg
                 self.version = version
@@ -485,9 +555,43 @@ class Actuator:
     # ------------------------------------------------------------------
     def start(self) -> None:
         """Einmaliges refresh(), danach Daemon-Thread für MQTT + Poll-Fallback."""
-        self.refresh()
+        self._refresh_und_aufwaermen()
         t = threading.Thread(target=self._background_loop, daemon=True)
         t.start()
+
+    def _refresh_und_aufwaermen(self) -> bool:
+        ok = self.refresh()
+        if ok:
+            threading.Thread(target=self.aufwaermen, daemon=True).start()
+        return ok
+
+    def aufwaermen(self) -> None:
+        """Legt beide Prompts einmal in den Prompt-Cache des LLM-Servers.
+
+        Nach jedem refresh() ist der Prompt neu, und der erste Aufruf muss ihn
+        komplett einlesen (~2700 Token). Auf der 3060 Ti fällt das nicht auf,
+        auf der Vega-iGPU kostet es 8–12 s (gemessen 2026-09-23) — mehr als
+        llm_timeout, der erste echte Befehl nach einem Neustart oder einer
+        capabilities-Änderung fiele also still an den Brain. Deshalb hier mit
+        großzügigem Timeout vorab, im Hintergrund.
+
+        Nur aus start()/MQTT/Poll aufgerufen, nicht aus refresh() selbst: die
+        Mess-Werkzeuge rufen refresh() direkt und sollen nicht gegen einen
+        parallel laufenden Aufwärm-Aufruf messen.
+        """
+        with self._lock:
+            if self._aufwaermen_laeuft:
+                return
+            self._aufwaermen_laeuft = True
+        try:
+            t0 = time.time()
+            if self.cfg.tor_enabled:
+                self.tor("Mach das Licht an", timeout=120)
+            self.classify("Mach das Licht an", timeout=120)
+            print(f"🔌 Aktuator: Prompt-Cache aufgewärmt ({(time.time() - t0):.1f} s)")
+        finally:
+            with self._lock:
+                self._aufwaermen_laeuft = False
 
     def _background_loop(self) -> None:
         mqtt_mod = None
@@ -530,7 +634,7 @@ class Actuator:
                         f"🔌 Aktuator: capabilities_changed → {new_version} "
                         f"(bisher {current_version}) — refresh"
                     )
-                    self.refresh()
+                    self._refresh_und_aufwaermen()
             except Exception as e:
                 print(f"⚠️  Aktuator: MQTT on_message Fehler: {e}")
 
@@ -560,7 +664,7 @@ class Actuator:
                         f"🔌 Aktuator: Poll erkennt neue Version {new_version} "
                         f"(bisher {current_version}) — refresh"
                     )
-                    self.refresh()
+                    self._refresh_und_aufwaermen()
             except Exception as e:
                 print(f"⚠️  Aktuator: Poll-Fehler: {e}")
 
@@ -619,10 +723,11 @@ class Actuator:
                     "wert": wert, "einheit": einheit}
         return intent
 
-    def classify(self, text: str) -> dict | None:
+    def classify(self, text: str, timeout: float | None = None) -> dict | None:
         """STT-Text -> Intent-Dict via LLM, oder None bei jedem Fehler/Timeout.
 
         Latenz landet in self.last_latency_ms (nicht im Rückgabe-Dict).
+        `timeout` nur fürs Aufwärmen; sonst gilt cfg.llm_timeout.
         """
         with self._lock:
             request_template = self.request_template
@@ -644,7 +749,7 @@ class Actuator:
         )
         t0 = time.time()
         try:
-            with urllib.request.urlopen(req, timeout=self.cfg.llm_timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout or self.cfg.llm_timeout) as r:
                 out = r.read().decode()
             self.last_latency_ms = (time.time() - t0) * 1000
             content = json.loads(out)["choices"][0]["message"]["content"]
@@ -654,6 +759,68 @@ class Actuator:
             self.last_latency_ms = (time.time() - t0) * 1000
             print(f"⚠️  Aktuator: classify fehlgeschlagen ({self.last_latency_ms:.0f} ms): {e}")
             return None
+
+    def tor(self, text: str, timeout: float | None = None) -> TorUrteil:
+        """Torfrage vor classify(): will der Sprecher überhaupt etwas schalten?
+
+        Antwort ja/nein per Grammatik; P(ja) aus der Verteilung des ersten
+        Tokens ("ja" gegen "ne" — "nein" ist zwei Token). P(ja) ist bei Gemma
+        NICHT kalibriert (gemessen 2026-09-23: 16 von 19 übersehenen Kommandos
+        mit P(ja) < 0,01) — entschieden wird deshalb nur am Token, P(ja) wird
+        mitgeloggt, um später eine Schwelle oder ein besseres Tor-Modell
+        gegen echte Turns abwägen zu können.
+
+        Jeder Fehler ergibt ja=None; der Aufrufer behandelt das wie nein.
+        Fällt die Torfrage aus, geht der Satz also an den Brain — langsam,
+        aber nie falsch geschaltet.
+        """
+        with self._lock:
+            tor_prompt = self.tor_prompt
+        t0 = time.time()
+        if tor_prompt is None:
+            return TorUrteil(None, None, 0.0, "kein Tor-Prompt")
+        body = {
+            "grammar": _TOR_GRAMMATIK,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "temperature": 0,
+            "max_tokens": 3,
+            "logprobs": True,
+            "top_logprobs": 10,
+            "messages": [
+                {"role": "system", "content": tor_prompt},
+                {"role": "user", "content": text},
+            ],
+        }
+        req = urllib.request.Request(
+            self.cfg.llm_url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.cfg.llm_timeout) as r:
+                out = json.loads(r.read().decode())
+            ms = (time.time() - t0) * 1000
+            choice = out["choices"][0]
+            antwort = choice["message"]["content"].strip().lower()
+            p_ja = None
+            try:
+                top = choice["logprobs"]["content"][0]["top_logprobs"]
+                pj = sum(math.exp(t["logprob"]) for t in top
+                         if t["token"].strip().lower() == "ja")
+                pn = sum(math.exp(t["logprob"]) for t in top
+                         if t["token"].strip().lower() in ("ne", "nein"))
+                if pj + pn > 0:
+                    p_ja = pj / (pj + pn)
+            except (KeyError, IndexError, TypeError):
+                pass   # ohne logprobs entscheidet das Token allein
+            if antwort not in ("ja", "nein"):
+                return TorUrteil(None, p_ja, ms, f"unerwartete Antwort {antwort!r}")
+            return TorUrteil(antwort == "ja", p_ja, ms)
+        except Exception as e:
+            ms = (time.time() - t0) * 1000
+            print(f"⚠️  Aktuator: Torfrage fehlgeschlagen ({ms:.0f} ms): {e}")
+            return TorUrteil(None, None, ms, str(e))
 
     def is_actionable(self, intent: dict) -> bool:
         """Client-seitige Sanity gegen den Digest — zusätzlich zur Schema-Form.

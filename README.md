@@ -464,6 +464,23 @@ backend, and the small model readily reads a misheard sentence as a command
 was executed as "start the blind stop"). Those sentences go to the backend,
 which can still switch through the MCP path below.
 
+**Optional gate question (`actuator.tor_enabled`).** The classifier has to
+commit to one target even when none is meant. With the gate on, the same small
+model first answers only "does the speaker want to switch something? yes/no";
+anything but yes goes to the backend. On our 182 test sentences (including
+real turns) this took wrong switches from 3 to 0, at the cost of 16 of 86
+commands taking the slow path through the backend. The model's probability
+for "yes" is logged but does not decide — for a small LLM it is not
+calibrated. The prompt is German and installation-specific
+(`actuator.tor_prompt`); measure before you rely on it in your language.
+
+**Keep the model's output short.** The classifier answers in compact JSON,
+enforced by a GBNF grammar. With a JSON schema alone the model was free to
+indent — 52 tokens instead of 29, twice the latency, no extra information.
+Generating tokens is where the time goes, so on slow hardware (we run the
+classifier on an integrated GPU) this decides whether the shortcut is still
+short.
+
 **The assistant only contains the speech side.** You provide the executing side
 yourself: two HTTP endpoints, `GET /capabilities` (what may be switched) and
 `POST /intent` (do it). What you build them with is up to you — Node-RED, Home

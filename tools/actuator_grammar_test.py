@@ -52,6 +52,16 @@ Messreihe (jede Zahl gilt NUR fuer ihre capabilities-Version):
                      bekamen ("die Rollos in der Kueche", …), im Stil der
                      laengst gepflegten Beleuchtungs-Gruppen. Einziger
                      Durchfaller bleibt "Rollo auf 70%"
+    32/32  9b429c57  2026-09-23: kompaktes JSON per GBNF statt
+                     response_format (siehe actuator._intent_grammatik),
+                     Gemma auf der Vega-iGPU. "Rollo auf 70%" kippt schon
+                     vorher zwischen Laeufen (31 oder 32) — die Zahl ist also
+                     kein Fortschritt, sondern "nicht schlechter".
+
+Dieses Werkzeug misst nur classify() + verdict(), NICHT die Torfrage davor
+(tor_enabled). Die wurde auf 182 Saetzen inkl. echter Turns gemessen, siehe
+config._DEFAULT_ACTUATOR_TOR_PROMPT; das Test-Set dazu stammt aus privaten
+Logs und liegt deshalb nicht im Repo.
 
 Der Fehlalarm war also keine Schwaeche von Regel A, sondern duenne Daten: die
 Belege entstehen aus `namen`, und mit einem einzigen Kompositum-Namen kann

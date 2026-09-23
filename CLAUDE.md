@@ -134,6 +134,36 @@ einer Brain-Antwort (`followup_round > 0`) und **nie per Barge-in**
 2026-09-23: in einer Follow-up-Runde wurde „…den gesamten Kalender bitte
 komplett sperren" (STT: „Callsender") als `rollostop/starten` ausgeführt.
 
+**Torfrage davor (`tor_enabled`, seit 2026-09-23 im Live-Test).** Dasselbe
+Gemma beantwortet zuerst nur „will der Sprecher etwas schalten? ja/nein"
+(`Actuator.tor()`, Prompt `config._DEFAULT_ACTUATOR_TOR_PROMPT`). Nein oder
+Ausfall → Brain. Gemessen auf 182 Sätzen (Testset + echte Turns): ohne Tor 3
+Falsch-Schaltungen, mit Tor 0 — Preis: 16 von 86 Kommandos übersehen, die
+dann langsam über den Brain gehen. **P(ja) wird geloggt, entscheidet aber
+nicht:** bei Gemma ist sie nicht kalibriert (die übersehenen Kommandos haben
+fast alle P(ja) < 0,01). Jede Tor-Entscheidung steht in
+`~/.openclaw/workspace/actuator_tor.log` — bewusst nicht in
+`actuator_turns.log`, der Überwacher meldet dort jede Zeile, die nicht
+„ausgefuehrt" ist. Der Tor-Platz ist für ein kalibriertes Entscheidungsmodell
+gedacht (Laya o. ä., siehe MemPalace), Gemma hält ihn warm.
+
+**Die Klassifikation antwortet in kompaktem JSON** (GBNF-Grammatik,
+`_intent_grammatik`) statt über `response_format`: das ließ Gemma Leerraum
+frei, und sie rückte das JSON ein — 52 statt 29 Token, doppelte Latenz, kein
+Informationsgewinn. Reine Zeilenformate (6 Token) wurden gemessen und
+verworfen: ohne das Feld `ist_kommando` schaltet das Modell Gerede („Ja,
+ja." → Rollo auf). Und: die Grammatik schränkt Aktionen bewusst NICHT pro
+Ziel ein — bei Kauderwelsch wählt das Modell oft eine ungültige Kombination,
+die `verdict()` abfängt; eine strengere Grammatik nähme dieses Netz weg.
+
+**Gemma läuft auf der Vega-iGPU** (`llamacpp-gemma-vega`, Port 8091, in
+`openclaw-voice-stack`), damit die 3060 Ti frei wird. Etwa 5× langsamer pro
+Token als die 3060 Ti; im Wechsel Tor → Klassifikation gemessen: Tor ~0,4 s,
+Kommando gesamt ~1,8 s. Der Kaltstart je Prompt kostet 8–12 s — deshalb wärmt
+`Actuator.aufwaermen()` nach jedem refresh aus start/MQTT/Poll vor (nicht aus
+`refresh()` selbst, sonst messen die Werkzeuge gegen einen Aufwärm-Aufruf).
+Offline-Tests: `tests/test_actuator_tor.py`.
+
 Aktiviert wird er per Profil-Block `actuator:` (Default `enabled: false` — ohne
 den Block verhält sich ein Profil wie vor dem Einbau). In dieser Installation
 liegt die ausführende Seite auf Node-RED (noderedpi4), **das ist aber keine
@@ -151,7 +181,7 @@ jedem `refresh()` aus `/capabilities` erzeugt und über die Platzhalter
 liegt im Repo, weil eine frühere Messung ("20/20") nur in einem Scratchpad
 stand und einen Tag später weder reproduzierbar noch gültig war. Wiederholen
 nach jeder Änderung an den capabilities — die Zahl gilt immer nur für eine
-capabilities-Version. Stand: **31/32 bei capabilities `9b429c57`**, Messreihe
+capabilities-Version. Stand: **32/32 bei capabilities `9b429c57`** (kompaktes JSON, Vega), Messreihe
 im Docstring des Werkzeugs.
 
 **Ein Gruppen-Ziel braucht seinen Beleg im Satz (Regel A, 2026-08-02).** Wählt

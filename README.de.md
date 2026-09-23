@@ -477,6 +477,23 @@ gesamten Kalender sperren" kam aus der Spracherkennung als Kauderwelsch und
 wurde als „Rollostop starten" ausgeführt). Solche Sätze gehen ans Backend, das
 über den MCP-Weg unten weiterhin schalten kann.
 
+**Optionale Torfrage (`actuator.tor_enabled`).** Die Klassifikation muss sich
+auf ein Ziel festlegen, auch wenn keines gemeint ist. Mit Torfrage beantwortet
+dasselbe kleine Modell zuerst nur „will der Sprecher etwas schalten? ja/nein";
+alles außer ja geht ans Backend. Auf unseren 182 Messsätzen (inklusive echter
+Turns) sanken die Falsch-Schaltungen damit von 3 auf 0 — der Preis: 16 von 86
+Kommandos nehmen den langsamen Weg übers Backend. Die Wahrscheinlichkeit des
+Modells für „ja" wird mitgeloggt, entscheidet aber nicht — bei einem kleinen
+LLM ist sie nicht kalibriert. Der Prompt ist deutsch und installationsbezogen
+(`actuator.tor_prompt`); wer ihn in einer anderen Sprache nutzt, misst neu.
+
+**Die Ausgabe des Modells kurz halten.** Die Klassifikation antwortet in
+kompaktem JSON, erzwungen per GBNF-Grammatik. Mit einem JSON-Schema allein
+durfte das Modell einrücken — 52 statt 29 Token, doppelte Latenz, keine
+zusätzliche Information. Die Zeit steckt im Erzeugen der Token; auf
+langsamer Hardware (wir betreiben die Klassifikation auf einer integrierten
+GPU) entscheidet das, ob der Abkürzer noch einer ist.
+
 **Der Assistent enthält nur die Sprachseite.** Die ausführende Seite stellst du
 selbst bereit: zwei HTTP-Endpunkte, `GET /capabilities` (was darf geschaltet
 werden) und `POST /intent` (tu es). Womit du sie baust, ist dem Assistenten

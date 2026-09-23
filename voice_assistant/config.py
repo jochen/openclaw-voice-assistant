@@ -166,6 +166,59 @@ _DEFAULT_ACTUATOR_BEISPIEL_SAETZE = {
     "aktivieren": "Aktiviere {}", "starten": "Starte {}",
 }
 
+# Torfrage VOR der Klassifikation: "will der Sprecher etwas schalten?" — eine
+# eigene, kurze Entscheidung mit der Antwort ja/nein (ein bis zwei Token).
+# Anlass (2026-09-23): der Aktuator schaltete aus Gerede heraus ("…den
+# gesamten Kalender bitte komplett sperren" -> rollostop/starten). Die
+# Klassifikation muss sich auf EIN Ziel festlegen, auch wenn keines gemeint
+# ist; die Torfrage darf einfach nein sagen.
+#
+# Gemessen 2026-09-23 auf 182 Saetzen (32 aus actuator_grammar_test.py, 65
+# echte Aktuator-Turns, 85 echte Brain-Turns), Gemma-4-E2B, zusammen mit der
+# Klassifikation: ohne Tor 172 richtig / 3 falsch geschaltet; mit diesem Tor
+# 163 / 0. Der Preis sind Kommandos, die das Tor uebersieht (16 von 86, viele
+# davon STT-Kauderwelsch) — die gehen an den Brain, also langsam statt falsch.
+# Varianten (Messreihe):
+#   T1  Klassifikations-Prompt auf ja/nein umgeschrieben   161 / 0, 19 uebersehen
+#   T2  eigener Prompt, "verhoerte Woerter zaehlen"       163 / 2  (Kauderwelsch kam durch)
+#   T3  T2 + Beispiele Einzahl-mit-Wert / Mehrzahl         163 / 0, 16 uebersehen  <- dieser
+#   T4  T3 ohne die Verhoert-Zeile                         163 / 0, 17 uebersehen
+# Die Beispiele stammen bewusst NICHT aus den Messsaetzen.
+#
+# Platzhalter wie beim Klassifikations-Prompt: {ziel_liste}, {gruppen_regel}
+# (letztere aus actuator.tor_gruppen_regel). Die Mehrzahl-Regel ist hier eine
+# ANDERE als im Klassifikations-Prompt: "die Rollos zu" macht erst die lokale
+# Mehrzahl-Regel NACH dem Modell zu alle_rollos — die Torfrage muss also ja
+# sagen, sonst kommt der Satz dort nie an (mit dem umgeschriebenen
+# Klassifikations-Prompt sagte sie nein: "Rollos runter" P(ja)=0,000).
+_DEFAULT_ACTUATOR_TOR_PROMPT = """Du bist das Tor vor dem Schalt-Aktuator. Entscheide NUR: Will der Sprecher mit diesem Satz eines der bekannten Ziele schalten? Antworte NUR mit ja oder nein.
+ja: ein Schaltwunsch fuer ein Ziel aus der Liste: ein/aus, auf/zu, hoch/runter, auf einen Wert setzen, Szene aktivieren, Routine starten. Auch wenn einzelne Woerter verhoert klingen, zaehlt die erkennbare Absicht.
+nein: Gespraech, Fragen, Kommentare, Bestaetigungen, Erzaehlungen, Wuensche an etwas, das nicht in der Liste steht. Dass ein Raum oder Geraet im Satz vorkommt, macht ihn noch nicht zum Schaltwunsch.
+
+Beispiele:
+Schalte das Flurlicht ein -> ja
+Stell die Felixheizung auf 22 Grad -> ja
+Mach das Kuechenrollo links zu -> ja
+Die Rollos bitte hoch -> ja
+Rollos wieder rauf -> ja
+Mach mal das Licht im Flur aus -> ja
+Das Rollo bitte runter -> nein
+Rollo auf 30 Prozent -> nein
+Ja, passt so. -> nein
+Im Wohnzimmer ist es heute richtig gemuetlich -> nein
+Das Licht war gestern viel zu hell -> nein
+Wie spaet ist es? -> nein
+
+Bekannte Ziele:
+{ziel_liste}
+
+{gruppen_regel}"""
+
+_DEFAULT_ACTUATOR_TOR_GRUPPEN_REGEL = (
+    '{einzahl_gross} OHNE RAUM: "{einzahl}" in der Einzahl OHNE Raumangabe ist nein. '
+    'Die Mehrzahl "{mehrzahl}" ist ja, auch ohne das Wort "alle".'
+)
+
 
 @dataclass
 class ActuatorConfig:
@@ -198,6 +251,11 @@ class ActuatorConfig:
     # (gemessen, siehe actuator._kontrast_beispiel). Wer den Prompt ersetzt,
     # pflegt diese Liste mit.
     beispiel_typen: list = field(default_factory=lambda: ["rollo"])
+    # Torfrage vor der Klassifikation (siehe _DEFAULT_ACTUATOR_TOR_PROMPT).
+    # Default aus: ohne den Eintrag verhält sich ein Profil wie vorher.
+    tor_enabled: bool = False
+    tor_prompt: str = _DEFAULT_ACTUATOR_TOR_PROMPT
+    tor_gruppen_regel: str = _DEFAULT_ACTUATOR_TOR_GRUPPEN_REGEL
 
 
 @dataclass
@@ -616,6 +674,9 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         gruppen_regel=str(actuator_raw.get("gruppen_regel") or _dact.gruppen_regel),
         beispiel_saetze=dict(actuator_raw.get("beispiel_saetze") or _dact.beispiel_saetze),
         beispiel_typen=list(actuator_raw.get("beispiel_typen") or _dact.beispiel_typen),
+        tor_enabled=bool(actuator_raw.get("tor_enabled", _dact.tor_enabled)),
+        tor_prompt=str(actuator_raw.get("tor_prompt") or _dact.tor_prompt),
+        tor_gruppen_regel=str(actuator_raw.get("tor_gruppen_regel") or _dact.tor_gruppen_regel),
     )
 
     # --- Überwacher: separater Block, analog zu actuator ---
@@ -766,6 +827,10 @@ WAKE_LOG_PATH = os.path.join(WORKSPACE, "wake_events.log")
 # sollen weder die Gesprächs-Session zumüllen noch im Chat auftauchen.
 # Das ist das Rohmaterial für den späteren Aktuator-Überwacher.
 ACTUATOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_turns.log")
+# Jede Entscheidung der Torfrage (ja UND nein) — Rohmaterial zum Nachtunen.
+# Bewusst NICHT in actuator_turns.log: der Überwacher meldet dort jede Zeile,
+# deren Status nicht "ausgefuehrt" ist, und die Nein-Zeilen sind die Mehrheit.
+ACTUATOR_TOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_tor.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,
