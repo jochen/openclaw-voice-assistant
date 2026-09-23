@@ -1558,9 +1558,19 @@ def run() -> None:
                         # damit nicht, dass der erste Ruf keiner war.
                         bargein_abgebrochen_audio = None
                         # --- Aktuator-Vorlauf: Schaltkommando? Dann Brain überspringen. ---
+                        # Nur bei direkter Erstansprache per Wakewort oder als
+                        # Antwort auf die eigene Rückfrage des Aktuators
+                        # (unklar_round, followup_round bleibt dabei 0).
+                        # Eine Follow-up-Runde nach einer Brain-Antwort ist
+                        # Dialog mit dem Brain: am 2026-09-23 12:27 wurde dort
+                        # "…den gesamten Kalender bitte komplett sperren"
+                        # (STT: "Callsender") als rollostop/starten
+                        # ausgeführt. Ein Barge-in ist zum Abbrechen da, nicht
+                        # zum Schalten (Jochen, 2026-09-23).
                         intent = None
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
-                        if actuator is not None and actuator.ready:
+                        aktuator_gesperrt = followup_round > 0 or bool(war_bargein)
+                        if actuator is not None and actuator.ready and not aktuator_gesperrt:
                             intent = actuator.classify(text)
                             verdict, unklar_grund = actuator.verdict(intent, text)
                         if verdict == VERDICT_AUSFUEHRBAR:
@@ -1746,7 +1756,13 @@ def run() -> None:
                                 state = STATE_PAUSE
                                 state_start = time.time()
                         else:
-                            if actuator is not None and actuator.ready:
+                            if actuator is not None and actuator.ready and aktuator_gesperrt:
+                                print(
+                                    f"[{now:.1f}s] 🔌 Aktuator übersprungen ("
+                                    + ("Barge-in" if war_bargein else f"Follow-up-Runde {followup_round}")
+                                    + ") → Brain"
+                                )
+                            elif actuator is not None and actuator.ready:
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: kein Kommando "
                                     f"({actuator.last_latency_ms:.0f} ms) → Brain"

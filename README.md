@@ -337,7 +337,9 @@ The stop word itself is **not** matched on the wake word event — it is matched
 on the transcript afterwards. The trigger fires on the wake word, and the
 "stop" you said just before it sits in the pre-roll buffer. That is why both
 "stop <wake word>" and "<wake word>, stop" work, and why a barge-in *without* a
-stop word is simply treated as a new request — the classic interruption.
+stop word is simply treated as a new request — the classic interruption. That
+request goes to the backend, never to the voice actuator: a barge-in exists to
+cancel, not to switch.
 
 ```yaml
 profiles:
@@ -451,6 +453,16 @@ STT text → small LLM forms ONE JSON intent → POST /intent to your home
 If the sentence is not a switching command, everything continues to the backend
 as before. Same if the small model is unavailable — the actuator is a shortcut,
 never a bottleneck.
+
+**Only a direct call reaches the actuator.** A sentence spoken after the wake
+word or in answer to the actuator's own clarifying question may switch things.
+A barge-in may not — it exists to cancel, not to switch. Neither may a
+follow-up round after a backend reply —
+the microphone is open without a wake word, the person is talking to the
+backend, and the small model readily reads a misheard sentence as a command
+("block the whole calendar" came out of speech recognition as gibberish and
+was executed as "start the blind stop"). Those sentences go to the backend,
+which can still switch through the MCP path below.
 
 **The assistant only contains the speech side.** You provide the executing side
 yourself: two HTTP endpoints, `GET /capabilities` (what may be switched) and

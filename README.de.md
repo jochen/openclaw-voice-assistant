@@ -344,7 +344,8 @@ Transkript. Der Trigger feuert auf das Wakewort, und das „Stopp", das davor
 gesprochen wurde, steckt im Pre-Roll-Puffer. Deshalb funktionieren
 „Stopp <Wakewort>" und „<Wakewort>, Stopp" gleichermaßen — und deshalb ist ein
 Barge-in *ohne* Stopp-Wort einfach ein neuer Auftrag, also das gewohnte
-Dazwischenreden.
+Dazwischenreden. Dieser Auftrag geht ans Backend, nie an den Voice-Aktuator:
+ein Barge-in ist zum Abbrechen da, nicht zum Schalten.
 
 ```yaml
 profiles:
@@ -465,6 +466,16 @@ STT-Text → kleines LLM formt EINEN JSON-Intent → POST /intent an die
 Ist der Satz kein Schaltbefehl, läuft alles unverändert weiter zum Backend.
 Fällt das kleine Modell aus, ebenfalls — der Aktuator ist ein Abkürzer, kein
 Nadelöhr.
+
+**Nur eine direkte Ansprache erreicht den Aktuator.** Schalten darf ein Satz
+nach dem Wakewort oder als Antwort auf die eigene Rückfrage des Aktuators. Ein
+Barge-in darf es nicht — er ist zum Abbrechen da, nicht zum Schalten. Ebenso
+wenig eine Follow-up-Runde nach einer Backend-Antwort —
+das Mikrofon ist ohne Wakewort offen, man spricht mit dem Backend, und das
+kleine Modell liest einen verhörten Satz bereitwillig als Befehl („den
+gesamten Kalender sperren" kam aus der Spracherkennung als Kauderwelsch und
+wurde als „Rollostop starten" ausgeführt). Solche Sätze gehen ans Backend, das
+über den MCP-Weg unten weiterhin schalten kann.
 
 **Der Assistent enthält nur die Sprachseite.** Die ausführende Seite stellst du
 selbst bereit: zwei HTTP-Endpunkte, `GET /capabilities` (was darf geschaltet

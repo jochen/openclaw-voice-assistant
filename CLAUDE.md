@@ -127,6 +127,13 @@ kleinen lokalen LLM zu einem JSON-Intent geformt und über zwei HTTP-Endpunkte
 ausgeführt — der Brain wird dabei übersprungen (~0,5 s statt mehrerer Sekunden).
 Ist der Satz kein Schaltbefehl, läuft alles unverändert weiter zum Brain.
 
+**Nur bei direkter Erstansprache** (Wakewort) oder als Antwort auf die eigene
+Klärungs-Rückfrage (`unklar_round`) — **nie in einer Follow-up-Runde** nach
+einer Brain-Antwort (`followup_round > 0`) und **nie per Barge-in**
+(`war_bargein`; ein Barge-in ist zum Abbrechen da, nicht zum Schalten). Seit
+2026-09-23: in einer Follow-up-Runde wurde „…den gesamten Kalender bitte
+komplett sperren" (STT: „Callsender") als `rollostop/starten` ausgeführt.
+
 Aktiviert wird er per Profil-Block `actuator:` (Default `enabled: false` — ohne
 den Block verhält sich ein Profil wie vor dem Einbau). In dieser Installation
 liegt die ausführende Seite auf Node-RED (noderedpi4), **das ist aber keine
