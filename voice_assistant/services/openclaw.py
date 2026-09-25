@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import urllib.error
 import urllib.request
 from typing import Callable
@@ -163,6 +164,31 @@ def query(
         return None
 
 
+def _abort_connection(resp) -> None:
+    """Offene SSE-Verbindung sofort trennen — aus einem FREMDEN Thread.
+
+    resp.close() taugt dafuer nicht: der Leser-Thread haelt waehrend des
+    blockierenden readline() den Lock des BufferedReader, und close() wartet
+    auf genau diesen Lock — also bis OpenClaw das naechste Byte schickt. In
+    einer Werkzeug-Phase ohne Deltas sind das beliebig viele Sekunden.
+    Gemessen am 2026-09-25 13:00:22: Barge-in erkannt, Hauptschleife 49,4 s
+    blockiert (TurnControl.cancel ruft die Closer synchron), Beep und rotes
+    LED erst danach, und die gepufferte Abbruch-Aufnahme lief hinterher als
+    neuer Auftrag durch. shutdown() braucht keinen Lock, weckt das haengende
+    recv() sofort (EOF), und die Gegenseite sieht den Abbruch genauso.
+    """
+    sock = getattr(getattr(getattr(resp, "fp", None), "raw", None), "_sock", None)
+    if sock is None:
+        # Unbekannte Innereien (andere Python-Version): lieber blockierend
+        # schliessen als gar nicht — dann bricht der Agent-Run wenigstens ab.
+        resp.close()
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass  # schon zu
+
+
 def query_stream(
     text: str,
     token: str,
@@ -241,7 +267,7 @@ def query_stream(
                 # registrieren: register_closer wuerde einen fremden/ungueltigen
                 # Turn als "schon ueberholt" lesen und die eben geoeffnete
                 # Verbindung sofort schliessen.
-                control.register_closer(turn, resp.close)
+                control.register_closer(turn, lambda: _abort_connection(resp))
             current_event: str | None = None
             for raw_line in resp:
                 if control is not None and turn is not None and control.cancelled(turn):
@@ -294,6 +320,12 @@ def query_stream(
                 elif line == "":
                     # SSE-Block-Trenner — kein State nötig, current_event zurücksetzen
                     current_event = None
+
+        # Ein Abbruch per _abort_connection endet hier als sauberes EOF —
+        # der Rest im Puffer gehoert zum gestoppten Turn und wird verworfen.
+        if control is not None and turn is not None and control.cancelled(turn):
+            print("🛑 OpenClaw-Stream abgebrochen (Barge-in)")
+            return full_text or None, False
 
         # Stream sauber zu Ende ohne response.completed → trotzdem flushen
         remaining = buf.flush()

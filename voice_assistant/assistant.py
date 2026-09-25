@@ -144,8 +144,12 @@ _PRE_ROLL_SEC = 1.5
 # Eine Höflichkeitsfloskel steht in Abbrüchen wie in normalen Befehlen —
 # sie trägt kein Signal und gehört deshalb nicht ins Muster.
 _STOP_ANY = r'(stopp?|halt|aus|abbrechen|nein)'
-# Im Follow-up reicht ein einzelnes "stop"/"stopp" — TV/Hintergrund-Wörter sollen nicht blockieren
-_STOP_PATTERN_FOLLOWUP = re.compile(r'\bstopp?\b', re.IGNORECASE)
+# Im Follow-up reicht ein einzelnes "stop"/"stopp" — TV/Hintergrund-Wörter sollen nicht blockieren.
+# Das optionale "gast…" davor: im Barge-in steckt das Wakewort im Pre-Roll, und
+# die STT zieht "Gaston stopp" gern zu einem Wort zusammen. Am 2026-09-25 kam
+# so "Gastostop." an, war kein Abbruch, ging als neuer Auftrag an den Brain —
+# und der Nutzer hörte "Ich habe verstanden: Gastostop."
+_STOP_PATTERN_FOLLOWUP = re.compile(r'\b(?:gast\w*?)?stopp?\b', re.IGNORECASE)
 # Bei Erstanfrage muss eine 2-Wort-Kombi vorliegen, davon mind. eines ein Kern-Abbruchwort.
 # Trenner ist \W+ (Whitespace ODER Satzzeichen), weil das STT die Wörter oft mit Kommas
 # liefert ("Stopp, stopp, halt") — reiner \s+ würde das verfehlen.
@@ -1928,7 +1932,7 @@ def run() -> None:
                             barge_muted = False
                             audio_source.flush()
                             bargein.reset()
-                        barge_res = bargein.feed(audio_16)
+                        barge_res = bargein.feed(audio_16, speaking=tts_lock.locked())
 
                     if isinstance(barge_res, BargeInMiss):
                         # Nicht durchgekommener Abbruch — der Fall, den man
@@ -2057,6 +2061,14 @@ def run() -> None:
                     state = STATE_LISTENING
                 elif reply_done_event.is_set():
                     reply_done_event.clear()
+                    if bargein is not None:
+                        # Messpunkt: hoert das Fenster waehrend der eigenen
+                        # Ansage ueberhaupt etwas? Siehe BargeInDetector.feed.
+                        print(f"[{now:.1f}s] 🎧 Barge-in-Fenster: Score max "
+                              f"{bargein.max_score_speaking:.2f} bei eigener Ansage "
+                              f"({bargein.frames_speaking} Frames), "
+                              f"{bargein.max_score_quiet:.2f} sonst "
+                              f"({bargein.frames_quiet} Frames)")
                     state = STATE_PAUSE
                     state_start = now
 

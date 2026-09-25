@@ -348,6 +348,14 @@ class StoppWortImBargeInTest(unittest.TestCase):
         self.assertTrue(_is_stop_command("Stopp Gaston", 1))
         self.assertTrue(_is_stop_command("Gaston Stopp", 1))
 
+    def test_zusammengezogenes_gaston_stopp(self) -> None:
+        # Live 2026-09-25 13:01:13: die STT lieferte "Gastostop." — ohne
+        # Wortgrenze vor "stop" war das kein Abbruch, sondern ein Auftrag.
+        self.assertTrue(_is_stop_command("Gastostop.", 1))
+        self.assertTrue(_is_stop_command("Gastonstopp!", 1))
+        # Gegenprobe: das Wortinnere allein bleibt kein Stopp-Wort.
+        self.assertFalse(_is_stop_command("Bushaltestelle Nonstopflug", 1))
+
     def test_einzelnes_stopp_reicht_im_leerlauf_nicht(self) -> None:
         self.assertFalse(_is_stop_command("Stopp", 0))
 
@@ -611,6 +619,91 @@ class StreamAbbruchTest(unittest.TestCase):
             # bis zum Ende des Servers (2 s). Genau das ist das alte Verhalten.
             t.join(timeout=10.0)
             self.assertFalse(t.is_alive())
+        finally:
+            openclaw.OPENCLAW_RESPONSES_URL = orig_url
+
+
+class StillerStreamAbbruchTest(unittest.TestCase):
+    """(8) Der Abbruch darf die Hauptschleife nicht blockieren.
+
+    StreamAbbruchTest sendet ununterbrochen — dort kehrt resp.close() sofort
+    zurueck, weil der Leser ohnehin gleich wieder Daten bekommt. Im echten
+    Betrieb schweigt OpenClaw aber in Werkzeug-Phasen minutenlang, und dann
+    blockierte close() bis zum naechsten Byte: am 2026-09-25 13:00:22 hing
+    die Hauptschleife 49 s in TurnControl.cancel(), Beep und Rot kamen erst
+    danach. Dieser Server schickt einen Block und schweigt dann.
+    """
+
+    SCHWEIGEN_SEC = 8.0
+
+    def setUp(self) -> None:
+        import http.server
+        import threading
+
+        schweigen = self.SCHWEIGEN_SEC
+
+        class StillerHandler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                block = b'data: {"type":"response.in_progress"}\r\n\r\n'
+                try:
+                    self.wfile.write(b"%x\r\n" % len(block) + block + b"\r\n")
+                    self.wfile.flush()
+                    time.sleep(schweigen)  # Werkzeug-Phase: keine Deltas
+                    self.wfile.write(b"0\r\n\r\n")
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), StillerHandler)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    def test_abbruch_kehrt_sofort_zurueck(self) -> None:
+        import threading
+
+        from voice_assistant.services import openclaw
+
+        orig_url = openclaw.OPENCLAW_RESPONSES_URL
+        openclaw.OPENCLAW_RESPONSES_URL = f"http://127.0.0.1:{self.port}/v1/responses"
+        tc = TurnControl()
+        turn = tc.begin()
+        ergebnis = {}
+
+        def lauf():
+            ergebnis["text"], ergebnis["timeout"] = openclaw.query_stream(
+                "hallo", token="t", session="s", control=tc, turn=turn,
+            )
+
+        try:
+            t = threading.Thread(target=lauf, daemon=True)
+            t.start()
+            time.sleep(0.5)  # Stream steht, Server schweigt
+            self.assertTrue(t.is_alive())
+            t0 = time.monotonic()
+            tc.cancel("barge_in")
+            dauer = time.monotonic() - t0
+            self.assertLess(
+                dauer, 1.0,
+                f"cancel() blockierte {dauer:.1f} s — die Hauptschleife steht "
+                "so lange, kein Beep, kein Rot, Aufnahme laeuft nicht",
+            )
+            t.join(timeout=2.0)
+            self.assertFalse(t.is_alive(), "query_stream muss sofort zurueckkehren")
+            self.assertFalse(ergebnis["timeout"])
         finally:
             openclaw.OPENCLAW_RESPONSES_URL = orig_url
 

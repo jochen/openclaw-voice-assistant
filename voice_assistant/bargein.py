@@ -129,6 +129,10 @@ class BargeInDetector:
         self._hits = 0
         self._peak = 0.0
         self.max_score = 0.0
+        self.max_score_speaking = 0.0
+        self.max_score_quiet = 0.0
+        self.frames_speaking = 0
+        self.frames_quiet = 0
         self._gap_used = False
         self._bundle = ""
         self._threshold = 0.0
@@ -146,11 +150,19 @@ class BargeInDetector:
         )
         return loudest_window_rms(samples, rate=RATE_OW, window_ms=300)
 
-    def feed(self, chunk: np.ndarray):
+    def feed(self, chunk: np.ndarray, speaking: bool = False):
         """Einen 16-kHz-Chunk verarbeiten.
 
         Liefert BargeInHit (beide Gates bestanden), BargeInMiss (ein Gate
         nicht bestanden) oder None (nichts entschieden).
+
+        speaking: laeuft gerade eine eigene Ansage? Aendert nichts an der
+        Entscheidung, trennt nur die Hoechst-Scores (max_score_speaking /
+        max_score_quiet). Anlass 2026-09-25: mehrere "Stopp Gaston" waehrend
+        Bestaetigung und Denk-Phrase ergaben nicht einmal einen Near-Miss, der
+        einzige Treffer fiel genau aufs Ende einer Ansage. Verdacht: die
+        Echo-Unterdrueckung des XVF3800 nimmt im Gegensprechen auch die
+        Nutzerstimme weg. Ohne diese Trennung ist das nicht messbar.
         """
         if len(chunk) > 0:
             self._ring.append(chunk.copy())
@@ -164,6 +176,12 @@ class BargeInDetector:
 
         self._scores.append(hit.score)
         self.max_score = max(self.max_score, hit.score)
+        if speaking:
+            self.frames_speaking += 1
+            self.max_score_speaking = max(self.max_score_speaking, hit.score)
+        else:
+            self.frames_quiet += 1
+            self.max_score_quiet = max(self.max_score_quiet, hit.score)
         if hit.score > hit.threshold:
             self._hits += 1
             self._peak = max(self._peak, hit.score)
