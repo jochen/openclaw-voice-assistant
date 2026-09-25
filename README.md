@@ -306,6 +306,21 @@ ow-venv/bin/python -m tools.wake_corpus bilanz    # what is secured, and which l
 ow-venv/bin/python -m tools.wake_corpus messen    # score the current bundle against that corpus
 ```
 
+**Does the gate lose calls nobody repeats? (`nearmiss_shadow`, optional)**
+A near-miss followed by a trigger within seconds is a lost call — the user
+said it again. A user who doesn't repeat never shows up that way, and the
+near-miss clip itself ends at the wake word: the STT gets one isolated word
+and guesses. With `nearmiss_shadow: true` the assistant quietly keeps
+recording for 6 s after every near-miss (`*_nearmiss_folge.wav` next to the
+clip) and writes the STT result and the actuator's gate question to
+`nearmiss_shadow.jsonl` — only while no turn is running, without touching the
+Speaches cooldown, and without ever executing anything. **It is a provisional
+estimate, not a label:** every line carries `"status": "vorlaeufig"`
+(provisional), and `wake_triage` does not read the file. Whether STT plus
+"does the speaker want to switch something?" recognises real calls (questions
+meant for the brain slip through) still has to be measured against clips you
+have listened to.
+
 ## Cancelling a turn while it runs (`barge_in`, optional)
 
 A false wake-word trigger is not the expensive part. The expensive part is

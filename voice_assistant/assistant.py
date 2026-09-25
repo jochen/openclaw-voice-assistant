@@ -95,6 +95,7 @@ from voice_assistant.state import (
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
 from voice_assistant.wakeword.respeaker import RespeakerWakeword
 from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
+from voice_assistant.nearmiss_shadow import NearMissShadow
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
 from voice_assistant.workers import Workers
@@ -582,11 +583,11 @@ def _archive_level_blocked_nearmiss(
 
     wake_ring wird (wie beim score-bedienten Near-Miss) NICHT geleert —
     folgt kurz darauf der echte Ruf, behält der seinen 3-Sekunden-Kontext.
-    Gibt die nm_id zurück (für Konsolen-Ausgabe durch den Aufrufer).
+    Gibt die geloggte Zeile zurück (für die Schatten-Aufnahme).
     """
     nm_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     _save_trigger_audio(list(wake_ring), bundle, "nearmiss", nm_id)
-    _log_wake_event({
+    event = {
         "result": "nearmiss",
         "bundle": bundle,
         "hits": wake_hits,
@@ -602,8 +603,9 @@ def _archive_level_blocked_nearmiss(
         "scores": [round(s, 3) for s in recent_scores],
         "beam": float(beam) if beam is not None else None,
         "audio": f"{nm_id}_{bundle}_nearmiss.wav",
-    })
-    return nm_id
+    }
+    _log_wake_event(event)
+    return event
 
 
 def _format_wake_scores(scores: deque, threshold: float) -> str:
@@ -929,6 +931,19 @@ def run() -> None:
     # wird als Retraining-/Analyse-Clip archiviert (siehe TRIGGER_AUDIO_DIR).
     wake_ring: deque = deque()
     wake_ring_samples = 0
+    # Mitschnitt nach jedem Near-Miss (profile.nearmiss_shadow): was wurde nach
+    # dem Fast-Ruf gesagt? STT + Torfrage nur ins Log, nie ausgefuehrt, kein
+    # Label — siehe voice_assistant/nearmiss_shadow.py.
+    nearmiss_shadow = None
+    if profile.nearmiss_shadow:
+        nearmiss_shadow = NearMissShadow(
+            stt=speaches_stt if profile.speaches_base else None,
+            actuator=actuator,
+            archive_dir=TRIGGER_AUDIO_DIR,
+            log_path=os.path.join(WORKSPACE, "nearmiss_shadow.jsonl"),
+            turn_laeuft=lambda: current_state[0] != STATE_LISTENING,
+        )
+        print("👥 Near-Miss-Schatten aktiv (6 s Mitschnitt, nur Log)")
     _wake_ring_max = int(RATE_OW * 3.0)
     trigger_audio_id: str | None = None    # verbindet wake- und rec-Clip eines Triggers
     # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
@@ -1062,6 +1077,14 @@ def run() -> None:
                     f"≈ {_command_silence_limit * _chunk_sec:.2f}s"
                 )
 
+            # Schatten-Aufnahme: Leerlauf verlassen (Trigger) → mit dem
+            # Bisherigen abschliessen; im Leerlauf jeden Chunk mitnehmen.
+            if nearmiss_shadow is not None and nearmiss_shadow.aktiv:
+                if state == STATE_LISTENING:
+                    nearmiss_shadow.feed(audio_16)
+                else:
+                    nearmiss_shadow.abbrechen("Trigger")
+
             # --- LISTENING ---
             if state == STATE_LISTENING:
                 if len(audio_16) > 0:
@@ -1119,13 +1142,15 @@ def run() -> None:
                         # Replay (tools/wake_rms_replay.py) via voice_assistant.wake_rms.
                         _level_ok, _lvl_rms = _level_gate_ok(wake_ring, _wake_rms_min)
                         if not _level_ok:
-                            nm_id = _archive_level_blocked_nearmiss(
+                            nm_event = _archive_level_blocked_nearmiss(
                                 wake_ring, current_wakeword.bundle,
                                 wake_hits, wake_peak,
                                 current_min_hits, current_min_peak,
                                 current_min_peak_short, current_min_peak_single,
                                 current_threshold, recent_scores, beam, _lvl_rms,
                             )
+                            if nearmiss_shadow is not None:
+                                nearmiss_shadow.start(nm_event, _pre_roll(wake_ring, _PRE_ROLL_SEC))
                             print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] "
                                   f"(Pegel {round(_lvl_rms):.0f} < {_wake_rms_min:.0f})"
                                   f"{beam_str}")
@@ -1213,7 +1238,7 @@ def run() -> None:
                         _save_trigger_audio(
                             list(wake_ring), current_wakeword.bundle, "nearmiss", nm_id
                         )
-                        _log_wake_event({
+                        nm_event = {
                             "result": "nearmiss",
                             "bundle": current_wakeword.bundle,
                             "hits": wake_hits,
@@ -1227,7 +1252,10 @@ def run() -> None:
                             "scores": [round(s, 3) for s in recent_scores],
                             "beam": float(beam) if beam is not None else None,
                             "audio": f"{nm_id}_{current_wakeword.bundle}_nearmiss.wav",
-                        })
+                        }
+                        _log_wake_event(nm_event)
+                        if nearmiss_shadow is not None:
+                            nearmiss_shadow.start(nm_event, _pre_roll(wake_ring, _PRE_ROLL_SEC))
                         leds.set_phase(LED_NEAR_MISS)
                         near_miss_until = now + 0.6
                     wake_hits = 0
@@ -1251,13 +1279,15 @@ def run() -> None:
                     # dieses Blocks und gilt für beide Zweige.
                     _level_ok, _lvl_rms = _level_gate_ok(wake_ring, _wake_rms_min)
                     if not _level_ok:
-                        _archive_level_blocked_nearmiss(
+                        nm_event = _archive_level_blocked_nearmiss(
                             wake_ring, current_wakeword.bundle,
                             wake_hits, wake_peak,
                             current_min_hits, current_min_peak,
                             current_min_peak_short, current_min_peak_single,
                             current_threshold, recent_scores, beam, _lvl_rms,
                         )
+                        if nearmiss_shadow is not None:
+                            nearmiss_shadow.start(nm_event, _pre_roll(wake_ring, _PRE_ROLL_SEC))
                         print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] "
                               f"(Timeout, Pegel {round(_lvl_rms):.0f} < {_wake_rms_min:.0f})"
                               f"{beam_str}")

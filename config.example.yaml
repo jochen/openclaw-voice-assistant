@@ -139,6 +139,11 @@ profiles:
     #     - "Fast fertig."
     #     - "Noch einen Augenblick."
 
+    # Nach jedem Near-Miss 6 s still weiter mitschneiden; STT + Torfrage des
+    # Aktuators nur nach nearmiss_shadow.jsonl ("vorlaeufig", kein Label, nie
+    # ausgefuehrt). Zeigt Rufe, die das Gate verliert und niemand wiederholt.
+    # nearmiss_shadow: false
+
     # Wakewords — optional. Fehlt der Block komplett: ein Eintrag 'hey_jarvis'
     # mit den Profil-Defaults oben (Rückwärtskompatibilität). Mehrere Einträge
     # erlauben parallel aktive Wakewords, die je auf eine eigene OpenClaw-

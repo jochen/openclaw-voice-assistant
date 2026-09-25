@@ -313,6 +313,20 @@ ow-venv/bin/python -m tools.wake_corpus bilanz    # was gesichert ist — und we
 ow-venv/bin/python -m tools.wake_corpus messen    # das laufende Bundle gegen diesen Korpus scoren
 ```
 
+**Verliert das Gate Rufe, die niemand wiederholt? (`nearmiss_shadow`, optional)**
+Ein Near-Miss, auf den binnen Sekunden ein Trigger folgt, ist ein verlorener
+Ruf — der Nutzer hat sich wiederholt. Wer nicht wiederholt, taucht so nie auf,
+und der Near-Miss-Clip selbst endet beim Wakewort: die STT bekommt ein
+einzelnes Wort und rät. Mit `nearmiss_shadow: true` schneidet der Assistent
+nach jedem Near-Miss still 6 s weiter mit (`*_nearmiss_folge.wav` neben dem
+Clip) und schreibt STT und Torfrage des Aktuators nach
+`nearmiss_shadow.jsonl` — erst wenn kein Turn läuft, ohne Einfluss auf den
+Speaches-Cooldown, und ohne je etwas auszuführen. **Das ist eine vorläufige
+Einschätzung, kein Label:** jede Zeile trägt `"status": "vorlaeufig"`, und
+`wake_triage` liest die Datei nicht. Ob STT plus „will der Sprecher etwas
+schalten?" echte Rufe erkennt (Fragen an den Brain fallen dabei durch), ist
+erst an gehörten Aufnahmen zu messen.
+
 ## Einen Turn abbrechen, während er läuft (`barge_in`, optional)
 
 Ein Wakeword-Fehltrigger ist nicht das Teure. Teuer ist, was danach passiert:
