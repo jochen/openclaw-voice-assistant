@@ -39,7 +39,13 @@ min_peak_short: 0.9
 # Schwelle zu retten (dort liegt Rauschen gleichauf) — Modellproblem.
 # Restrisiko: die FP-Analyse 08.-13.07. fand 2-Frame-Fehltrigger mit Peaks bis
 # 0.92; solche kommen hier durch. Rate unbekannt, Stichprobe war ein Tag.
-min_peak_single: 0.75
+# AUS seit 2026-09-25 (vorher 0.75). Mit v3 hat sich der Handel gedreht:
+# seit dem Deploy 2026-09-16 brachte der Pfad 0 belegte echte Rufe und 12
+# Fehltrigger (wake_triage --seit 10 --auch-trigger), allein am 25.09. 5 von
+# 10 Triggern. v3 erreicht echte Rufe mit richtigen Streaks. Vorzeitig vor dem
+# Ende der v3-Wette entschieden (Jochen) — die Gegenwette steht in
+# WAKEWORD_PROCESS.md, "Wette 1-Frame-Pfad aus". Zurueck: 0.75.
+min_peak_single: 0.0
 spellings:
   - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
   - "Gastong (40%)"

@@ -599,3 +599,35 @@ Wette.
 sichern` hat am 2026-09-20 nichts Neues gefunden (alles Haltbare ist im Korpus),
 die Erosion ist also Altlast von vor der Schutzregel — aber sie verkleinert
 jede künftige Messbasis dauerhaft.
+
+### Wette 1-Frame-Pfad aus (2026-09-25, formuliert VOR den Daten)
+
+`min_peak_single` 0.75 → 0.0, vorzeitig vor dem Ende der v3-Wette. Stand beim
+Abschalten (`wake_triage --seit 10 --auch-trigger`, seit v3-Deploy):
+
+| Gate-Pfad | echt | Fehltrigger | unklar |
+|---|---|---|---|
+| 1 Frame | 0 | 12 | 2 |
+| 2 Frames | 3 | 4 | 1 |
+| 3+ Frames | 9 | 5 | 5 |
+
+Allein am 25.09. kamen 5 von 10 Triggern über diesen Pfad, alle mit leerer
+oder sinnloser Transkription.
+
+**Messbar bleibt es:** ein Einzel-Frame ≥ 0,75 wird jetzt als Near-Miss mit
+`failed_on: min_hits` archiviert — genau die Ereignisse, die vorher getriggert
+hätten. Nach **~3 Wochen (bis ~2026-10-16)** diese Klasse triagieren:
+
+1. **Geliefert**, wenn die Fehltrigger-Rate pro Tag deutlich fällt (Bezug:
+   12 FP über den Pfad in 10 Tagen) und unter den 1-Frame-Near-Misses ≥ 0,75
+   **höchstens 1** belegter echter Ruf liegt.
+2. **Zurück auf 0,75**, wenn dort mehr belegte echte Rufe als Fehltrigger
+   liegen — dann war der 10-Tage-Stand ein kurzes Fenster.
+3. Dazwischen: Wiederholungsrate (Selbst-Label „wiederholt") vorher/nachher
+   vergleichen. Ein Ruf, der sofort wiederholt wird, kostet Sekunden, ein
+   Fehltrigger einen falschen Turn.
+
+Wichtig für die v3-Wette: deren Kriterium 2 (Verlustquote) wird ab heute
+durch diese Änderung mitbewegt — Zeiträume vor und nach dem 25.09. getrennt
+lesen. Offline nicht messbar (der Korpus-Scorer findet über mehrere
+Frame-Phasen immer den besten Streak).
