@@ -259,6 +259,27 @@ class ActuatorConfig:
 
 
 @dataclass
+class RewindConfig:
+    """Rückspul-Puffer (voice_assistant/rewind.py): die letzten Minuten Mikro
+    samt Score-Verlauf im RAM, auf die Platte nur bei einem Anlass. Default
+    enabled=False: ohne den `rewind:`-Block wird nichts gepuffert."""
+    enabled: bool = False
+    # Pufferlaenge. Ein manueller Marker kommt Sekunden nach dem verlorenen
+    # Ruf — 120 s decken auch den Griff zum Taster am anderen Ende des Raums.
+    seconds: float = 120.0
+    # Bei jedem Trigger so viel VOR dem Trigger sichern (0 = aus): kommt der
+    # Nutzer nach vergeblichen Versuchen doch durch, stecken sie hier drin.
+    before_trigger_seconds: float = 30.0
+    # Manueller Marker per MQTT, z.B. ein Zigbee-Taster via zigbee2mqtt. Jede
+    # Nachricht mit nicht-leerem "action" sichert den ganzen Puffer; Status-
+    # Meldungen des Geraets (Batterie, Linkqualitaet) haben keins.
+    # Leerer Host oder leeres Topic = kein Marker.
+    marker_mqtt_host: str = ""
+    marker_mqtt_port: int = 1883
+    marker_topic: str = ""
+
+
+@dataclass
 class WatcherConfig:
     """Überwacher Stufe 1 (nur LESEN + MELDEN, siehe services/watcher.py und
     tools/actuator_watch.py). Default enabled=False: ohne den `watcher:`-Block
@@ -462,6 +483,9 @@ class Profile:
 
     # Überwacher Stufe 1 — fehlt der Block: kein Watcher-Thread.
     watcher: WatcherConfig = field(default_factory=WatcherConfig)
+
+    # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
+    rewind: RewindConfig = field(default_factory=RewindConfig)
 
     # Abbruch mitten im Turn ("Stopp Gaston"). Default: aus.
     barge_in: BargeInConfig = field(default_factory=BargeInConfig)
@@ -699,6 +723,19 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         llm_timeout=float(watcher_raw.get("llm_timeout", _dw.llm_timeout)),
     )
 
+    rewind_raw = raw.get("rewind") or {}
+    _drw = RewindConfig()
+    rewind = RewindConfig(
+        enabled=bool(rewind_raw.get("enabled", _drw.enabled)),
+        seconds=float(rewind_raw.get("seconds", _drw.seconds)),
+        before_trigger_seconds=float(
+            rewind_raw.get("before_trigger_seconds", _drw.before_trigger_seconds)
+        ),
+        marker_mqtt_host=str(rewind_raw.get("marker_mqtt_host") or _drw.marker_mqtt_host),
+        marker_mqtt_port=int(rewind_raw.get("marker_mqtt_port", _drw.marker_mqtt_port)),
+        marker_topic=str(rewind_raw.get("marker_topic") or _drw.marker_topic),
+    )
+
     locale_raw = raw.get("locale") or {}
     _dloc = LocaleConfig()
     locale = LocaleConfig(
@@ -751,6 +788,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         locale=locale,
         actuator=actuator,
         watcher=watcher,
+        rewind=rewind,
         wakewords=wakewords,
         barge_in=barge_in,
     )

@@ -144,6 +144,20 @@ profiles:
     # ausgefuehrt). Zeigt Rufe, die das Gate verliert und niemand wiederholt.
     # nearmiss_shadow: false
 
+    # Rückspul-Puffer — optional. Hält die letzten Minuten Mikro samt jedem
+    # Wakeword-Score im RAM; auf die Platte nur bei einem Anlass: die
+    # Sekunden VOR jedem Trigger (vergebliche Versuche davor) und der ganze
+    # Puffer auf einen manuellen Marker (MQTT, z.B. Zigbee-Taster über
+    # zigbee2mqtt: jede Nachricht mit nicht-leerem "action"). Achtung: der
+    # Trigger-Vorlauf speichert regelmäßig Raumgespräch.
+    # rewind:
+    #   enabled: false
+    #   seconds: 120
+    #   before_trigger_seconds: 30      # 0 = nur Marker
+    #   marker_mqtt_host: ""            # leer = kein Marker
+    #   marker_mqtt_port: 1883
+    #   marker_topic: "zigbee2mqtt/DEIN_TASTER"
+
     # Wakewords — optional. Fehlt der Block komplett: ein Eintrag 'hey_jarvis'
     # mit den Profil-Defaults oben (Rückwärtskompatibilität). Mehrere Einträge
     # erlauben parallel aktive Wakewords, die je auf eine eigene OpenClaw-

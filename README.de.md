@@ -327,6 +327,21 @@ Einschätzung, kein Label:** jede Zeile trägt `"status": "vorlaeufig"`, und
 schalten?" echte Rufe erkennt (Fragen an den Brain fallen dabei durch), ist
 erst an gehörten Aufnahmen zu messen.
 
+**Und Rufe, die nicht einmal ein Near-Miss wurden? (`rewind`, optional)**
+Near-Miss und Schatten-Aufnahme sehen nur Rufe, bei denen das Modell die
+Schwelle wenigstens gestreift hat. Ein Ruf, auf den gar nichts reagiert,
+hinterlässt nichts. Der Rückspul-Puffer hält deshalb die letzten Minuten
+Mikro **und jeden Score** im RAM und sichert sie bei zwei Anlässen: die
+Sekunden vor jedem Trigger (wer nach vergeblichen Versuchen durchkommt, hat
+sie dort drin) und den ganzen Puffer auf einen manuellen Marker — bei uns ein
+Zigbee-Taster über MQTT, gedrückt wenige Sekunden nach dem „er hat nicht
+reagiert". Neben jeder WAV liegt eine JSON mit Score-Verlauf, Zuständen,
+Pegel je Sekunde und Zeitlücken im Mikro-Strom. Daran ist ablesbar, woran der
+Ruf scheiterte: Score nahe 0 (Modell), knapp unter der Schwelle (Schwelle)
+oder eine Lücke (Mikro war taub — kein Modellproblem). Auch hier: vorläufig,
+zum Anhören, kein Label. **Datenschutz:** der Trigger-Vorlauf speichert
+regelmäßig Raumgespräch; sprich das mit den Leuten ab, die dort wohnen.
+
 ## Einen Turn abbrechen, während er läuft (`barge_in`, optional)
 
 Ein Wakeword-Fehltrigger ist nicht das Teure. Teuer ist, was danach passiert:

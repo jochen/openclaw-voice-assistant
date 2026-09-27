@@ -129,6 +129,9 @@ class BargeInDetector:
         self._hits = 0
         self._peak = 0.0
         self.max_score = 0.0
+        # Score des zuletzt gefuetterten Chunks (None = keine Prediction) —
+        # fuer den Score-Verlauf im Rueckspul-Puffer (rewind.py).
+        self.last_score = None
         self.max_score_speaking = 0.0
         self.max_score_quiet = 0.0
         self.frames_speaking = 0
@@ -171,6 +174,7 @@ class BargeInDetector:
                 self._ring_samples -= len(self._ring.popleft())
 
         hit = self._engine.feed(chunk)
+        self.last_score = hit.score if hit is not None else None
         if hit is None:
             return None  # noch nicht genug Samples fuer eine Prediction
 

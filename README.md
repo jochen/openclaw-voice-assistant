@@ -321,6 +321,21 @@ estimate, not a label:** every line carries `"status": "vorlaeufig"`
 meant for the brain slip through) still has to be measured against clips you
 have listened to.
 
+**And calls that never even became a near-miss? (`rewind`, optional)**
+Near-miss and shadow recording only see calls where the model at least
+brushed the threshold. A call nothing reacts to leaves no trace. The rewind
+buffer therefore keeps the last minutes of microphone audio **and every
+score** in RAM and saves them on two occasions: the seconds before every
+trigger (if you get through after failed attempts, they are in there) and the
+whole buffer on a manual marker — for us a Zigbee button via MQTT, pressed a
+few seconds after "it didn't react". Next to each WAV sits a JSON file with
+the score trace, states, level per second and gaps in the microphone stream.
+It shows why the call failed: score near 0 (model), just below the threshold
+(threshold), or a gap (the microphone was deaf — not a model problem). Again:
+provisional, for listening, not a label. **Privacy:** the pre-trigger save
+regularly stores room conversation; agree on it with the people who live
+there.
+
 ## Cancelling a turn while it runs (`barge_in`, optional)
 
 A false wake-word trigger is not the expensive part. The expensive part is

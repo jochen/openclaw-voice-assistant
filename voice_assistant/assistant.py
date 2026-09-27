@@ -96,6 +96,7 @@ from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
 from voice_assistant.wakeword.respeaker import RespeakerWakeword
 from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
 from voice_assistant.nearmiss_shadow import NearMissShadow
+from voice_assistant.rewind import RewindBuffer
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
 from voice_assistant.workers import Workers
@@ -139,6 +140,17 @@ _COMMAND_MIN_SPEECH_SEC = 0.5
 # das Ziel wurde in allen Fällen richtig getroffen, eine eigene Anrede-Regel
 # im Prompt war nicht nötig. Der Brain liest es ohnehin als Anrede.
 _PRE_ROLL_SEC = 1.5
+
+# Lesbare Zustandsnamen fuer den Rueckspul-Puffer (rewind.py) — dort stehen
+# sie in der JSON neben dem Audio, und eine 3 sagt beim Anhoeren nichts.
+_STATE_NAMEN = {
+    STATE_LISTENING: "leerlauf",
+    STATE_RECORDING: "aufnahme",
+    STATE_PROCESSING: "stt",
+    STATE_WAITING: "antwort",
+    STATE_PAUSE: "pause",
+    STATE_FOLLOWUP: "followup",
+}
 # 'bitte' war hier drin und hat jedes höfliche Schaltkommando verschluckt:
 # "Schalt das Küchenlicht bitte aus" matchte über ANY(bitte)+CORE(aus) als
 # Abbruch, die Anfrage starb wortlos (live beobachtet 2026-07-25 22:46).
@@ -944,6 +956,23 @@ def run() -> None:
             turn_laeuft=lambda: current_state[0] != STATE_LISTENING,
         )
         print("👥 Near-Miss-Schatten aktiv (6 s Mitschnitt, nur Log)")
+    # Rückspul-Puffer (profile.rewind): letzte Minuten Mikro + Score-Verlauf im
+    # RAM; gesichert nur bei Trigger (Vorlauf) und manuellem Marker.
+    _rewind_cfg = profile.rewind
+    rewind = None
+    if _rewind_cfg.enabled:
+        rewind = RewindBuffer(
+            _rewind_cfg.seconds, TRIGGER_AUDIO_DIR,
+            os.path.join(WORKSPACE, "rueckspul.jsonl"),
+        )
+        if _rewind_cfg.marker_mqtt_host and _rewind_cfg.marker_topic:
+            rewind.marker_starten(
+                _rewind_cfg.marker_mqtt_host, _rewind_cfg.marker_mqtt_port,
+                _rewind_cfg.marker_topic,
+            )
+        print(f"⏪ Rückspul-Puffer aktiv ({_rewind_cfg.seconds:.0f} s, "
+              f"Vorlauf je Trigger {_rewind_cfg.before_trigger_seconds:.0f} s, "
+              f"Marker: {_rewind_cfg.marker_topic or 'keiner'})")
     _wake_ring_max = int(RATE_OW * 3.0)
     trigger_audio_id: str | None = None    # verbindet wake- und rec-Clip eines Triggers
     # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
@@ -1053,6 +1082,18 @@ def run() -> None:
             audio_16 = audio_source.read_chunk()
             now = time.time()
             current_state[0] = state
+            if rewind is not None:
+                rewind.feed(now, _STATE_NAMEN.get(state, str(state)), audio_16)
+                for marker in rewind.marker_abholen():
+                    # Manueller Marker (Taster): "eben hat er nicht reagiert".
+                    stamm = datetime.now().strftime("%Y%m%d_%H%M%S") + "_marker_rueckspul"
+                    rewind.sichern("marker", stamm, extra=marker)
+                    print(f"[{now:.1f}s] ⏪ Marker ({marker['action']}) — Rückspul wird gesichert")
+                    if state == STATE_LISTENING:
+                        # Quittung: kurzes Aufleuchten wie beim Near-Miss —
+                        # nur im Leerlauf, sonst gehört der Ring dem Turn.
+                        leds.set_phase(LED_NEAR_MISS)
+                        near_miss_until = now + 0.6
 
             # Reale Chunk-Länge einmalig messen → zeitbasiertes Endpointing auflösen
             if _chunk_sec == 0.0 and len(audio_16) > 0:
@@ -1100,6 +1141,8 @@ def run() -> None:
                 hit = wakeword.feed(audio_16)
                 if hit is not None:
                     recent_scores.append(hit.score)
+                    if rewind is not None:
+                        rewind.score(hit.score, "leerlauf")
                 if hit is None:
                     pass  # noch 1280 Samples sammeln bevor neue Prediction
                 elif hit.score > hit.threshold:
@@ -1168,6 +1211,14 @@ def run() -> None:
                             _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                             turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                             turn_wake_audio = turn_audio
+                            # Die Sekunden VOR dem Trigger sichern: vergebliche Versuche
+                            # davor hinterlassen sonst nichts (rewind.py).
+                            if rewind is not None and _rewind_cfg.before_trigger_seconds > 0:
+                                rewind.sichern(
+                                    "trigger", f"{trigger_audio_id}_{trigger_audio_bundle}_vorlauf",
+                                    seconds=_rewind_cfg.before_trigger_seconds,
+                                    extra={"wake_audio": turn_audio},
+                                )
                             # Trigger genauso protokollieren wie den Near-Miss —
                             # ein Sweep braucht beide Klassen im selben Log.
                             _log_wake_event({
@@ -1300,6 +1351,14 @@ def run() -> None:
                         _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                         turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                         turn_wake_audio = turn_audio
+                        # Die Sekunden VOR dem Trigger sichern: vergebliche Versuche
+                        # davor hinterlassen sonst nichts (rewind.py).
+                        if rewind is not None and _rewind_cfg.before_trigger_seconds > 0:
+                            rewind.sichern(
+                                "trigger", f"{trigger_audio_id}_{trigger_audio_bundle}_vorlauf",
+                                seconds=_rewind_cfg.before_trigger_seconds,
+                                extra={"wake_audio": turn_audio},
+                            )
                         _log_wake_event({
                             "result": "trigger",
                             "via": "timeout",
@@ -1963,6 +2022,8 @@ def run() -> None:
                             audio_source.flush()
                             bargein.reset()
                         barge_res = bargein.feed(audio_16, speaking=tts_lock.locked())
+                        if rewind is not None and bargein.last_score is not None:
+                            rewind.score(bargein.last_score, "bargein")
 
                     if isinstance(barge_res, BargeInMiss):
                         # Nicht durchgekommener Abbruch — der Fall, den man
