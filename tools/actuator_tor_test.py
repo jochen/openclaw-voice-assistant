@@ -86,6 +86,28 @@ Messreihe (jede Zahl gilt nur fuer ihre capabilities- UND Tor-Prompt-Version):
                 Fine-Tuning ("a fast base to specialise, not a zero-shot
                 decision engine") — die Zahl hier ist die Ausgangslage dafuer,
                 kein Urteil ueber den Tor-Platz.
+
+    2026-09-28  Laya FEINABGESTIMMT (tools/laya_tor_train.py, ckpt tor-v1):
+                laya-multilingual, 2 Epochen auf testsets/tor_train.jsonl
+                (6.553 Saetze, tools/tor_trainset.py, Stand 26f0371),
+                Einbettungen eingefroren, 100 s auf der 3060 Ti (3,05 GB),
+                Temperatur noul 1,825. CPU, Frage "schlicht":
+                  bei 0,5: richtig 317, uebersehen 9 (8 mit Ziel), FALSCH 4
+                  AUROC 0,995; durch bei 0/1/3 FALSCH: 102 / 108 / 110
+                  Brier 0,036; kein uebersehenes Kommando mit P < 0,01;
+                  median 70 ms
+                Gegen Gemma (0,973; 102/115 bei 1/3 FALSCH): besser getrennt,
+                halber Brier, 5x schneller. Die FALSCH sind Kauderwelsch
+                ("Das sieht schlichten aus.", "Ich soll das einfach
+                hintellen.", P 0,94-0,97) und "Monitor bitte wieder zurück
+                auf die normale Ansicht"; uebersehen u.a. "Stopp alle
+                Rollos!" (P 0,19).
+                VORSICHT, die Zahl ist optimistisch: die Vorlagen des
+                Generators entstanden, NACHDEM dieses Set von Hand gelesen
+                war (Anreden, Essensliste, Arbeitszeiten stammen aus
+                denselben Logs). Keine woertliche Ueberschneidung, aber der
+                Stil ist abgeschaut. Belastbar ist erst eine Messung auf
+                Saetzen, die NACH dem 2026-09-28 gesprochen wurden.
 """
 
 from __future__ import annotations

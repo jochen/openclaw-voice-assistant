@@ -151,6 +151,11 @@ gelabelt) in `testsets/`, gitignored mit eigenem privatem Git. Nulllinie
 Gemma 2026-09-28: 305 richtig / 24 übersehen (8 mit Ziel) / 1 FALSCH, 21 der
 24 übersehenen mit P(ja) < 0,01. Das ist die Zahl, die ein Kandidat schlagen
 muss.
+Laya, feinabgestimmt auf synthetische Sätze aus den Zielen + MASSIVE
+(`tools/tor_trainset.py` → `tools/laya_tor_train.py`, eigener venv mit
+torch, nicht `ow-venv`): AUROC 0,995 gegen 0,973, Brier halbiert, 70 ms auf
+der CPU. **Optimistisch** — die Vorlagen entstanden nach dem Lesen des
+Testsets; belastbar erst auf Sätzen nach dem 2026-09-28. Noch nicht live.
 
 **Die Klassifikation antwortet in kompaktem JSON** (GBNF-Grammatik,
 `_intent_grammatik`) statt über `response_format`: das ließ Gemma Leerraum
