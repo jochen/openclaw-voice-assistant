@@ -967,6 +967,14 @@ archived wake/record/near-miss WAVs).
   ```bash
   ow-venv/bin/python -m tools.actuator_grammar_test
   ```
+- `actuator_tor_test` — measures only the gate question against a labelled
+  set of real sentences (JSONL, `schalten: true/false/null` = the speaker's
+  intent), including a calibration table for P(yes). You build the set from
+  your own logs; it lives under `testsets/` (gitignored — it contains your
+  household's everyday life). Format in the tool's docstring.
+  ```bash
+  ow-venv/bin/python -m tools.actuator_tor_test
+  ```
 
 **With some manual work:**
 

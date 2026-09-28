@@ -146,6 +146,11 @@ fast alle P(ja) < 0,01). Jede Tor-Entscheidung steht in
 `actuator_turns.log`, der Überwacher meldet dort jede Zeile, die nicht
 „ausgefuehrt" ist. Der Tor-Platz ist für ein kalibriertes Entscheidungsmodell
 gedacht (Laya o. ä., siehe MemPalace), Gemma hält ihn warm.
+Messen gegen `tools/actuator_tor_test.py` — Set (334 echte Sätze, von Hand
+gelabelt) in `testsets/`, gitignored mit eigenem privatem Git. Nulllinie
+Gemma 2026-09-28: 305 richtig / 24 übersehen (8 mit Ziel) / 1 FALSCH, 21 der
+24 übersehenen mit P(ja) < 0,01. Das ist die Zahl, die ein Kandidat schlagen
+muss.
 
 **Die Klassifikation antwortet in kompaktem JSON** (GBNF-Grammatik,
 `_intent_grammatik`) statt über `response_format`: das ließ Gemma Leerraum

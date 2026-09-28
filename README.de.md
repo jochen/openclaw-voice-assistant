@@ -989,6 +989,14 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
   ```bash
   ow-venv/bin/python -m tools.actuator_grammar_test
   ```
+- `actuator_tor_test` — misst nur die Torfrage gegen ein gelabeltes Set
+  echter Sätze (JSONL, `schalten: true/false/null` = Absicht des Sprechers),
+  inklusive Kalibrier-Tabelle für P(ja). Das Set baut man aus den eigenen
+  Logs; es liegt unter `testsets/` (gitignored — es enthält den Alltag des
+  Haushalts). Format im Docstring des Werkzeugs.
+  ```bash
+  ow-venv/bin/python -m tools.actuator_tor_test
+  ```
 
 **Mit etwas Handarbeit:**
 

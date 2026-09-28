@@ -60,8 +60,9 @@ Messreihe (jede Zahl gilt NUR fuer ihre capabilities-Version):
 
 Dieses Werkzeug misst nur classify() + verdict(), NICHT die Torfrage davor
 (tor_enabled). Die wurde auf 182 Saetzen inkl. echter Turns gemessen, siehe
-config._DEFAULT_ACTUATOR_TOR_PROMPT; das Test-Set dazu stammt aus privaten
-Logs und liegt deshalb nicht im Repo.
+config._DEFAULT_ACTUATOR_TOR_PROMPT. Seit 2026-09-28 misst sie ein eigenes
+Werkzeug, tools/actuator_tor_test.py; dessen Set stammt aus privaten Logs
+und liegt deshalb nicht im Repo, sondern in testsets/.
 
 Der Fehlalarm war also keine Schwaeche von Regel A, sondern duenne Daten: die
 Belege entstehen aus `namen`, und mit einem einzigen Kompositum-Namen kann
