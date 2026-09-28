@@ -87,7 +87,7 @@ Messreihe (jede Zahl gilt nur fuer ihre capabilities- UND Tor-Prompt-Version):
                 decision engine") — die Zahl hier ist die Ausgangslage dafuer,
                 kein Urteil ueber den Tor-Platz.
 
-    2026-09-28  Laya FEINABGESTIMMT (tools/laya_tor_train.py, ckpt tor-v1):
+    2026-09-28  Laya FEINABGESTIMMT (tools/laya_tor_train.py, heute laya_aktuator_train.py; ckpt tor-v1):
                 laya-multilingual, 2 Epochen auf testsets/tor_train.jsonl
                 (6.553 Saetze, tools/tor_trainset.py, Stand 26f0371),
                 Einbettungen eingefroren, 100 s auf der 3060 Ti (3,05 GB),
@@ -127,6 +127,7 @@ if os.path.exists(_VENV) and os.path.realpath(sys.executable) != os.path.realpat
 
 from voice_assistant.config import load_profile  # noqa: E402
 from voice_assistant.services.actuator import Actuator  # noqa: E402
+from voice_assistant.services.laya_intent import TOR_FRAGE  # noqa: E402
 
 _DEFAULT_SET = os.path.join(_REPO, "testsets", "actuator_tor.jsonl")
 
@@ -164,11 +165,7 @@ def modell_gemma(akt: Actuator):
 # "neutral" setzt die Modell-Labels auf A/B — laut Laya-README (#156) kann
 # noul sonst am Wortpaar false:/true: haengen statt am Satz.
 _LAYA_FRAGEN = {
-    "schlicht": {
-        "type": "noul",
-        "instructions": "Will der Sprecher mit diesem Satz ein Gerät im Haus "
-                        "schalten oder einstellen, zum Beispiel Licht, Rollo oder Heizung?",
-    },
+    "schlicht": TOR_FRAGE,   # die Frage, auf die tools/laya_aktuator_train.py trainiert
     "neutral": {
         "type": "noul",
         "instructions": "Was will der Sprecher mit diesem Satz?",

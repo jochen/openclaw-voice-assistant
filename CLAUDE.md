@@ -95,6 +95,8 @@ voice_assistant/
     respeaker.py         micro_wakeword vom ESP (Stub — Schritt 2)
   services/
     actuator.py          Voice-Aktuator: Schaltbefehle lokal statt via Brain
+    laya_intent.py       Laya-Fragen (Tor/Ziel/Aktion), Wert-Leser, -> Intent (nur stdlib)
+    aktuator_schatten.py Schattenbetrieb: zweiter Klassifikator urteilt mit, schaltet nie
     leds.py              WledLeds + RespeakerRing + LedDirector
     telegram.py
     speaches.py          SpeachesState + Start-Check
@@ -151,11 +153,24 @@ gelabelt) in `testsets/`, gitignored mit eigenem privatem Git. Nulllinie
 Gemma 2026-09-28: 305 richtig / 24 übersehen (8 mit Ziel) / 1 FALSCH, 21 der
 24 übersehenen mit P(ja) < 0,01. Das ist die Zahl, die ein Kandidat schlagen
 muss.
-Laya, feinabgestimmt auf synthetische Sätze aus den Zielen + MASSIVE
-(`tools/tor_trainset.py` → `tools/laya_tor_train.py`, eigener venv mit
-torch, nicht `ow-venv`): AUROC 0,995 gegen 0,973, Brier halbiert, 70 ms auf
-der CPU. **Optimistisch** — die Vorlagen entstanden nach dem Lesen des
-Testsets; belastbar erst auf Sätzen nach dem 2026-09-28. Noch nicht live.
+
+**Laya im Schattenbetrieb (`schatten_url`, seit 2026-09-29).** Laya
+(Encoder + Entscheidungskopf, kein Text) beantwortet für jeden Satz, den der
+Aktuator sieht, Tor, Ziel und Aktion — den Wert liest `laya_intent.lese_wert`
+aus dem Satz. Das Ergebnis läuft durch dieselben `_mehrzahl_gruppe()` und
+`verdict()` wie Gemmas und landet daneben in `actuator_schatten.log`.
+**Schaltet nie**, startet erst nach der echten Entscheidung im eigenen Thread
+(`services/aktuator_schatten.py`, Tests `tests/test_aktuator_schatten.py`).
+Kette: `tools/tor_trainset.py` (synthetisch aus den Zielen + MASSIVE, Daten
+privat in `testsets/`) → `tools/laya_aktuator_train.py` (eigener venv mit
+torch, nicht `ow-venv`; Checkpoint nach `~/laya-modelle/`, gehört zu genau
+einer capabilities-Version) → Container `laya` in `openclaw-voice-stack`
+(3060 Ti, 1,4 GB). Offline gemessen (`tools/aktuator_vergleich.py`, 330
+Sätze): Gemma 315/11/**4 FALSCH**, 380 ms; Laya 313/16/**1 FALSCH**, 78 ms.
+**Optimistisch** — die Vorlagen entstanden nach dem Lesen des Testsets.
+Die Entscheidung fällt auf den Schatten-Turns: `tools/aktuator_vergleich.py
+--schatten`. Neue Ziele in den capabilities = neu erzeugen, neu trainieren,
+sonst fragt der Schatten mit einer anderen Zielliste als der trainierten.
 
 **Die Klassifikation antwortet in kompaktem JSON** (GBNF-Grammatik,
 `_intent_grammatik`) statt über `response_format`: das ließ Gemma Leerraum

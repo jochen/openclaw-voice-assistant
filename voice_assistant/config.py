@@ -256,6 +256,19 @@ class ActuatorConfig:
     tor_enabled: bool = False
     tor_prompt: str = _DEFAULT_ACTUATOR_TOR_PROMPT
     tor_gruppen_regel: str = _DEFAULT_ACTUATOR_TOR_GRUPPEN_REGEL
+    # Schattenbetrieb: ein zweiter Klassifikator (Laya, laya-serve unter
+    # dieser URL) beantwortet jeden Satz, den der Aktuator sieht, mit — Tor,
+    # Ziel, Aktion, Wert — und schreibt sein Ergebnis neben das der echten
+    # Kette nach actuator_schatten.log. Er entscheidet NICHTS und schaltet
+    # nie; er laeuft in einem eigenen Thread, nach der echten Entscheidung.
+    # Leer = aus. Siehe voice_assistant/services/laya_intent.py und
+    # tools/aktuator_vergleich.py.
+    schatten_url: str = ""
+    schatten_timeout: float = 5.0
+    # Ab welchem P(ja) der Schatten "schalten" sagt. Nur fuer die Zeile im
+    # Log — P(ja) steht ohnehin daneben, eine andere Schwelle laesst sich
+    # nachtraeglich anlegen.
+    schatten_schwelle: float = 0.5
 
 
 @dataclass
@@ -704,6 +717,9 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         tor_enabled=bool(actuator_raw.get("tor_enabled", _dact.tor_enabled)),
         tor_prompt=str(actuator_raw.get("tor_prompt") or _dact.tor_prompt),
         tor_gruppen_regel=str(actuator_raw.get("tor_gruppen_regel") or _dact.tor_gruppen_regel),
+        schatten_url=str(actuator_raw.get("schatten_url") or _dact.schatten_url),
+        schatten_timeout=float(actuator_raw.get("schatten_timeout", _dact.schatten_timeout)),
+        schatten_schwelle=float(actuator_raw.get("schatten_schwelle", _dact.schatten_schwelle)),
     )
 
     # --- Überwacher: separater Block, analog zu actuator ---
@@ -873,6 +889,10 @@ ACTUATOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_turns.log")
 # Bewusst NICHT in actuator_turns.log: der Überwacher meldet dort jede Zeile,
 # deren Status nicht "ausgefuehrt" ist, und die Nein-Zeilen sind die Mehrheit.
 ACTUATOR_TOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_tor.log")
+# Schattenbetrieb (actuator.schatten_url): je Satz die echte Entscheidung und
+# die des Schatten-Klassifikators nebeneinander. Auswertung:
+# tools/aktuator_vergleich.py --schatten
+ACTUATOR_SCHATTEN_LOG_PATH = os.path.join(WORKSPACE, "actuator_schatten.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,

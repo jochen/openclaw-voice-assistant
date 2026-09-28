@@ -516,6 +516,20 @@ Modells für „ja" wird mitgeloggt, entscheidet aber nicht — bei einem kleine
 LLM ist sie nicht kalibriert. Der Prompt ist deutsch und installationsbezogen
 (`actuator.tor_prompt`); wer ihn in einer anderen Sprache nutzt, misst neu.
 
+**Optionaler Schatten-Klassifikator (`actuator.schatten_url`).** Ein zweiter
+Klassifikator kann jeden Satz mitbeurteilen, ohne je zu schalten: er läuft
+nach der echten Entscheidung in einem eigenen Thread, sein Ergebnis geht
+durch dieselbe Prüfung (`verdict()`) und landet neben dem echten in
+`actuator_schatten.log`. So lässt sich ein Kandidat auf echten Sätzen messen,
+bevor er entscheiden darf. Eingebaut ist [Laya](https://github.com/NandhaKishorM/laya)
+über `laya-serve`: ein Encoder mit Entscheidungskopf, der Tor, Ziel und Aktion
+in einem Durchlauf beantwortet (den Wert liest ein einfacher Parser aus dem
+Satz). Ohne Feinabstimmung taugt er dafür nicht — trainiert wird er auf Sätze,
+die aus den eigenen capabilities erzeugt werden (`tools/tor_trainset.py`,
+`tools/laya_aktuator_train.py`, eigener venv mit torch). Der Checkpoint gehört
+zu genau einer Zielliste; ändern sich die Ziele, wird neu trainiert. Die
+Vorlagen des Generators sind deutsch.
+
 **Die Ausgabe des Modells kurz halten.** Die Klassifikation antwortet in
 kompaktem JSON, erzwungen per GBNF-Grammatik. Mit einem JSON-Schema allein
 durfte das Modell einrücken — 52 statt 29 Token, doppelte Latenz, keine
@@ -996,6 +1010,13 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
   Haushalts). Format im Docstring des Werkzeugs.
   ```bash
   ow-venv/bin/python -m tools.actuator_tor_test
+  ```
+- `aktuator_vergleich` — legt die echte Aktuator-Kette und den
+  Schatten-Klassifikator nebeneinander: auf dem gelabelten Set (richtig /
+  verpasst / FALSCH je Kette) oder auf dem Schatten-Log (Übereinstimmung,
+  Abweichungen zum Beurteilen).
+  ```bash
+  ow-venv/bin/python -m tools.aktuator_vergleich --schatten
   ```
 
 **Mit etwas Handarbeit:**

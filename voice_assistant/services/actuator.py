@@ -671,7 +671,7 @@ class Actuator:
     # ------------------------------------------------------------------
     # Klassifikation + Sanity + Ausführung
     # ------------------------------------------------------------------
-    def _mehrzahl_gruppe(self, text: str, intent: dict) -> dict:
+    def _mehrzahl_gruppe(self, text: str, intent: dict, still: bool = False) -> dict:
         """Geräte-MEHRZAHL ohne Raum: Modell sagt nein, gemeint ist die Gruppe.
 
         Die ROLLO-OHNE-RAUM-Regel im Prompt (siehe _build_system_prompt) fängt
@@ -718,7 +718,8 @@ class Actuator:
             if not aktion or aktion not in (ziel.get("aktionen") or []):
                 continue
             einheit = (ziel.get("wert") or {}).get("einheit") if wert is not None else None
-            print(f"🔌 Aktuator: Mehrzahl ohne Raum → {zid}/{aktion} (lokale Regel)")
+            if not still:   # der Schattenbetrieb soll das Journal nicht doppeln
+                print(f"🔌 Aktuator: Mehrzahl ohne Raum → {zid}/{aktion} (lokale Regel)")
             return {"ist_kommando": True, "aktion": aktion, "ziel": zid,
                     "wert": wert, "einheit": einheit}
         return intent

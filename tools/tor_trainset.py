@@ -359,6 +359,11 @@ def main() -> int:
         rein.append(z)
     rng.shuffle(rein)
 
+    # Schnappschuss der capabilities daneben: das Training baut daraus die
+    # ziel-Frage (laya_intent.ziel_frage). Aendern sich die Ziele, passt ein
+    # alter Checkpoint nicht mehr zur Frage, die der Betrieb stellt.
+    with open(os.path.splitext(args.aus)[0] + ".capabilities.json", "w", encoding="utf-8") as o:
+        json.dump({"version": akt.version, "digest": akt.digest}, o, ensure_ascii=False, indent=1)
     with open(args.aus, "w", encoding="utf-8") as o:
         o.write(f"# Tor-Trainingsdaten, erzeugt von tools/tor_trainset.py, capabilities "
                 f"{akt.version}, seed {args.seed}\n")

@@ -45,6 +45,7 @@ from voice_assistant.config import (
     WakewordConfig,
     load_profile,
 )
+from voice_assistant.services import aktuator_schatten
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.actuator import (
     Actuator,
@@ -852,6 +853,8 @@ def run() -> None:
             if actuator.ready:
                 n_ziele = len(actuator.digest or {})
                 print(f"🔌 Aktuator aktiv — {n_ziele} Ziele, Version {actuator.version}")
+                if profile.actuator.schatten_url:
+                    aktuator_schatten.aufwaermen(actuator)
             else:
                 print("⚠️  Aktuator aktiviert, aber initialer refresh() fehlgeschlagen — startet ohne Ziel-Vokabular, Poll/MQTT versuchen es weiter")
         except Exception as e:
@@ -1702,6 +1705,12 @@ def run() -> None:
                                     "verdict": verdict if tor_urteil.ja else None,
                                     "classify_ms": round(actuator.last_latency_ms) if tor_urteil.ja else None,
                                 })
+                            if actuator.cfg.schatten_url:
+                                # Zweiter Klassifikator urteilt mit, NACH der
+                                # echten Entscheidung und im eigenen Thread —
+                                # schaltet nie. Siehe services/aktuator_schatten.py.
+                                aktuator_schatten.starten(actuator, text, current_wakeword.bundle,
+                                                          tor_urteil, intent, verdict)
                         if verdict == VERDICT_AUSFUEHRBAR:
                             # Sprecher wird hier nur MITGESCHRIEBEN, nicht
                             # angewandt: der Aktuator antwortet mit Node-REDs
