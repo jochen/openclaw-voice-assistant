@@ -382,6 +382,36 @@ def _listdir_safe(pfad: str) -> list[str]:
         return []
 
 
+def _korpus_sichern() -> bool:
+    """Gelabelte Wakeword-Clips in den Dauer-Korpus kopieren, BEVOR der Start
+    das Archiv aufräumt (tools/wake_corpus.py sichern, harte Labels: Ohr und
+    Selbst; die schwachen STT-Labels nicht).
+
+    Bis 2026-10-01 war das ein Handgriff "vor jedem Neustart", festgehalten in
+    der Übergabedatei — und wurde vergessen: bei mehreren Neustarts an einem
+    Tag räumte der Start 43 Dateien ab, ohne dass vorher gesichert war. Diesmal
+    traf es nur Clips mit STT-Labels; die 136 Selbst-Labels lagen zufällig noch
+    im Archiv. Jochen: "mach das sichern beim start des dienstes".
+
+    True = gesichert (oder nichts zu tun). False = Fehler: dann darf der
+    Cleanup NICHTS löschen.
+    """
+    import argparse
+    import contextlib
+    import io
+    try:
+        from tools import wake_corpus
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            wake_corpus.run_sichern(argparse.Namespace(auch_stt=False, trocken=False))
+        kopf = next((z for z in out.getvalue().splitlines() if z.startswith("GESICHERT")), "")
+        print(f"🗄️  Wake-Korpus: {kopf or 'gesichert'}")
+        return True
+    except Exception as e:  # Im Zweifel: sichern fehlgeschlagen -> nichts löschen
+        print(f"⚠️  Wake-Korpus sichern fehlgeschlagen ({e}) — Trigger-Archiv wird NICHT aufgeräumt")
+        return False
+
+
 def _cleanup_trigger_audio() -> None:
     """Löscht Trigger-Archiv-Dateien älter als TRIGGER_AUDIO_MAX_AGE_DAYS.
 
@@ -1114,7 +1144,8 @@ def run() -> None:
         _log_endpoint(endpoint_meta)
         endpoint_meta = {}
 
-    _cleanup_trigger_audio()
+    if _korpus_sichern():
+        _cleanup_trigger_audio()
 
     leds.set_phase(LED_IDLE)
     print("\n🎤 Ready – waiting for wakeword...\n")

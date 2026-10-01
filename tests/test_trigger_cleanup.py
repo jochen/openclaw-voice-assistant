@@ -41,5 +41,18 @@ class CleanupTest(unittest.TestCase):
             self.assertEqual(sorted(os.listdir(d)), ["20260801_120000_marker_rueckspul.wav"])
 
 
+class KorpusSichernTest(unittest.TestCase):
+
+    def test_fehler_beim_sichern_heisst_nichts_loeschen(self) -> None:
+        """Faellt das Sichern aus, darf der Start NICHT aufraeumen — sonst
+        waere der Schutz genau dann weg, wenn er gebraucht wird."""
+        with mock.patch("tools.wake_corpus.run_sichern", side_effect=RuntimeError("Platte voll")):
+            self.assertFalse(assistant._korpus_sichern())
+
+    def test_erfolg(self) -> None:
+        with mock.patch("tools.wake_corpus.run_sichern", return_value=0):
+            self.assertTrue(assistant._korpus_sichern())
+
+
 if __name__ == "__main__":
     unittest.main()
