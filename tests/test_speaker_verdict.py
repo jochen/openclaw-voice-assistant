@@ -229,6 +229,29 @@ class SpeakerStateFileTest(unittest.TestCase):
             self.assertEqual(data["status"], STATUS_AUSGEFALLEN)
             self.assertIsNone(data["name"])
 
+    def test_spaeter_nachtrag_ueberschreibt_keinen_neueren_turn(self):
+        """Seit 2026-10-01 schreibt der Aktuator den Sprecher NACH dem Schalten.
+        Kommt dieser Nachtrag an, nachdem ein neuerer Turn schon geschrieben
+        hat, darf er ihn nicht ersetzen — sonst stuende ein altes "bekannt"
+        ueber einem neuen "ausgefallen", und das Gate machte auf."""
+        from voice_assistant.services.speaker_state import write_current_speaker
+
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "current_speaker.json")
+            write_current_speaker(SpeakerVerdict(None, STATUS_AUSGEFALLEN), path=p, turn_epoch=2000.0)
+            write_current_speaker(SpeakerVerdict("jochen", STATUS_BEKANNT), path=p, turn_epoch=1000.0)
+            data = json.load(open(p, encoding="utf-8"))
+            self.assertEqual(data["status"], STATUS_AUSGEFALLEN)
+
+    def test_neuerer_turn_ersetzt_aelteren(self):
+        from voice_assistant.services.speaker_state import write_current_speaker
+
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "current_speaker.json")
+            write_current_speaker(SpeakerVerdict("jochen", STATUS_BEKANNT), path=p, turn_epoch=1000.0)
+            write_current_speaker(SpeakerVerdict(None, STATUS_AUSGEFALLEN), path=p, turn_epoch=2000.0)
+            self.assertEqual(json.load(open(p, encoding="utf-8"))["status"], STATUS_AUSGEFALLEN)
+
     def test_fehlendes_verzeichnis_wird_angelegt(self):
         from voice_assistant.services.speaker_state import write_current_speaker
 

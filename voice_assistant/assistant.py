@@ -6,6 +6,7 @@ import json
 import os
 import queue
 import re
+import threading
 import time
 import uuid
 from collections import deque
@@ -267,6 +268,39 @@ def _log_wake_event(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:  # Logging darf den Loop nie crashen
         print(f"⚠️  wake-log: {exc}")
+
+
+def _sprecher_nachtragen(turn_spk_q, turn_mood_q, wakeword: str | None, turn_epoch: float,
+                         nachher) -> None:
+    """Sprecher des Turns im Hintergrund abwarten, current_speaker.json
+    schreiben, dann nachher(verdict) — fuer Logs und Ueberwacher.
+
+    Fuer den Aktuator ist der Sprecher nur Protokoll: geschaltet und
+    angesagt wird mit Node-REDs fertigem Satz, ohne Sprecher-Stimme. Bis
+    2026-10-01 wartete der Aktuator trotzdem VOR dem Schalten auf die
+    Diarization (bis DIARIZATION_JOIN_TIMEOUT) — unsichtbar, solange Gemma
+    selbst ~0,5-1,8 s brauchte, seit Laya (80 ms) aber die groesste Zeile
+    im Turn: STT -> Schalten median 1,27 s im August, 1,6 s mit Laya, davon
+    ~1,5 s Sprecher (Jochen: "das war auch schon mal anders").
+
+    Ein Timeout ist NICHT "ein Fremder", sondern `ausgefallen` — sonst waere
+    die Sprecher-Schranke per Timeout aushebelbar (SPEAKER_STATE.md).
+    """
+    def lauf():
+        try:
+            verdict = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+        except queue.Empty:
+            verdict = SpeakerVerdict(None, STATUS_AUSGEFALLEN)
+        write_current_speaker(verdict, wakeword, turn_epoch=turn_epoch)
+        try:
+            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+        except queue.Empty:
+            pass
+        try:
+            nachher(verdict)
+        except Exception as exc:  # Protokoll darf den Assistenten nie stoeren
+            print(f"⚠️  Sprecher-Nachtrag: {exc}")
+    threading.Thread(target=lauf, daemon=True, name="sprecher-nachtrag").start()
 
 
 def _log_tor(meta: dict) -> None:
@@ -1717,37 +1751,22 @@ def run() -> None:
                             aktuator_schatten.schatten_starten(actuator, text, current_wakeword.bundle,
                                                                entscheidung)
                         if verdict == VERDICT_AUSFUEHRBAR:
-                            # Sprecher wird hier nur MITGESCHRIEBEN, nicht
-                            # angewandt: der Aktuator antwortet mit Node-REDs
-                            # fertigem Satz, eine Sprecher-Stimme braucht er
-                            # nicht. Für den Überwacher ist "wer hat das
-                            # gesagt" aber Teil des Bildes (späteres
-                            # Sprecher-Gate), also wegwerfen wäre schade.
-                            try:
-                                act_verdict = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
-                            except queue.Empty:
-                                # Nicht rechtzeitig gemessen ist NICHT dasselbe wie
-                                # "ein Fremder" — sonst wäre das Gate per Timeout
-                                # aushebelbar.
-                                act_verdict = SpeakerVerdict(None, STATUS_AUSGEFALLEN)
-                            write_current_speaker(act_verdict, current_wakeword.bundle)
-                            act_spk = act_verdict.name
-                            try:
-                                turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
-                            except queue.Empty:
-                                pass
+                            # Erst schalten und ansagen, den Sprecher danach im
+                            # Hintergrund ermitteln und protokollieren — er wird
+                            # nur MITGESCHRIEBEN (Node-RED liefert den fertigen
+                            # Satz, eine Sprecher-Stimme braucht es nicht).
+                            # Begruendung und Messung: _sprecher_nachtragen().
+                            turn_epoch = time.time()
                             _save_last_recording(recorded_chunks)
                             _flush_endpoint(text, ausgang="aktuator")
                             request_id = str(uuid.uuid4())
                             resp = actuator.execute(intent, request_id)
                             ziel = intent.get("ziel")
                             aktion = intent.get("aktion")
-                            _log_actuator_turn({
+                            akt_log = {
                                 "phase": "intent",
                                 "request_id": request_id,
                                 "transcript": text,
-                                "speaker": act_spk,
-                                "speaker_status": act_verdict.status,
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
                                 "klassifikator": akt_wer,
@@ -1758,7 +1777,7 @@ def run() -> None:
                                 "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
                                 "grund": (resp or {}).get("grund"),
                                 "gesprochen": (resp or {}).get("gesprochen"),
-                            })
+                            }
                             # Ein ausgefuehrtes Schaltkommando ist der stärkste
                             # freie Beleg, dass der Trigger ein echter Ruf war —
                             # ein Fehltrigger erzeugt so gut wie nie ein gültiges
@@ -1768,18 +1787,40 @@ def run() -> None:
                                 status=(resp or {}).get("status", "keine_antwort"),
                                 ziel=ziel, aktion=aktion, transcript=text,
                             )
-                            if overseer is not None:
-                                overseer.check_turn({
-                                    "ts": datetime.now().isoformat(timespec="seconds"),
+                            # Handshake: die Rückfrage-Spur braucht den Sprecher
+                            # später; der Nachtrag füllt ihn in dasselbe Dict.
+                            handshake = None
+                            if resp is not None and resp.get("status") == "zurueckgestellt":
+                                handshake = {
+                                    "intent": intent,
                                     "request_id": request_id,
                                     "transcript": text,
-                                    "speaker": act_spk,
-                                    "speaker_status": act_verdict.status,
-                                    "intent": intent,
-                                    "status": (resp or {}).get("status", "keine_antwort"),
-                                    "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
-                                    "gesprochen": (resp or {}).get("gesprochen"),
-                                })
+                                    "speaker": None,
+                                    "speaker_status": "ausstehend",
+                                }
+
+                            def _aktuator_nachtrag(v, akt_log=akt_log, handshake=handshake,
+                                                   request_id=request_id, text=text,
+                                                   intent=intent, resp=resp):
+                                _log_actuator_turn({**akt_log, "speaker": v.name,
+                                                    "speaker_status": v.status})
+                                if handshake is not None:
+                                    handshake["speaker"] = v.name
+                                    handshake["speaker_status"] = v.status
+                                if overseer is not None:
+                                    overseer.check_turn({
+                                        "ts": datetime.now().isoformat(timespec="seconds"),
+                                        "request_id": request_id,
+                                        "transcript": text,
+                                        "speaker": v.name,
+                                        "speaker_status": v.status,
+                                        "intent": intent,
+                                        "status": (resp or {}).get("status", "keine_antwort"),
+                                        "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
+                                        "gesprochen": (resp or {}).get("gesprochen"),
+                                    })
+                            _sprecher_nachtragen(turn_spk_q, turn_mood_q, current_wakeword.bundle,
+                                                 turn_epoch, _aktuator_nachtrag)
                             if resp is None:
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
@@ -1803,13 +1844,7 @@ def run() -> None:
                                     # Handshake: Rückfrage sprechen, direkt in
                                     # FOLLOWUP wechseln (nicht über PAUSE).
                                     speaker.speak(resp.get("gesprochen") or "Bist du sicher?")
-                                    pending_confirm = {
-                                        "intent": intent,
-                                        "request_id": request_id,
-                                        "transcript": text,
-                                        "speaker": act_spk,
-                                        "speaker_status": act_verdict.status,
-                                    }
+                                    pending_confirm = handshake
                                     audio_source.flush()
                                     wakeword.reset()
                                     if os.path.exists(FOLLOWUP_BEEP_PATH):
@@ -1839,16 +1874,9 @@ def run() -> None:
                             # Schaltbefehl erkannt, aber nicht sicher ausführbar.
                             # Weder ausführen noch an den Brain geben —
                             # nachfragen. Begründung: actuator.verdict().
-                            try:
-                                act_verdict = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
-                            except queue.Empty:
-                                act_verdict = SpeakerVerdict(None, STATUS_AUSGEFALLEN)
-                            write_current_speaker(act_verdict, current_wakeword.bundle)
-                            act_spk = act_verdict.name
-                            try:
-                                turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
-                            except queue.Empty:
-                                pass
+                            # Sprecher wie beim Schalten erst danach, im
+                            # Hintergrund — die Rückfrage soll nicht warten.
+                            turn_epoch = time.time()
                             _save_last_recording(recorded_chunks)
                             _flush_endpoint(text, ausgang="unklar")
                             print(
@@ -1856,12 +1884,10 @@ def run() -> None:
                                 f"({akt_wer} {akt_ms:.0f} ms) — {unklar_grund} "
                                 f"→ Rückfrage (nicht an den Brain)"
                             )
-                            _log_actuator_turn({
+                            unklar_log = {
                                 "phase": "abgewiesen",
                                 "request_id": str(uuid.uuid4()),
                                 "transcript": text,
-                                "speaker": act_spk,
-                                "speaker_status": act_verdict.status,
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
                                 "klassifikator": akt_wer,
@@ -1871,7 +1897,11 @@ def run() -> None:
                                 "status": "unklar",
                                 "grund": unklar_grund,
                                 "runde": unklar_round,
-                            })
+                            }
+                            _sprecher_nachtragen(
+                                turn_spk_q, turn_mood_q, current_wakeword.bundle, turn_epoch,
+                                lambda v, unklar_log=unklar_log: _log_actuator_turn(
+                                    {**unklar_log, "speaker": v.name, "speaker_status": v.status}))
                             _log_outcome("unklar", transcript=text, grund=unklar_grund)
                             if unklar_round < MAX_UNKLAR_ROUNDS:
                                 # Eine Rückfrage, dann Schluss. Zweimal nach

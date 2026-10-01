@@ -48,7 +48,8 @@ Daraus folgen die zwei Eigenschaften, die diese Datei haben muss:
   "status": "bekannt",
   "name": "jochen",
   "label": "jochen",
-  "wakeword": "hey_jarvis"
+  "wakeword": "hey_jarvis",
+  "turn_epoch": 1789760322.418
 }
 ```
 
@@ -60,6 +61,7 @@ Daraus folgen die zwei Eigenschaften, die diese Datei haben muss:
 | `name` | Sprechername, **nur** bei `bekannt` gesetzt, sonst `null` |
 | `label` | Anzeigeform, identisch mit dem `[Sprecher: …]` im Prompt |
 | `wakeword` | welches Wakeword den Turn ausgelöst hat (oder `null`) |
+| `turn_epoch` | Zeitpunkt des Turns, zu dem das Urteil gehört (Unix, ms-genau). `ts`/`epoch` sind der **Schreibzeitpunkt** — beim Schalten über den Aktuator bis ~2 s später, weil der Sprecher dort erst nach dem Schalten ermittelt wird. Ein älterer Turn überschreibt nie einen neueren (geprüft an `turn_epoch`). Leser rechnen das Alter weiter an `epoch` |
 
 Geschrieben wird atomar (`tmp` + `rename`) — ein Leser sieht nie eine halbe
 Datei. Das ist kein Luxus: eine abgeschnittene JSON-Datei würde beim Parsen

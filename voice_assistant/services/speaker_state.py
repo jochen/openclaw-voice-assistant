@@ -31,6 +31,7 @@ def write_current_speaker(
     verdict: SpeakerVerdict,
     wakeword: str | None = None,
     path: str = CURRENT_SPEAKER_PATH,
+    turn_epoch: float | None = None,
 ) -> None:
     """Das Urteil des laufenden Turns festhalten (atomar, best effort).
 
@@ -41,7 +42,21 @@ def write_current_speaker(
     Fehler werden geschluckt und gemeldet: ein kaputter Schreibvorgang darf den
     Sprach-Turn nicht abbrechen. Fuer den Leser ist eine veraltete Datei
     ohnehin kein Freibrief — er prueft das Alter selbst.
+
+    `turn_epoch` ist der Zeitpunkt des Turns, zu dem das Urteil gehoert. Der
+    Aktuator schreibt seit 2026-10-01 NACH dem Schalten, im Hintergrund — ein
+    spaeter Schreibvorgang darf dann nicht das Urteil eines neueren Turns
+    ueberschreiben. Steht in der Datei schon ein juengerer Turn, wird nichts
+    geschrieben. Ohne Angabe gilt "jetzt".
     """
+    turn_epoch = time.time() if turn_epoch is None else turn_epoch
+    try:
+        with open(path, encoding="utf-8") as f:
+            vorher = json.load(f).get("turn_epoch")
+        if vorher is not None and float(vorher) > turn_epoch:
+            return
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     payload = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "epoch": int(time.time()),
@@ -49,6 +64,7 @@ def write_current_speaker(
         "name": verdict.name,
         "label": verdict.label,
         "wakeword": wakeword,
+        "turn_epoch": round(turn_epoch, 3),
     }
     try:
         os.makedirs(os.path.dirname(path) or VOICE_DIR, exist_ok=True)
