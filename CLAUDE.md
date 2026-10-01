@@ -171,6 +171,10 @@ Sätze): Gemma 315/11/**4 FALSCH**, 380 ms; Laya 313/16/**1 FALSCH**, 78 ms.
 Die Entscheidung fällt auf den Schatten-Turns: `tools/aktuator_vergleich.py
 --schatten`. Neue Ziele in den capabilities = neu erzeugen, neu trainieren,
 sonst fragt der Schatten mit einer anderen Zielliste als der trainierten.
+**Wer das Training anfasst oder automatisiert, liest `LAYA_TRAINING.md`** —
+Ablauf, die zwölf Fallen des ersten Laufs (OOM, torch-CPU-Fassung, HTTP 500
+ohne gcc, Ausfälle als Ergebnis gezählt, …) und was eine Automatisierung
+davon abfangen muss. Dort auch der Stand des Schattenvergleichs.
 
 **Die Klassifikation antwortet in kompaktem JSON** (GBNF-Grammatik,
 `_intent_grammatik`) statt über `response_format`: das ließ Gemma Leerraum

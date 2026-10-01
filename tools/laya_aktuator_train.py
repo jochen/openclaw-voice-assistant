@@ -68,6 +68,10 @@ actuator_tor_test.py. AUROC haengt von ihnen nicht ab.
 
 Messreihe: im Docstring von tools/actuator_tor_test.py (Tor) und
 tools/aktuator_vergleich.py (ganze Kette).
+
+Der ganze Lauf — Daten, Training, Deploy, Pruefung — und alles, was beim
+ersten Mal schiefging, steht in LAYA_TRAINING.md. Das ist die Vorlage fuer
+die Automatisierung; dieses Skript ist nur ein Schritt davon.
 """
 
 from __future__ import annotations

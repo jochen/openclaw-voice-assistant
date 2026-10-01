@@ -56,6 +56,18 @@ Messreihe (Test-Set, 330 gezaehlte Saetze; gilt fuer capabilities UND Checkpoint
                 Kompositum. Naechster Hebel im Generator, nicht im Modell.
                 VORBEHALT wie beim Tor: die Vorlagen entstanden nach dem
                 Lesen dieses Sets. Belastbar ist der Schattenbetrieb.
+
+Schatten (--schatten), Turns NACH dem Trainingstag
+-------------------------------------------------
+
+    2026-10-01  aktuator-v1, 2026-09-29 00:37 bis 2026-10-01 18:36:
+                15 Turns, 14 gleich; alle 11 ausgefuehrten Kommandos
+                identisch (inkl. Wert), keiner hat falsch geschaltet.
+                Latenz je Kommando: Gemma median 1,8 s (Tor + classify,
+                Vega, aus actuator_tor.log), Laya 92 ms.
+                Abweichung: "Lohnsimmerrolle auf 50 Prozent" — Gemma
+                Rueckfrage, Laya Brain (ziel keins). Zu wenig zum
+                Entscheiden; Einordnung in LAYA_TRAINING.md, "Stand".
 """
 
 from __future__ import annotations
