@@ -673,6 +673,22 @@ Abendlicht aus", erreichten je genau EINEN Frame über der Schwelle (0,83 und
 ausgelöst. Das wären schon zwei belegte echte Rufe in der Klasse, für die
 Kriterium 1 höchstens einen erlaubt. Gezählt wird bei der Auswertung.
 
+**Zwischenzählung 2026-10-01 22:10, VORLÄUFIG (nach STT-Text, nicht nach
+Ohr):** seit dem Abschalten 18 Ein-Frame-Near-Misses ≥ 0,75 — 3 davon echte
+Rufe (30.09. 07:18 ×2 mit 0,83/0,90; 01.10. 22:08 mit 0,96, „Gastau, schalte
+das Tischlicht aus“), 15 vermutlich Fehltrigger (Fernsehen, Gespräch). Zurück
+auf 0,75 hieße also +3 Rufe gegen +15 falsche Turns in ~6,5 Tagen. Alle drei
+Rufe kamen beim nächsten Versuch binnen Sekunden durch. Nach den Kriterien
+oben: weder 1 (≤ 1 echter Ruf) noch 2 (mehr echte als falsche) — Fall 3, und
+der spricht fürs Ausgeschaltet-Lassen.
+
+Derselbe Abend zeigte, wo der größere Verlust liegt: „Gaston. Gaston.“ und
+„Gaston? Gaston?“ — einzeln, mit Pause gesprochen — kamen auf 0,65 und 0,42.
+Das ist keine Gate-Frage, sondern eine des Modells. Die Near-Miss-Mitschnitte
+(`*_nearmiss_folge.wav`, `nearmiss_shadow.jsonl`) enthalten genau diese Rufe,
+näher am Ruf als die Marker-Clips (die enden beim Tastendruck) — Material für
+die nächste Trainingsrunde.
+
 Wichtig für die v3-Wette: deren Kriterium 2 (Verlustquote) wird ab heute
 durch diese Änderung mitbewegt — Zeiträume vor und nach dem 25.09. getrennt
 lesen. Offline nicht messbar (der Korpus-Scorer findet über mehrere
