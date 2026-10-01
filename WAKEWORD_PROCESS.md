@@ -639,6 +639,53 @@ sichern` hat am 2026-09-20 nichts Neues gefunden (alles Haltbare ist im Korpus),
 die Erosion ist also Altlast von vor der Schutzregel — aber sie verkleinert
 jede künftige Messbasis dauerhaft.
 
+### Bilanz der Beobachtungswette v3 (2026-10-01) — nicht bestanden, aber kein Rollback
+
+Nach 15 Tagen statt der angepeilten drei Wochen, weil die Kriterien schon klar
+ausfallen. Zeiträume getrennt, weil am 2026-09-25 21:38 der 1-Frame-Pfad
+abgeschaltet wurde (siehe Wette unten). Methode wie in der Zwischenlesung:
+`tools/wake_triage.py --seit 16 --auch-trigger`, Labels aus
+`wake_triage.jsonl`, Verlustquote = Near-Misses mit Selbst-Label
+„wiederholt“ / (diese + echte Trigger).
+
+| | vorher | A 16.–25.09. (1-Frame an) | B 25.09.–01.10. (1-Frame aus) |
+|---|---|---|---|
+| 1. Fehltrigger/Tag | 1,16 (Zwischenlesung: 1,33) | **2,26** | **1,99** |
+| 2. Verlustquote | 31 % (5/16) | **47 %** (9/19; mit STT-Labels 60 %) | **35 %** (18/51; 37 %) |
+| 3. 1-Frame-Pfad | — | 0 echt / 12 Fehltrigger | abgeschaltet |
+
+**Nach den eigenen Regeln nicht bestanden:** Kriterium 1 verlangte < ~0,6
+Fehltrigger/Tag — die Rate ist eher gestiegen. Kriterium 2 verlangte, dass
+die Verlustquote fällt; „steigt sie → Rollback“.
+
+**Warum trotzdem kein Rollback — direkter Vergleich v2/v3 (2026-10-01):**
+alle Korpus-Clips seit dem v3-Deploy (16.09. 14:37), für BEIDE Modelle
+unbekannt, je mit dem eigenen Manifest gescort (v2 aus `daf5518^`):
+
+| 62 echte Rufe | ausgelöst |
+|---|---|
+| v2 | 47 (76 %) |
+| v3 | 52 (84 %) |
+
+14 Rufe gehen verschieden aus: 9 fängt nur v3, 4 nur v2 (McNemar nicht
+signifikant). Drei der vier v2-Treffer sind vom lauten Abend des 01.10.
+(Pegel-Median ~10× höher als am 29.09.) — Hinweis, kein Befund. Für die
+Fehltrigger-Seite gibt der Korpus nichts her: seit dem 16.09. nur 5 hart
+gelabelte Negative (die STT-gelabelten werden nicht gesichert).
+
+**Einschränkungen der Wette selbst:** die Basis „31 %“ stammt aus 16
+Rufversuchen; die Fehltrigger sind fast alle STT-gelabelt (hart: 3 in A,
+1 in B); die Nutzung hat sich geändert (B: fünfmal so viele echte Rufe/Tag,
+Aktuator-Tests, laute Abende).
+
+**Lesart:** v3 ist auf frischen Rufen nicht schlechter als v2, eher besser —
+aber es hat im Betrieb nicht geliefert, was der Offline-Gewinn versprach.
+Die Wette sagt für diesen Fall „zurück zu Schritt 4“: Runde 4 mit den echten
+Fehlschlägen seit v3 (Near-Miss-Mitschnitte, Marker-Clips, siehe Nachtrag
+„zum ersten Mal verpasste Rufe im Nenner“), und vorher die Fehltrigger-Seite
+belastbarer machen (Ohr-Labels für eine Stichprobe der STT-„rauschen“).
+Entscheidung über Merge von `feature/wakeword-nachtraining`: Jochen.
+
 ### Wette 1-Frame-Pfad aus (2026-09-25, formuliert VOR den Daten)
 
 `min_peak_single` 0.75 → 0.0, vorzeitig vor dem Ende der v3-Wette. Stand beim
