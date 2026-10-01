@@ -183,6 +183,12 @@ def als_intent(u: LayaUrteil, digest: dict, schwelle: float = 0.5) -> dict | Non
         return None
     if u.p_ja < schwelle or u.ziel in (None, KEIN_ZIEL, KEIN_BEFEHL):
         return {"ist_kommando": False, "aktion": None, "ziel": None, "wert": None, "einheit": None}
+    if u.aktion == "setzen" and u.wert is None:
+        # "setzen" ohne Zahl im Satz ("Rollo etwas nach unten"): Laya kann
+        # keine Werte, und raten waere schlimmer als fragen. aktion None ->
+        # verdict() sagt UNKLAR ("keine Aktion zu ...") -> Rueckfrage.
+        # Vorher ging das als ausfuehrbar durch (Messung v3, 2026-10-01).
+        return {"ist_kommando": True, "aktion": None, "ziel": u.ziel, "wert": None, "einheit": None}
     einheit = ((digest.get(u.ziel) or {}).get("wert") or {}).get("einheit") if u.wert is not None else None
     return {"ist_kommando": True, "aktion": u.aktion, "ziel": u.ziel,
             "wert": u.wert, "einheit": einheit}

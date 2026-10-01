@@ -504,19 +504,24 @@ for "yes" is logged but does not decide — for a small LLM it is not
 calibrated. The prompt is German and installation-specific
 (`actuator.tor_prompt`); measure before you rely on it in your language.
 
-**Optional shadow classifier (`actuator.schatten_url`).** A second classifier
-can judge every sentence without ever switching anything: it runs after the
-real decision in its own thread, its result goes through the same check
-(`verdict()`), and it is logged next to the real one in
-`actuator_schatten.log`. That way a candidate is measured on real sentences
-before it is allowed to decide. Built in is
-[Laya](https://github.com/NandhaKishorM/laya) via `laya-serve`: an encoder with
-a decision head that answers gate, target and action in one pass (a simple
-parser reads the value from the sentence). It is not usable without
-fine-tuning — it is trained on sentences generated from your own capabilities
+**Optional second classifier: Laya (`actuator.laya_url`, `actuator.klassifikator`).**
+[Laya](https://github.com/NandhaKishorM/laya) is an encoder with a decision
+head (no text) that answers gate, target and action in one pass via
+`laya-serve`; a simple parser reads the value from the sentence. Its result
+goes through the same check (`verdict()`) as the small LLM's.
+`klassifikator` sets who decides (`gemma`, the default, or `laya`); the other
+one judges in the shadow, never switches, and is logged next to it in
+`actuator_schatten.log` — so a candidate is measured on real sentences before
+it is allowed to decide. If Laya decides and does not answer (service
+stopped, timeout `laya_timeout`), the LLM decides in the same turn. With
+`laya_rueckfrage` (on by default) the assistant asks back when Laya sees an
+intent to switch but no device — instead of handing the sentence to a backend
+that would have to guess. Laya is not usable without fine-tuning: it is
+trained on sentences generated from your own capabilities
 (`tools/tor_trainset.py`, `tools/laya_aktuator_train.py`, separate venv with
-torch). A checkpoint belongs to exactly one target list; when targets change,
-retrain. The generator's templates are German.
+torch; procedure and pitfalls in `LAYA_TRAINING.md`). A checkpoint belongs to
+exactly one target list; when targets change, retrain. The generator's
+templates are German.
 
 **Keep the model's output short.** The classifier answers in compact JSON,
 enforced by a GBNF grammar. With a JSON schema alone the model was free to
@@ -989,8 +994,8 @@ archived wake/record/near-miss WAVs).
   ```bash
   ow-venv/bin/python -m tools.actuator_tor_test
   ```
-- `aktuator_vergleich` — puts the real actuator chain and the shadow
-  classifier side by side: on the labelled set (correct / missed / WRONG per
+- `aktuator_vergleich` — puts both classifier chains (LLM and Laya) side by
+  side: on the labelled set (correct / missed / WRONG per
   chain) or on the shadow log (agreement, disagreements to judge).
   ```bash
   ow-venv/bin/python -m tools.aktuator_vergleich --schatten

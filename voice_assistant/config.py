@@ -256,19 +256,25 @@ class ActuatorConfig:
     tor_enabled: bool = False
     tor_prompt: str = _DEFAULT_ACTUATOR_TOR_PROMPT
     tor_gruppen_regel: str = _DEFAULT_ACTUATOR_TOR_GRUPPEN_REGEL
-    # Schattenbetrieb: ein zweiter Klassifikator (Laya, laya-serve unter
-    # dieser URL) beantwortet jeden Satz, den der Aktuator sieht, mit — Tor,
-    # Ziel, Aktion, Wert — und schreibt sein Ergebnis neben das der echten
-    # Kette nach actuator_schatten.log. Er entscheidet NICHTS und schaltet
-    # nie; er laeuft in einem eigenen Thread, nach der echten Entscheidung.
-    # Leer = aus. Siehe voice_assistant/services/laya_intent.py und
-    # tools/aktuator_vergleich.py.
-    schatten_url: str = ""
-    schatten_timeout: float = 5.0
-    # Ab welchem P(ja) der Schatten "schalten" sagt. Nur fuer die Zeile im
-    # Log — P(ja) steht ohnehin daneben, eine andere Schwelle laesst sich
-    # nachtraeglich anlegen.
-    schatten_schwelle: float = 0.5
+    # Zweiter Klassifikator: Laya (laya-serve unter laya_url) beantwortet
+    # Tor, Ziel und Aktion in einem Durchlauf. Leer = kein Laya; dann
+    # entscheidet Gemma allein wie vor dem Einbau. Siehe
+    # voice_assistant/services/aktuator_schatten.py und laya_intent.py.
+    laya_url: str = ""
+    # Als Entscheider muss Laya schnell sein (gemessen ~90 ms): nach diesem
+    # Timeout entscheidet Gemma im selben Turn.
+    laya_timeout: float = 2.0
+    laya_schwelle: float = 0.5
+    # Tor ja, Geraet unklar -> Rueckfrage statt Brain (Entscheidung
+    # 2026-10-01, Begruendung in aktuator_schatten.py).
+    laya_rueckfrage: bool = True
+    # Wer entscheidet: "gemma" (Default — ohne den Eintrag wie vorher) oder
+    # "laya". Mit "laya" ist Gemma der Rueckfall, wenn Laya nicht antwortet.
+    klassifikator: str = "gemma"
+    # Die nicht entscheidende Kette im Schatten mitlaufen lassen
+    # (actuator_schatten.log, tools/aktuator_vergleich.py --schatten).
+    # Entscheidet Gemma, laeuft Laya mit, sobald laya_url gesetzt ist.
+    schatten: bool = True
 
 
 @dataclass
@@ -717,10 +723,21 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         tor_enabled=bool(actuator_raw.get("tor_enabled", _dact.tor_enabled)),
         tor_prompt=str(actuator_raw.get("tor_prompt") or _dact.tor_prompt),
         tor_gruppen_regel=str(actuator_raw.get("tor_gruppen_regel") or _dact.tor_gruppen_regel),
-        schatten_url=str(actuator_raw.get("schatten_url") or _dact.schatten_url),
-        schatten_timeout=float(actuator_raw.get("schatten_timeout", _dact.schatten_timeout)),
-        schatten_schwelle=float(actuator_raw.get("schatten_schwelle", _dact.schatten_schwelle)),
+        # schatten_* sind die Namen vom 2026-09-29 (da war Laya nur Schatten)
+        laya_url=str(actuator_raw.get("laya_url") or actuator_raw.get("schatten_url") or _dact.laya_url),
+        laya_timeout=float(actuator_raw.get("laya_timeout", _dact.laya_timeout)),
+        laya_schwelle=float(actuator_raw.get("laya_schwelle",
+                                             actuator_raw.get("schatten_schwelle", _dact.laya_schwelle))),
+        laya_rueckfrage=bool(actuator_raw.get("laya_rueckfrage", _dact.laya_rueckfrage)),
+        klassifikator=str(actuator_raw.get("klassifikator") or _dact.klassifikator),
+        schatten=bool(actuator_raw.get("schatten", _dact.schatten)),
     )
+    if actuator.klassifikator not in ("gemma", "laya"):
+        print(f"⚠️  actuator.klassifikator '{actuator.klassifikator}' unbekannt — Gemma entscheidet")
+        actuator.klassifikator = "gemma"
+    if actuator.klassifikator == "laya" and not actuator.laya_url:
+        print("⚠️  actuator.klassifikator laya, aber laya_url leer — Gemma entscheidet")
+        actuator.klassifikator = "gemma"
 
     # --- Überwacher: separater Block, analog zu actuator ---
     watcher_raw = raw.get("watcher") or {}

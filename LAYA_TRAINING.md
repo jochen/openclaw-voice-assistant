@@ -323,3 +323,37 @@ jeder Satz die lange ziel-Sequenz trägt. Beide gegen capabilities
 - **Entscheidung:** bei „getrennt“ bleiben. Ein einzelner Lauf je Variante;
   Unterschiede von 2–3 Sätzen liegen im Rauschen, der Abstand bei „0
   FALSCH“ (103 gegen 77) nicht.
+
+**aktuator-v3 (2026-10-01 abends).** Neu trainiert für capabilities
+`e93fcc67` (neues Ziel `fernsehelektronik`), mit getrennten Schreibvarianten
+der Namen im Generator (Nr. 10). Training mit gestopptem `laya` und `ser` —
+Speaches lief diesmal ungestört mit. Gleiche Daten sonst, 11 min.
+
+| Test-Set, ohne Rückfrage-Regel | richtig / verpasst / FALSCH |
+|---|---|
+| v1 (kennt das neue Ziel nicht) | 310 / 19 / 1 |
+| v3 | 306 / 20 / 4 |
+| v3 + „setzen ohne Zahl → Rückfrage“ | 306 / 21 / 3 |
+| Gemma (live) | 315 / 11 / 4 |
+
+- Die getrennten Namen wirken: beide „rosa Zimmer Rollo“ jetzt richtig, das
+  neue Ziel wird erkannt („Zeug hinterm Fernseher“).
+- Dafür verloren: vier verhörte Formen, die v1 noch traf („Wohnzimmerwallo“,
+  „Türboden“, „schau dir das Abendlicht an“). Ob das Rauschen zwischen zwei
+  Läufen ist oder ein echter Tausch, zeigt erst ein zweiter Lauf mit anderem
+  Seed — **die Streuung zwischen Läufen ist bisher nicht gemessen**, und
+  Unterschiede von 3–4 Sätzen sind ohne sie nicht deutbar.
+- Von den 3 FALSCH ist einer vermutlich ein Label-Fehler („Rollos überall
+  auf“ → `rollos_ganzes_haus`, dessen Name genau so lautet), einer teilt v1
+  („Mondzimmer“), einer ist geraten („Tyrolo“ → `tuerrollo`).
+- `setzen` ohne Zahl im Satz war bei Laya ausführbar — jetzt Rückfrage
+  (`laya_intent.als_intent`).
+
+**Rollentausch vorbereitet, nicht geschaltet.** Jochen will Laya als
+Entscheider und Gemma als Schatten. Der Code kann es
+(`klassifikator: laya`, Gemma als Rückfall bei Ausfall). Gegen Gemma hat v3
+gleich viele FALSCH (3–4) und mehr Verpasste (meist harmlos: Rückfrage oder
+Brain), ist aber ~5x schneller als Gemma auf dem Test-Set (72 gegen 379 ms)
+und ~20x im Betrieb. Die selbst gesetzte Schranke („nicht schlechter als der
+laufende Checkpoint“, also v1) hat v3 nicht bestanden — Entscheidung bei
+Jochen.

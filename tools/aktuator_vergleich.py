@@ -15,8 +15,10 @@ denselben Funktionen:
     Laya    laya_intent.frage_laya() -> als_intent() -> _mehrzahl_gruppe()
             -> verdict()
 
-Gemma laeuft genau wie live (tor_enabled des Profils). Laya fragt den
-Dienst aus actuator.schatten_url.
+Beide Ketten sind die aus voice_assistant/services/aktuator_schatten.py, also
+genau die des Betriebs — samt Laya-Rueckfrage-Regel (abschaltbar mit
+--ohne-rueckfrage, fuer Zahlen von vor dem 2026-10-01). Laya fragt den
+Dienst aus actuator.laya_url.
 
 Test-Set (testsets/actuator_tor.jsonl, siehe actuator_tor_test.py): ein
 Fall ist
@@ -88,31 +90,32 @@ from voice_assistant.config import ACTUATOR_SCHATTEN_LOG_PATH, load_profile  # n
 from voice_assistant.services.actuator import (  # noqa: E402
     VERDICT_AUSFUEHRBAR, Actuator,
 )
+from voice_assistant.services import aktuator_schatten  # noqa: E402
 from voice_assistant.services.aktuator_schatten import ausgang  # noqa: E402
-from voice_assistant.services.laya_intent import als_intent, frage_laya  # noqa: E402
+from voice_assistant.services.laya_intent import frage_laya  # noqa: E402
 
 _TESTSET = os.path.join(_REPO, "testsets", "actuator_tor.jsonl")
 
 
-def kette_gemma(akt: Actuator, satz: str) -> tuple[dict | None, str, float]:
-    import time
-    t0 = time.time()
-    if akt.cfg.tor_enabled:
-        u = akt.tor(satz)
-        if not u.ja:
-            return {"ist_kommando": False}, "kein_kommando", (time.time() - t0) * 1000
-    intent = akt.classify(satz)
-    v, _ = akt.verdict(intent, satz)
-    return intent, v, (time.time() - t0) * 1000
+def kette_gemma(akt: Actuator, satz: str):
+    e = aktuator_schatten.kette_gemma(akt, satz)
+    return e.intent, e.verdict, e.ms
 
 
 def kette_laya(akt: Actuator, url: str, satz: str, schwelle: float, variante: str = "getrennt"):
-    u = frage_laya(url, satz, akt.digest or {}, timeout=10, variante=variante)
-    intent = als_intent(u, akt.digest or {}, schwelle)
-    if intent is not None:
-        intent = akt._mehrzahl_gruppe(satz, intent, still=True)
-    v, _ = akt.verdict(intent, satz)
-    return intent, v, u
+    """Dieselbe Kette wie im Betrieb (aktuator_schatten.kette_laya), samt
+    Rueckfrage-Regel, sofern actuator.laya_rueckfrage gesetzt ist."""
+    e = aktuator_schatten.kette_laya(akt, satz, timeout=10, variante=variante)
+    return e.intent, e.verdict, _Roh(e.laya)
+
+
+class _Roh:
+    """Die Rohantwort, wie testset() sie erwartet (ms + als_dict)."""
+    def __init__(self, d: dict) -> None:
+        self._d, self.ms = d, d.get("ms", 0)
+
+    def als_dict(self) -> dict:
+        return self._d
 
 
 def bewerte(f: dict, intent: dict | None, verdict: str) -> str:
@@ -229,12 +232,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--schatten", action="store_true", help="Schatten-Log statt Test-Set auswerten")
     ap.add_argument("--seit", help="nur Schatten-Turns ab diesem Zeitstempel (ISO)")
-    ap.add_argument("--laya-url", help="Default: actuator.schatten_url des Profils")
+    ap.add_argument("--laya-url", help="Default: actuator.laya_url des Profils")
     ap.add_argument("--schwelle", type=float, help="P(ja) ab der Laya schaltet (Default: Profil)")
     ap.add_argument("--datei", default=_TESTSET)
     ap.add_argument("--json", help="Ergebnis je Satz hierhin schreiben")
     ap.add_argument("--variante", default="getrennt",
                     help="Fragesatz des Laya-Checkpoints (laya_intent.VARIANTEN)")
+    ap.add_argument("--ohne-rueckfrage", action="store_true",
+                    help="Laya ohne Rueckfrage-Regel (wie vor dem 2026-10-01)")
     ap.add_argument("--nur-laya", action="store_true",
                     help="Gemma-Kette auslassen (Vergleich zweier Laya-Checkpoints)")
     args = ap.parse_args()
@@ -243,15 +248,20 @@ def main() -> int:
 
     profil = load_profile()
     cfg = profil.actuator
-    url = args.laya_url or cfg.schatten_url
+    url = args.laya_url or cfg.laya_url
     if not cfg.enabled or not url:
-        print("Aktuator aus oder keine Laya-URL (actuator.schatten_url / --laya-url).")
+        print("Aktuator aus oder keine Laya-URL (actuator.laya_url / --laya-url).")
         return 2
+    cfg.laya_url = url
+    if args.ohne_rueckfrage:
+        cfg.laya_rueckfrage = False
+    if args.schwelle is not None:
+        cfg.laya_schwelle = args.schwelle
     akt = Actuator(cfg)
     if not akt.refresh():
         print("capabilities-refresh fehlgeschlagen — laeuft die Gegenstelle?")
         return 2
-    return testset(akt, url, args.schwelle if args.schwelle is not None else cfg.schatten_schwelle,
+    return testset(akt, url, cfg.laya_schwelle,
                    args.datei, args.json, args.variante, not args.nur_laya)
 
 

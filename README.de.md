@@ -516,18 +516,23 @@ Modells für „ja" wird mitgeloggt, entscheidet aber nicht — bei einem kleine
 LLM ist sie nicht kalibriert. Der Prompt ist deutsch und installationsbezogen
 (`actuator.tor_prompt`); wer ihn in einer anderen Sprache nutzt, misst neu.
 
-**Optionaler Schatten-Klassifikator (`actuator.schatten_url`).** Ein zweiter
-Klassifikator kann jeden Satz mitbeurteilen, ohne je zu schalten: er läuft
-nach der echten Entscheidung in einem eigenen Thread, sein Ergebnis geht
-durch dieselbe Prüfung (`verdict()`) und landet neben dem echten in
-`actuator_schatten.log`. So lässt sich ein Kandidat auf echten Sätzen messen,
-bevor er entscheiden darf. Eingebaut ist [Laya](https://github.com/NandhaKishorM/laya)
-über `laya-serve`: ein Encoder mit Entscheidungskopf, der Tor, Ziel und Aktion
-in einem Durchlauf beantwortet (den Wert liest ein einfacher Parser aus dem
-Satz). Ohne Feinabstimmung taugt er dafür nicht — trainiert wird er auf Sätze,
-die aus den eigenen capabilities erzeugt werden (`tools/tor_trainset.py`,
-`tools/laya_aktuator_train.py`, eigener venv mit torch). Der Checkpoint gehört
-zu genau einer Zielliste; ändern sich die Ziele, wird neu trainiert. Die
+**Optionaler zweiter Klassifikator: Laya (`actuator.laya_url`, `actuator.klassifikator`).**
+[Laya](https://github.com/NandhaKishorM/laya) ist ein Encoder mit
+Entscheidungskopf (kein Text), der über `laya-serve` Tor, Ziel und Aktion in
+einem Durchlauf beantwortet; den Wert liest ein einfacher Parser aus dem Satz.
+Sein Ergebnis läuft durch dieselbe Prüfung (`verdict()`) wie das des kleinen
+LLM. `klassifikator` legt fest, wer entscheidet (`gemma`, Default, oder
+`laya`); der andere urteilt im Schatten mit, schaltet nie und landet daneben
+in `actuator_schatten.log` — so lässt sich ein Kandidat auf echten Sätzen
+messen, bevor er entscheiden darf. Entscheidet Laya und antwortet nicht
+(Dienst gestoppt, Timeout `laya_timeout`), entscheidet das LLM im selben
+Turn. Mit `laya_rueckfrage` (Default an) fragt der Assistent nach, wenn Laya
+eine Schaltabsicht erkennt, aber kein Gerät — statt den Satz an ein Backend
+zu geben, das raten müsste. Ohne Feinabstimmung taugt Laya dafür nicht:
+trainiert wird auf Sätze, die aus den eigenen capabilities erzeugt werden
+(`tools/tor_trainset.py`, `tools/laya_aktuator_train.py`, eigener venv mit
+torch; Ablauf und Fallen in `LAYA_TRAINING.md`). Ein Checkpoint gehört zu
+genau einer Zielliste; ändern sich die Ziele, wird neu trainiert. Die
 Vorlagen des Generators sind deutsch.
 
 **Die Ausgabe des Modells kurz halten.** Die Klassifikation antwortet in
@@ -1011,8 +1016,8 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
   ```bash
   ow-venv/bin/python -m tools.actuator_tor_test
   ```
-- `aktuator_vergleich` — legt die echte Aktuator-Kette und den
-  Schatten-Klassifikator nebeneinander: auf dem gelabelten Set (richtig /
+- `aktuator_vergleich` — legt beide Klassifikator-Ketten (LLM und Laya)
+  nebeneinander: auf dem gelabelten Set (richtig /
   verpasst / FALSCH je Kette) oder auf dem Schatten-Log (Übereinstimmung,
   Abweichungen zum Beurteilen).
   ```bash

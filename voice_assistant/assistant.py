@@ -853,7 +853,7 @@ def run() -> None:
             if actuator.ready:
                 n_ziele = len(actuator.digest or {})
                 print(f"🔌 Aktuator aktiv — {n_ziele} Ziele, Version {actuator.version}")
-                if profile.actuator.schatten_url:
+                if profile.actuator.laya_url:
                     aktuator_schatten.aufwaermen(actuator)
             else:
                 print("⚠️  Aktuator aktiviert, aber initialer refresh() fehlgeschlagen — startet ohne Ziel-Vokabular, Poll/MQTT versuchen es weiter")
@@ -1683,16 +1683,18 @@ def run() -> None:
                         intent = None
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         aktuator_gesperrt = followup_round > 0 or bool(war_bargein)
-                        # Torfrage (tor_enabled): erst "will hier jemand
-                        # schalten?", dann erst welches Ziel. Nein oder Ausfall
-                        # -> Brain. Jede Entscheidung landet in actuator_tor.log.
+                        # Klassifikation: entscheidet Gemma (Torfrage + classify)
+                        # oder Laya (mit Gemma als Rueckfall), siehe
+                        # actuator.klassifikator und services/aktuator_schatten.py.
+                        # Gemmas Torfrage landet weiter in actuator_tor.log.
                         tor_urteil = None
+                        akt_wer, akt_ms = "gemma", 0.0
                         if actuator is not None and actuator.ready and not aktuator_gesperrt:
-                            if actuator.cfg.tor_enabled:
-                                tor_urteil = actuator.tor(text)
-                            if tor_urteil is None or tor_urteil.ja:
-                                intent = actuator.classify(text)
-                                verdict, unklar_grund = actuator.verdict(intent, text)
+                            entscheidung = aktuator_schatten.entscheiden(actuator, text)
+                            intent, verdict, unklar_grund = (entscheidung.intent, entscheidung.verdict,
+                                                             entscheidung.grund)
+                            tor_urteil = entscheidung.tor_urteil
+                            akt_wer, akt_ms = entscheidung.wer, entscheidung.ms
                             if tor_urteil is not None:
                                 _log_tor({
                                     "transcript": text,
@@ -1701,16 +1703,14 @@ def run() -> None:
                                     "p_ja": None if tor_urteil.p_ja is None else round(tor_urteil.p_ja, 4),
                                     "tor_ms": round(tor_urteil.ms),
                                     "fehler": tor_urteil.fehler,
-                                    "intent": intent,
+                                    "intent": intent if tor_urteil.ja else None,
                                     "verdict": verdict if tor_urteil.ja else None,
                                     "classify_ms": round(actuator.last_latency_ms) if tor_urteil.ja else None,
                                 })
-                            if actuator.cfg.schatten_url:
-                                # Zweiter Klassifikator urteilt mit, NACH der
-                                # echten Entscheidung und im eigenen Thread —
-                                # schaltet nie. Siehe services/aktuator_schatten.py.
-                                aktuator_schatten.starten(actuator, text, current_wakeword.bundle,
-                                                          tor_urteil, intent, verdict)
+                            # Die andere Kette urteilt mit, NACH der echten
+                            # Entscheidung und im eigenen Thread — schaltet nie.
+                            aktuator_schatten.schatten_starten(actuator, text, current_wakeword.bundle,
+                                                               entscheidung)
                         if verdict == VERDICT_AUSFUEHRBAR:
                             # Sprecher wird hier nur MITGESCHRIEBEN, nicht
                             # angewandt: der Aktuator antwortet mit Node-REDs
@@ -1745,7 +1745,8 @@ def run() -> None:
                                 "speaker_status": act_verdict.status,
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
-                                "latency_ms": round(actuator.last_latency_ms),
+                                "klassifikator": akt_wer,
+                                "latency_ms": round(akt_ms),
                                 "tor_p_ja": None if tor_urteil is None or tor_urteil.p_ja is None else round(tor_urteil.p_ja, 4),
                                 "tor_ms": None if tor_urteil is None else round(tor_urteil.ms),
                                 "status": (resp or {}).get("status", "keine_antwort"),
@@ -1777,7 +1778,7 @@ def run() -> None:
                             if resp is None:
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
-                                    f"({actuator.last_latency_ms:.0f} ms) → keine Antwort"
+                                    f"({akt_wer} {akt_ms:.0f} ms) → keine Antwort"
                                 )
                                 speaker.speak("Die Haussteuerung antwortet nicht.")
                                 leds.set_phase(LED_ERROR)
@@ -1791,7 +1792,7 @@ def run() -> None:
                                             if tor_urteil is not None else "")
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: {ziel}/{aktion} "
-                                    f"({actuator.last_latency_ms:.0f} ms{tor_info}) → {status}"
+                                    f"({akt_wer} {akt_ms:.0f} ms{tor_info}) → {status}"
                                 )
                                 if status == "zurueckgestellt":
                                     # Handshake: Rückfrage sprechen, direkt in
@@ -1847,7 +1848,7 @@ def run() -> None:
                             _flush_endpoint(text, ausgang="unklar")
                             print(
                                 f"[{now:.1f}s] 🔌 Aktuator: unklar "
-                                f"({actuator.last_latency_ms:.0f} ms) — {unklar_grund} "
+                                f"({akt_wer} {akt_ms:.0f} ms) — {unklar_grund} "
                                 f"→ Rückfrage (nicht an den Brain)"
                             )
                             _log_actuator_turn({
@@ -1858,7 +1859,8 @@ def run() -> None:
                                 "speaker_status": act_verdict.status,
                                 "wakeword": current_wakeword.bundle,
                                 "intent": intent,
-                                "latency_ms": round(actuator.last_latency_ms),
+                                "klassifikator": akt_wer,
+                                "latency_ms": round(akt_ms),
                                 "tor_p_ja": None if tor_urteil is None or tor_urteil.p_ja is None else round(tor_urteil.p_ja, 4),
                                 "tor_ms": None if tor_urteil is None else round(tor_urteil.ms),
                                 "status": "unklar",
@@ -1918,7 +1920,7 @@ def run() -> None:
                                             if tor_urteil is not None else "")
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator: kein Kommando "
-                                    f"({actuator.last_latency_ms:.0f} ms{tor_info}) → Brain"
+                                    f"({akt_wer} {akt_ms:.0f} ms{tor_info}) → Brain"
                                 )
                             # --- Brain-Pfad wie bisher (unverändert) ---
                             _save_last_recording(recorded_chunks)

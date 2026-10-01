@@ -180,6 +180,45 @@ im selben Dokument verworfenen Verfahren hat vier Tage lang als
 Entscheidungsgrundlage gedient — deshalb steht sie hier als Warnung statt
 gelöscht zu werden.
 
+### Nachtrag 2026-10-01: zum ersten Mal verpasste Rufe im Nenner — VORLÄUFIG
+
+Der Rückspul-Puffer (`rewind:`, Marker-Taster) liefert, was der Tabelle oben
+fehlte: Rufe, die **nicht** ausgelöst haben, samt Audio. Jochens Eindruck dazu:
+je flüssiger „Gaston" in den Satz übergeht, desto eher wird er verpasst.
+
+Gemessen (Skripte im Session-Scratchpad, noch nicht im Repo; Pause = längste
+stille Strecke im Pegel zwischen „Gaston" und dem nächsten Wort, Wortgrenzen
+aus Whisper-Wortzeitstempeln), alles seit v3 (2026-09-16):
+
+| | n | Pause median | Pause ≥ 100 ms |
+|---|---|---|---|
+| Treffer (`*_rec.wav`) | 54 | 95 ms | 27 |
+| verpasst (Marker-Clips, Live-Score < 0,35) | 12 | **0 ms** | 1 |
+
+Unter 50 ms Pause: 24 Treffer, 11 verpasst. Ab 50 ms: 30 Treffer, 1 verpasst.
+
+Gegenprobe zur Kausalität (bestätigt den Absatz oben, nichts Neues): bei 27
+Treffern die Pause herausgeschnitten → 25/27 lösen weiter aus, Score-Median
+0,97 → 0,97; bei 14 verpassten 300 ms Stille nach „Gaston" eingefügt → 2/14
+vorher, 2/14 nachher. **Was folgt, ist egal — falls es am Fluss liegt, dann an
+der Aussprache des Worts selbst.** Die Wortdauer trennt nicht deutlich
+(Median 760 ms Treffer, 680 ms verpasst), der Pegel auch nicht (verpasst eher
+lauter).
+
+**Warum das noch kein Befund ist:** Die 12 verpassten Rufe stammen aus drei
+Episoden, 8 davon aus denselben 90 Sekunden (29.09. 14:16) — ein Sprecher, ein
+Platz, eine Situation. Die Treffer kommen aus zwei Wochen und von allen. Die
+Pause ist aus Whisper-Grenzen und Pegel abgeleitet, nicht gehört. Nach Jochens
+Vorgabe: gemeinsam anhören, dann bewerten.
+
+**Was es sauber klären würde:** dieselbe Person, derselbe Platz, je 10 Takes
+„Gaston, schalte …" flüssig und mit Pause (`wakeword_studio record`, Scores
+werden sofort mitgeschrieben). Und unabhängig vom Ausgang: die verpassten
+Marker-Rufe sind genau die Positiv-Beispiele, die dem Modell fehlen — echte,
+im Satz gesprochene „Gaston" — und gehören in die nächste Trainingsrunde
+(dort aber erst auf die letzten ~1,8 s schneiden, siehe Runde 3).
+
+
 ## Pegel als zweite Dimension (2026-08-02)
 
 „An den Schwellen ist nichts mehr zu holen" galt immer für den **Score**. Der
@@ -626,6 +665,13 @@ hätten. Nach **~3 Wochen (bis ~2026-10-16)** diese Klasse triagieren:
 3. Dazwischen: Wiederholungsrate (Selbst-Label „wiederholt") vorher/nachher
    vergleichen. Ein Ruf, der sofort wiederholt wird, kostet Sekunden, ein
    Fehltrigger einen falschen Turn.
+
+**Zwischenstand 2026-10-01, VORLÄUFIG (aus den Marker-Clips, nicht aus der
+Near-Miss-Triage):** zwei Rufe am 30.09. 07:18, beide „Gaston, schalt(e) das
+Abendlicht aus", erreichten je genau EINEN Frame über der Schwelle (0,83 und
+0,90) und lösten deshalb nicht aus; mit `min_peak_single` 0,75 hätten beide
+ausgelöst. Das wären schon zwei belegte echte Rufe in der Klasse, für die
+Kriterium 1 höchstens einen erlaubt. Gezählt wird bei der Auswertung.
 
 Wichtig für die v3-Wette: deren Kriterium 2 (Verlustquote) wird ab heute
 durch diese Änderung mitbewegt — Zeiträume vor und nach dem 25.09. getrennt

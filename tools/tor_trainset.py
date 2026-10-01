@@ -231,11 +231,40 @@ def _norm(s: str) -> str:
     return re.sub(r"[^\wäöüß]+", " ", s.lower()).strip()
 
 
+# Geraete-Endungen, an denen ein Kompositum zerlegt wird. Die STT schreibt
+# zusammengesetzte Namen oft getrennt ("Wohnzimmer Rollo", "Wohnzimmer
+# Roller") — Laya kannte nur die Komposita aus den capabilities und gab
+# getrennten Formen "keins" (Messung 2026-09-29/10-01, LAYA_TRAINING.md Nr. 10).
+# Bewusst HIER und nicht in Node-RED: das ist eine Schreibvariante der STT,
+# kein anderer Name. In den `namen` wuerde sie Regel A aufweichen ("rollos"
+# allein wuerde zum Gruppenbeleg) und Gemmas Prompt verlaengern.
+_ENDUNGEN = ("beleuchtung", "heizung", "rollos", "rollo", "lichter", "licht",
+             "lampe", "leiste")
+
+
+def _schreibvarianten(name: str) -> list[str]:
+    """'Wohnzimmerrollo' -> ['Wohnzimmer Rollo', 'Wohnzimmer-Rollo'];
+    'Rosazimmerrollo' zusaetzlich -> 'Rosa Zimmer Rollo'. Mehrwortnamen
+    und Namen ohne bekannte Endung bleiben unberuehrt."""
+    if " " in name:
+        return []
+    low = name.lower()
+    for endung in _ENDUNGEN:
+        if low.endswith(endung) and len(low) - len(endung) >= 3:
+            vorn, hinten = name[:-len(endung)], endung.capitalize()
+            out = [f"{vorn} {hinten}", f"{vorn}-{hinten}"]
+            if vorn.lower().endswith("zimmer") and len(vorn) > len("zimmer") + 2:
+                out.append(f"{vorn[:-6].capitalize()} Zimmer {hinten}")
+            return out
+    return []
+
+
 def synthetisch(digest: dict, rng: random.Random, anrede: list[str],
                 je_ziel: int) -> list[dict]:
     zeilen = []
     for zid, z in digest.items():
-        namen = z.get("namen") or [zid]
+        namen = list(z.get("namen") or [zid])
+        namen += [v for n in list(namen) for v in _schreibvarianten(n) if v not in namen]
         wert = z.get("wert") or {}
         befehle = []
         for aktion in z.get("aktionen") or []:

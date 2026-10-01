@@ -154,23 +154,24 @@ Gemma 2026-09-28: 305 richtig / 24 übersehen (8 mit Ziel) / 1 FALSCH, 21 der
 24 übersehenen mit P(ja) < 0,01. Das ist die Zahl, die ein Kandidat schlagen
 muss.
 
-**Laya im Schattenbetrieb (`schatten_url`, seit 2026-09-29).** Laya
-(Encoder + Entscheidungskopf, kein Text) beantwortet für jeden Satz, den der
-Aktuator sieht, Tor, Ziel und Aktion — den Wert liest `laya_intent.lese_wert`
-aus dem Satz. Das Ergebnis läuft durch dieselben `_mehrzahl_gruppe()` und
-`verdict()` wie Gemmas und landet daneben in `actuator_schatten.log`.
-**Schaltet nie**, startet erst nach der echten Entscheidung im eigenen Thread
-(`services/aktuator_schatten.py`, Tests `tests/test_aktuator_schatten.py`).
-Kette: `tools/tor_trainset.py` (synthetisch aus den Zielen + MASSIVE, Daten
-privat in `testsets/`) → `tools/laya_aktuator_train.py` (eigener venv mit
-torch, nicht `ow-venv`; Checkpoint nach `~/laya-modelle/`, gehört zu genau
-einer capabilities-Version) → Container `laya` in `openclaw-voice-stack`
-(3060 Ti, 1,4 GB). Offline gemessen (`tools/aktuator_vergleich.py`, 330
-Sätze): Gemma 315/11/**4 FALSCH**, 380 ms; Laya 313/16/**1 FALSCH**, 78 ms.
-**Optimistisch** — die Vorlagen entstanden nach dem Lesen des Testsets.
-Die Entscheidung fällt auf den Schatten-Turns: `tools/aktuator_vergleich.py
---schatten`. Neue Ziele in den capabilities = neu erzeugen, neu trainieren,
-sonst fragt der Schatten mit einer anderen Zielliste als der trainierten.
+**Zwei Klassifikator-Ketten: Gemma und Laya (`laya_url`, `klassifikator`).**
+Laya (Encoder + Entscheidungskopf, kein Text) beantwortet Tor, Ziel und
+Aktion; den Wert liest `laya_intent.lese_wert` aus dem Satz. Beide Ketten
+enden in denselben `_mehrzahl_gruppe()` und `verdict()`
+(`services/aktuator_schatten.py`). `klassifikator` (Default `gemma`) sagt, wer
+entscheidet; die andere läuft im Schatten nach der echten Entscheidung im
+eigenen Thread, **schaltet nie** und schreibt nach `actuator_schatten.log`.
+Entscheidet Laya und fällt aus, entscheidet Gemma im selben Turn — damit ist
+ein gestoppter Laya-Container (jedes Training) harmlos. Laya-Regeln, die
+Gemma nicht hat: Tor ja + kein Gerät → Rückfrage (`laya_rueckfrage`,
+Jochen 2026-10-01), `setzen` ohne Zahl → Rückfrage. Tests
+`tests/test_aktuator_schatten.py`. Kette: `tools/tor_trainset.py` →
+`tools/laya_aktuator_train.py` (eigener venv mit torch, nicht `ow-venv`;
+Checkpoint nach `~/laya-modelle/`, gehört zu genau einer capabilities-Version)
+→ Container `laya` in `openclaw-voice-stack` (`LAYA_CKPT`). Messen:
+`tools/aktuator_vergleich.py` (Test-Set oder `--schatten`). Stand und Zahlen:
+`LAYA_TRAINING.md`, Abschnitt „Stand". `schatten_url` (der Name vom
+2026-09-29) wird als alter Name von `laya_url` weiter gelesen.
 **Wer das Training anfasst oder automatisiert, liest `LAYA_TRAINING.md`** —
 Ablauf, die Fallen der ersten Läufe (OOM, Training verdrängt Speaches, torch-CPU-Fassung, HTTP 500
 ohne gcc, Ausfälle als Ergebnis gezählt, …) und was eine Automatisierung
