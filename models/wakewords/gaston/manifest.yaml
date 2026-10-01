@@ -1,12 +1,14 @@
-# Gaston-Wakeword — trainiert 2026-09-16 auf ai-stack (Runde 3: 30k synthetisch
-# + 47 echte Rufe + 19 belegte Fehltrigger, je x10, auf die letzten 1,8 s
-# geschnitten — Muenzwurf-Truncation!). Messreihe: WAKEWORD_PROCESS.md,
-# "Nachtraining Runde 3". Val: 93 % echte Rufe (vorher 74), Studio 60 %
-# (vorher 50), 2 der 6 bekannten Val-Fehltrigger eliminiert, FP/h 0,00.
-# Vorgaenger (Runde 2, 2026-07-05) liegt in der Git-Historie dieser Dateien.
+# Gaston-Wakeword — trainiert 2026-10-02 auf ai-stack (Runde 4: 30k synthetisch
+# + 131 echte Rufe + 43 per Ohr belegte Fehltrigger, je x10; Positive vom
+# Paket selbst auf 1,8 s geschnitten, Marker-Rufe je Wakewort-Vorkommen).
+# Schranke VOR dem Training festgelegt (WAKEWORD_PROCESS.md, "Nachtraining
+# Runde 4"), alle vier erfuellt — frische Val-Tage gegen v3: echte Rufe 41/48
+# (v3 37; gepaart 8 Gewinne / 4 Verluste), harte Fehltrigger 17/36 (v3 21),
+# Studio 14/20 (v3 12), FP/h generisch 0,09 (3-Frame @0,35).
+# Vorgaenger v3 (Runde 3, 2026-09-16) liegt in der Git-Historie dieser Dateien.
 # ACHTUNG: die Gate-Parameter unten (min_peak_short/min_peak_single) sind an
 # den Score-Verteilungen des VORGAENGERS geeicht und beim Deploy bewusst
-# unveraendert gelassen — ob sie zu v3 passen, klaert die Betriebsbeobachtung.
+# unveraendert gelassen (auch bei v4) — ob sie passen, klaert die Betriebsbeobachtung.
 name: gaston
 display: "Gaston"
 model: gaston.tflite

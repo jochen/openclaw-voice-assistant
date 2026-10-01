@@ -732,6 +732,49 @@ Beobachtungswette, Morgen-Bericht an Jochen mit Rollback-Befehl.
 **Eins verfehlt →** kein Deploy; Kandidat als Bundle `gaston_v4` daneben
 ablegen, Befund notieren, Entscheidung bei Jochen.
 
+### Ergebnis Runde 4 (2026-10-02 00:40) — alle vier erfüllt, deployt
+
+Training auf dem ai-stack 23:59–00:36 (Augment 26 min, Training 11 min;
+`llm` gestoppt und per `trap` wieder gestartet; der Fehlercode von
+`train.py` kommt nur von der eingebauten tflite-Umwandlung — `onnx_tf`
+fehlt dort, wie in Runde 3 —, Umwandlung separat mit `onnx2tf -kat x`).
+Eingespeist: 131 Positiv-Stücke + 43 Negative aus dem Paket, je ×10, statt
+der 47/19 aus Runde 3 (die liegen in `train_out/backup_r3_20261002/` samt
+v3-Modell und Feature-Dateien).
+
+| frische Val-Tage | v3 | v4 | Schranke |
+|---|---|---|---|
+| echte Rufe (48) | 37 | **41** — gepaart 8 Gewinne / 4 Verluste | ✓ |
+| harte Fehltrigger (36) | 21 | **17** — 8 weg, 4 neu | ✓ |
+| ohne die 3 v3-Trainingstage | 32/43, 18/29 | **37/43, 13/29** | — |
+| Studio (20) | 12 | **14** | ✓ |
+| FP/h generisch, 3-Frame @0,35 | 0,00 | **0,09** | ✓ |
+
+v4 erkennt u. a. die verpassten Rufe vom Abend des 01.10. (21:54:37, 22:06:51,
+22:07:09, 22:07:31) und lässt A039 fallen (der Fehltrigger, den Jochen per
+Ohr zweimal geprüft hat). Verloren: drei Trigger-Rufe, bei denen v4 auf
+0,60–0,68 fällt — knapp unter `min_peak` 0,7. Offline-Messung (beste von
+mehreren Frame-Phasen) — live entscheidet die Beobachtung.
+
+Deploy nach der vorab festgelegten Regel: `gaston.tflite/.onnx/.onnx.data`
+im Bundle ersetzt, Gate-Parameter unverändert. **Rollback:**
+`git checkout <Deploy-Commit>^ -- models/wakewords/gaston/` und
+`systemctl --user restart openclaw-voice-assist`.
+
+### Beobachtungswette v4 (formuliert VOR den Daten)
+
+Bezug ist der Zeitraum B der v3-Bilanz (25.09.–01.10., 1-Frame aus,
+Ohr-Labels): **1,16 Fehltrigger/Tag, Verlustquote 28 %.** Nach ~2 Wochen,
+gelesen wie die v3-Bilanz (Triage + Ohr-Review der STT-„rauschen“, Ausschluss-
+Fenster beachten):
+
+1. **Fehltrigger/Tag** soll unter 1,16 fallen. Steigt sie deutlich (> 1,5),
+   ist der Offline-Gewinn auf der FP-Seite ein Artefakt → Rollback prüfen.
+2. **Verlustquote** soll unter 28 % fallen. Steigt sie über 35 % → Rollback.
+3. **Gate-Parameter**: liegen echte Rufe gehäuft als Near-Miss bei
+   0,6–0,7 (`failed_on: min_peak`) — das Verlustmuster der 3 Offline-Verluste —,
+   ist `min_peak` für v4 neu zu messen, nur gegen live geloggte Verläufe.
+
 ### Wette 1-Frame-Pfad aus (2026-09-25, formuliert VOR den Daten)
 
 `min_peak_single` 0.75 → 0.0, vorzeitig vor dem Ende der v3-Wette. Stand beim
