@@ -132,6 +132,7 @@ def _lade_wake_log() -> dict[str, dict]:
     sonst verlöre die zweite Zeile die Gate-Werte der ersten.
     """
     out: dict[str, dict] = {}
+    fenster = _ausschluss_fenster()
     if not os.path.exists(WAKE_LOG_PATH):
         return out
     with open(WAKE_LOG_PATH) as f:
@@ -141,7 +142,7 @@ def _lade_wake_log() -> dict[str, dict]:
             except ValueError:
                 continue
             audio = row.get("audio")
-            if not audio:
+            if not audio or _ausgeschlossen(row.get("ts"), fenster):
                 continue
             ziel = out.setdefault(audio, {})
             # result nicht überschreiben: "trigger"/"nearmiss" ist die Art des
@@ -151,9 +152,39 @@ def _lade_wake_log() -> dict[str, dict]:
     return out
 
 
+# Zeitfenster, deren Wake-Ereignisse in KEINER Auswertung vorkommen dürfen —
+# weder als Label noch als Messung noch als Trainingsstoff. Eine JSON-Zeile je
+# Fenster: {"von": ISO, "bis": ISO, "grund": "..."}.
+# Anlass (2026-10-01): beim Anhören der Review-Clips auf gastonllm (2 m vom
+# Mikro, Lautsprecher leise) hat das Mikro die Wiedergabe gehört — 23
+# Near-Misses aus abgespielten Aufnahmen. Für die Selbst-Labels sähe das wie
+# ein echter, wiederholter Ruf aus. Jochen: "nur dass wir die nicht nochmal
+# verwenden".
+WAKE_AUSSCHLUSS_PATH = os.path.join(os.path.dirname(WAKE_LOG_PATH), "wake_ausschluss.jsonl")
+
+
+def _ausschluss_fenster() -> list[tuple[str, str]]:
+    fenster = []
+    try:
+        with open(WAKE_AUSSCHLUSS_PATH, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    d = json.loads(line)
+                    fenster.append((d["von"], d["bis"]))
+    except FileNotFoundError:
+        pass
+    return fenster
+
+
+def _ausgeschlossen(ts: str | None, fenster: list[tuple[str, str]]) -> bool:
+    """ts aus wake_events.log (ISO, Sekunden) liegt in einem Ausschluss-Fenster."""
+    return bool(ts) and any(von <= ts[:19] <= bis for von, bis in fenster)
+
+
 def _lade_wake_events() -> list[dict]:
     """Alle Wake-Log-Zeilen in zeitlicher Reihenfolge (für Nachbarschaftsregeln)."""
     rows: list[dict] = []
+    fenster = _ausschluss_fenster()
     if not os.path.exists(WAKE_LOG_PATH):
         return rows
     with open(WAKE_LOG_PATH) as f:
@@ -162,7 +193,7 @@ def _lade_wake_events() -> list[dict]:
                 row = json.loads(line)
             except ValueError:
                 continue
-            if row.get("ts"):
+            if row.get("ts") and not _ausgeschlossen(row["ts"], fenster):
                 rows.append(row)
     rows.sort(key=lambda r: r["ts"])
     return rows
