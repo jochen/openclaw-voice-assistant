@@ -684,10 +684,19 @@ der spricht fürs Ausgeschaltet-Lassen.
 
 Derselbe Abend zeigte, wo der größere Verlust liegt: „Gaston. Gaston.“ und
 „Gaston? Gaston?“ — einzeln, mit Pause gesprochen — kamen auf 0,65 und 0,42.
-Das ist keine Gate-Frage, sondern eine des Modells. Die Near-Miss-Mitschnitte
-(`*_nearmiss_folge.wav`, `nearmiss_shadow.jsonl`) enthalten genau diese Rufe,
-näher am Ruf als die Marker-Clips (die enden beim Tastendruck) — Material für
-die nächste Trainingsrunde.
+Das ist keine Gate-Frage, sondern eine des Modells. Material für die nächste
+Trainingsrunde liegt an zwei Stellen, die sich ergänzen: die Marker-Clips
+(`*_marker_rueckspul.wav`, 120 s VOR jedem Tastendruck — auch Rufe mit Score
+≈ 0, die nie ein Near-Miss wurden) und die Near-Miss-Mitschnitte
+(`*_nearmiss_folge.wav`, 6 s nach jedem Near-Miss — auch Rufe NACH dem
+letzten Tastendruck).
+
+**Falle beim Auswerten der Marker-Clips:** Sprachabschnitte über „Pegel >
+3 × Median" zu suchen, versagt in lauter Umgebung. Am 2026-10-01 abends lag
+der Median bei 285 (am 29.09.: ~25) — die Schwelle damit bei ~855, die Rufe
+bei 730–770. Die Rufe waren im Clip, die Suche sah sie nicht. Abschnitte am
+Grundrauschen (unteres Perzentil) oder an der Score-Spur festmachen, nicht am
+Median.
 
 Wichtig für die v3-Wette: deren Kriterium 2 (Verlustquote) wird ab heute
 durch diese Änderung mitbewegt — Zeiträume vor und nach dem 25.09. getrennt
