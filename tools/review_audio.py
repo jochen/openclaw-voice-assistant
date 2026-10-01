@@ -34,9 +34,11 @@ Folgeaufnahme. Einmal anhören, einmal entscheiden. Ohne diese Verkettung müßt
 man zwei Dateien nebeneinanderhalten und würde genau den Fehler machen, den der
 Prozeß dokumentiert (Folgeaufnahme als Fehltrigger-Indikator mißdeuten).
 
-Near-Misses haben keine Folgeaufnahme (es gab ja keinen Trigger) — die stehen
-allein da und sind entsprechend schwerer. Sie sind auch seltener nötig: hat sich
-der Nutzer wiederholt, liegt bereits ein hartes Selbst-Label vor.
+Near-Misses hatten bis 2026-09-25 keine Folgeaufnahme (es gab ja keinen
+Trigger) und standen allein da. Seit ``nearmiss_shadow`` wird nach jedem
+Near-Miss 6 s weiter mitgeschnitten (``*_nearmiss_folge.wav``) — die hängt
+der Export genauso an wie die Folgeaufnahme eines Triggers. Ältere
+Near-Misses bleiben allein und sind entsprechend schwerer.
 
 Ablauf
 ------
@@ -194,6 +196,13 @@ def _kandidaten(args) -> list[dict]:
     return out[: args.limit] if args.limit else out
 
 
+def _lade_index() -> dict[str, dict]:
+    if not os.path.exists(INDEX):
+        return {}
+    with open(INDEX, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _lade_review() -> dict[str, dict]:
     if not os.path.exists(REVIEW_LABELS):
         return {}
@@ -217,16 +226,25 @@ def cmd_export(args) -> int:
     for ordner in KLASSEN_ORDNER:
         os.makedirs(os.path.join(REVIEW_DIR, ordner), exist_ok=True)
 
-    index, n = {}, 0
-    for i, f in enumerate(faelle, 1):
+    # An einen bestehenden Index ANHÄNGEN: mehrere Stapel (z. B. Fehltrigger,
+    # Near-Misses, Marker-Rufe) liegen gleichzeitig in offen/, und import muss
+    # alle zuordnen können. Vorher überschrieb jeder Export den Index.
+    index, n = _lade_index(), 0
+    start = len(index)
+    for i, f in enumerate(faelle, start + 1):
         audio = f["audio"]
         teile = [os.path.join(TRIGGER_AUDIO_DIR, audio)]
         if f["art"] == "trigger":
             rec = audio.replace("_wake.wav", "_rec.wav")
             teile.append(os.path.join(TRIGGER_AUDIO_DIR, rec))
+        elif f["art"] == "nearmiss":
+            # Seit 2026-09-25 (nearmiss_shadow) gibt es auch hier eine
+            # "Folgeaufnahme": 6 s nach dem Near-Miss, mit demselben Pre-Roll.
+            folge = audio.replace("_nearmiss.wav", "_nearmiss_folge.wav")
+            teile.append(os.path.join(TRIGGER_AUDIO_DIR, folge))
 
         peak = f"{f['peak']:.2f}" if f["peak"] is not None else "----"
-        name = f"{i:03d}_peak{peak}_{f['art']}_{audio}"
+        name = f"{args.stapel}{i:03d}_peak{peak}_{f['art']}_{audio}"
         ziel = os.path.join(OFFEN, name)
         if not _verkette(ziel, teile, args.rec_max):
             continue
@@ -245,6 +263,100 @@ def cmd_export(args) -> int:
         print(f"    {os.path.join(REVIEW_DIR, ordner):<50} → {klasse}")
     print(f"\n  Was in offen/ liegen bleibt, gilt als unbearbeitet.")
     print(f"  Danach:  ow-venv/bin/python -m tools.review_audio import")
+    return 0
+
+
+# Rufe in Marker-Clips: Abschnitte über dem GRUNDRAUSCHEN, nicht über dem
+# Median. Am 2026-10-01 abends lag der Median bei 285 (Fernseher), "3x
+# Median" also bei ~855 — die Rufe bei 730-770 waren unsichtbar. Der
+# Grundpegel (10. Perzentil) bleibt auch in lauter Umgebung unter der Sprache.
+_MARKER_FAKTOR = 3.0
+_MARKER_MIN_PEGEL = 120
+_WAKE_ANFANG = ("gast", "gas ", "gas,", "gest", "gust", "kast", "gerst", "das tor", "das da")
+
+
+def _marker_abschnitte(meta: dict) -> list[tuple[int, int]]:
+    pegel = meta["pegel_pro_sekunde"]
+    boden = sorted(pegel)[len(pegel) // 10]
+    schwelle = max(_MARKER_FAKTOR * boden, _MARKER_MIN_PEGEL)
+    out: list[list[int]] = []
+    for i, x in enumerate(pegel):
+        if x > schwelle:
+            if out and i - out[-1][1] <= 1:
+                out[-1][1] = i
+            else:
+                out.append([i, i])
+    return [(a, b) for a, b in out]
+
+
+def cmd_export_marker(args) -> int:
+    """Rufe, die nie ein Near-Miss wurden (Score ~0), stecken nur in den
+    Marker-Clips (120 s vor jedem Tastendruck). Jeder Abschnitt, dessen
+    Transkript wie ein Wakewort beginnt und der nicht schon als Trigger oder
+    Near-Miss im Log steht, wird als eigener Clip gesichert
+    (``…_marker_rueckspul_ruf.wav`` im Trigger-Archiv — durch den Namen vor
+    dem Cleanup geschützt) und nach offen/ gelegt."""
+    import glob
+    import io
+    from datetime import datetime, timedelta
+    from voice_assistant.config import load_profile
+    from voice_assistant.services.speaches import SpeachesState
+    from voice_assistant.services.stt import SpeachesStt
+
+    p = load_profile()
+    stt = SpeachesStt(SpeachesState(), p.speaches_base, p.speaches_stt_model)
+    ereignisse = []
+    for e in _lade_wake_events():
+        ts = e.get("ts")
+        if ts and e.get("result") in ("trigger", "nearmiss", "near_miss"):
+            ereignisse.append(datetime.fromisoformat(ts))
+
+    os.makedirs(OFFEN, exist_ok=True)
+    for ordner in KLASSEN_ORDNER:
+        os.makedirs(os.path.join(REVIEW_DIR, ordner), exist_ok=True)
+    index = _lade_index()
+    gesehen: list[datetime] = []
+    n = 0
+    for meta_pfad in sorted(glob.glob(os.path.join(TRIGGER_AUDIO_DIR, "*_marker_rueckspul.json"))):
+        if os.path.basename(meta_pfad)[:8] < args.seit:
+            continue
+        meta = json.load(open(meta_pfad, encoding="utf-8"))
+        beginn = datetime.fromisoformat(meta["beginn"])
+        roh, (kan, breite, rate) = _lies_wav(meta_pfad[:-5] + ".wav")
+        for a, b in _marker_abschnitte(meta):
+            t0 = beginn + timedelta(seconds=a)
+            if any(abs((t0 - g).total_seconds()) < 3 for g in gesehen):
+                continue          # überlappende Clips desselben Moments
+            if any(-2 < (e - t0).total_seconds() < b - a + 3 for e in ereignisse):
+                continue          # schon als Trigger/Near-Miss erfasst
+            s0, s1 = max(0.0, a - 0.5), min(len(meta["pegel_pro_sekunde"]), b + 1.5)
+            stueck = roh[int(s0 * rate) * breite * kan: int(s1 * rate) * breite * kan]
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(kan); w.setsampwidth(breite); w.setframerate(rate)
+                w.writeframes(stueck)
+            try:
+                text = (stt.transcribe_raw(buf.getvalue()).get("text") or "").strip()
+            except Exception as e:
+                print(f"  ⚠️  STT {t0:%H:%M:%S}: {e}")
+                continue
+            if not text.lower().startswith(_WAKE_ANFANG):
+                continue
+            gesehen.append(t0)
+            score = max((x[1] for x in meta["scores"] if s0 <= x[0] <= s1), default=0.0)
+            audio = f"{t0:%Y%m%d_%H%M%S}_gaston_marker_rueckspul_ruf.wav"
+            with open(os.path.join(TRIGGER_AUDIO_DIR, audio), "wb") as fh:
+                fh.write(buf.getvalue())
+            name = f"{args.stapel}{len(index) + 1:03d}_peak{score:.2f}_marker_{audio}"
+            with open(os.path.join(OFFEN, name), "wb") as fh:
+                fh.write(buf.getvalue())
+            index[name] = {"audio": audio, "art": "marker", "klasse": "unklar", "peak": score,
+                           "transkript": text, "danach": ""}
+            n += 1
+            print(f"  {t0:%Y-%m-%d %H:%M:%S}  Score {score:.2f}  {text[:70]}")
+    with open(INDEX, "w", encoding="utf-8") as fh:
+        json.dump(index, fh, ensure_ascii=False, indent=1)
+    print(f"\n{n} Marker-Rufe nach {OFFEN}/ gelegt")
     return 0
 
 
@@ -338,7 +450,15 @@ def main() -> int:
     ex.add_argument("--auch-harte", action="store_true", dest="auch_harte",
                     help="auch Clips mit hartem Selbst-Label exportieren "
                          "(normalerweise unnötig — die tragen schon)")
+    ex.add_argument("--stapel", default="", help="Buchstabe vor dem Dateinamen (A, B, …), "
+                    "damit mehrere Stapel in offen/ unterscheidbar bleiben")
     ex.set_defaults(func=cmd_export)
+
+    mk = sub.add_parser("export-marker", help="Rufe aus den Marker-Clips (Rückspul-Taster) "
+                        "ausschneiden und bereitlegen")
+    mk.add_argument("--seit", default="20260916", help="Marker-Clips ab diesem Tag (YYYYMMDD)")
+    mk.add_argument("--stapel", default="C")
+    mk.set_defaults(func=cmd_export_marker)
 
     im = sub.add_parser("import", help="Sortierung als harte Labels zurücklesen")
     im.set_defaults(func=cmd_import)
