@@ -87,7 +87,7 @@ import time
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 from voice_assistant.services.laya_intent import (  # noqa: E402  (nur stdlib)
-    AKTION_FRAGE, KEIN_ZIEL, TOR_FRAGE, ziel_frage,
+    AKTION_FRAGE, KEIN_BEFEHL, KEIN_ZIEL, TOR_FRAGE, VARIANTEN, ziel_frage,
 )
 
 _TRAIN = os.path.join(_REPO, "testsets", "tor_train.jsonl")
@@ -117,7 +117,8 @@ def _q(frage: dict) -> dict:
 
 
 def _item(tok, cfg, satz, name, frage, ziel_key, rng, mischen):
-    """Eine Trainingssequenz. ziel_key: noul -> True/False, choice -> Kriterium."""
+    """Eine Trainingssequenz. ziel_key: noul -> True/False, choice -> Kriterium
+    oder eine Menge von Kriterien (weiches Ziel, gleich verteilt)."""
     from laya.common import QTYPES, build_sequence
     q = _q(frage)
     if q["t"] == "noul":
@@ -128,15 +129,20 @@ def _item(tok, cfg, satz, name, frage, ziel_key, rng, mischen):
         order = list(range(len(keys)))
         if mischen:
             rng.shuffle(order)
-        target = [1.0 if keys[i] == ziel_key else 0.0 for i in order]
-        assert sum(target) == 1.0, (ziel_key, satz)
+        if isinstance(ziel_key, (set, frozenset)):
+            target = [1.0 / len(ziel_key) if keys[i] in ziel_key else 0.0 for i in order]
+        else:
+            target = [1.0 if keys[i] == ziel_key else 0.0 for i in order]
+        assert abs(sum(target) - 1.0) < 1e-6, (ziel_key, satz)
     ids, markers = build_sequence(tok, {"satz": satz}, q, cfg["max_len"], cfg["head_max_len"],
                                   option_order=order)
     assert len(markers) == len(order), satz
     return {"ids": ids, "markers": markers, "qtype": QTYPES[q["t"]], "target": target, "frage": name}
 
 
-def _items_fuer(tok, cfg, zeilen, digest, rng, mischen):
+def _items_fuer(tok, cfg, zeilen, digest, rng, mischen, variante="getrennt"):
+    if variante == "vereint":
+        return _items_vereint(tok, cfg, zeilen, digest, rng, mischen)
     zf = ziel_frage(digest)
     items = []
     for z in zeilen:
@@ -149,6 +155,33 @@ def _items_fuer(tok, cfg, zeilen, digest, rng, mischen):
                 # haben auch kein Ziel — aber weil sie aus einem fremden Haus
                 # stammen, nicht weil keins gemeint war ("Licht in der Küche").
                 items.append(_item(tok, cfg, z["satz"], "ziel", zf, KEIN_ZIEL, rng, mischen))
+        if z.get("aktion") in AKTION_FRAGE["criteria"]:
+            items.append(_item(tok, cfg, z["satz"], "aktion", AKTION_FRAGE, z["aktion"], rng, mischen))
+    return items
+
+
+def _items_vereint(tok, cfg, zeilen, digest, rng, mischen):
+    """Eine ziel-Frage fuer JEDEN Satz, mit "keins" UND "kein_befehl".
+
+    MASSIVE-Befehle sind sicher Befehle, ihr Ziel ist aber unbekannt (ein
+    fremdes Haus). Statt ein Ziel zu raten, bekommen sie ein weiches Ziel:
+    alles ausser kein_befehl, gleich verteilt. So tragen sie die
+    Schaltabsicht bei, ohne ein Ziel zu behaupten. Das ist kostspielig: jede
+    ziel-Sequenz traegt alle Optionen (~900 Token), und es sind ~4x so viele
+    wie bei "getrennt" — das Training dauert entsprechend laenger."""
+    zf = ziel_frage(digest, "vereint")
+    alle_ausser_nein = frozenset(k for k in zf["criteria"] if k != KEIN_BEFEHL)
+    items = []
+    for z in zeilen:
+        if not z["schalten"]:
+            ziel = KEIN_BEFEHL
+        elif z.get("ziel") in digest:
+            ziel = z["ziel"]
+        elif z.get("herkunft") == "synth:befehl_ohne_ziel":
+            ziel = KEIN_ZIEL
+        else:
+            ziel = alle_ausser_nein
+        items.append(_item(tok, cfg, z["satz"], "ziel", zf, ziel, rng, mischen))
         if z.get("aktion") in AKTION_FRAGE["criteria"]:
             items.append(_item(tok, cfg, z["satz"], "aktion", AKTION_FRAGE, z["aktion"], rng, mischen))
     return items
@@ -229,7 +262,10 @@ def _fit_temp(paare) -> float:
 def _auswertung(ergebnis) -> str:
     teile = []
     for f in ("tor", "ziel", "aktion"):
-        sel = [(it, lg) for it, lg in ergebnis if it["frage"] == f]
+        # Nur harte Ziele zaehlen: ein weiches Ziel (MASSIVE-Befehl, "alles
+        # ausser kein_befehl") hat keine richtige Antwort. Erst stand es im
+        # Nenner — die vereinte Frage zeigte 87,6 % statt ~99 %.
+        sel = [(it, lg) for it, lg in ergebnis if it["frage"] == f and max(it["target"]) == 1.0]
         if sel:
             ok = sum(int(lg.argmax()) == it["target"].index(1.0) for it, lg in sel)
             teile.append(f"{f} {ok / len(sel):.1%} (n={len(sel)})")
@@ -253,7 +289,7 @@ def train(args) -> int:
     digest = caps["digest"]
 
     # Options-Budget aus der laengsten Frage (der ziel-Frage) ableiten.
-    probe_ids, _ = build_sequence(tok, {"satz": ""}, _q(ziel_frage(digest)), 8192, 8192)
+    probe_ids, _ = build_sequence(tok, {"satz": ""}, _q(ziel_frage(digest, args.variante)), 8192, 8192)
     cfg["head_max_len"] = int(math.ceil((len(probe_ids) + 32) / 64) * 64)
     cfg["max_len"] = cfg["head_max_len"] + 192
     print(f"capabilities {caps['version']}, {len(digest)} Ziele -> head_max_len "
@@ -263,8 +299,8 @@ def train(args) -> int:
     rng = random.Random(args.seed)
     rng.shuffle(zeilen)
     n_kal = max(50, len(zeilen) // 10)
-    kal = _items_fuer(tok, cfg, zeilen[:n_kal], digest, rng, mischen=False)
-    trn = _items_fuer(tok, cfg, zeilen[n_kal:], digest, rng, mischen=True)
+    kal = _items_fuer(tok, cfg, zeilen[:n_kal], digest, rng, mischen=False, variante=args.variante)
+    trn = _items_fuer(tok, cfg, zeilen[n_kal:], digest, rng, mischen=True, variante=args.variante)
     zaehl = {f: sum(it["frage"] == f for it in trn) for f in ("tor", "ziel", "aktion")}
     print(f"{len(zeilen) - n_kal} Saetze Training -> {len(trn)} Sequenzen {zaehl}; "
           f"{n_kal} Saetze zurueckgehalten -> {len(kal)} Sequenzen")
@@ -331,7 +367,9 @@ def train(args) -> int:
     tok.save_pretrained(os.path.join(args.aus, "tokenizer"))
     cfg.update({"fine_tuned": True, "model_name": "laya-multilingual-aktuator", "temperature": temps,
                 "capabilities": caps["version"],
-                "fragen": {"tor": TOR_FRAGE, "aktion": AKTION_FRAGE},
+                "fragen_variante": args.variante,
+                "fragen": ({"aktion": AKTION_FRAGE} if args.variante == "vereint"
+                           else {"tor": TOR_FRAGE, "aktion": AKTION_FRAGE}),
                 "training": {"daten": os.path.basename(args.train), "saetze": len(zeilen) - n_kal,
                              "sequenzen": zaehl, "epochen": args.epochen, "seed": args.seed,
                              "lr_encoder": args.lr_encoder, "lr_kopf": args.lr_kopf,
@@ -370,6 +408,8 @@ def main() -> int:
     t.add_argument("--lr-encoder", type=float, default=2e-5)
     t.add_argument("--lr-kopf", type=float, default=1e-4)
     t.add_argument("--seed", type=int, default=20260928)
+    t.add_argument("--variante", choices=VARIANTEN, default="getrennt",
+                   help="Fragesatz, siehe laya_intent.VARIANTEN")
     t.add_argument("--device", default="cuda")
     t.add_argument("--revision", help="Hub-Revision der Basis (Default: aktuell)")
     s = sub.add_parser("serve")

@@ -94,8 +94,9 @@ Betrieb importieren dieselbe Datei, damit beide garantiert dasselbe fragen.
   - Vor dem Start freien VRAM messen und das Tokenbudget daraus ableiten,
     nicht fest vorgeben.
   - Bei OOM mit halbem Budget neu starten statt aufgeben.
-  - Den Lauf nie über den Platz der laufenden Dienste stellen. Speaches
-    bleibt an.
+  - Den Lauf nie über den Platz der laufenden Dienste stellen. **Und
+    „Speaches bleibt an“ reicht nicht** — siehe Falle 12: Speaches braucht
+    über seine ruhenden 2,4 GB hinaus Arbeitsspeicher für jede Anfrage.
   - Dass der Laya-Container selbst 1,4 GB belegt, gilt es zu beachten: Läuft
     er während des Trainings, fehlen diese 1,4 GB. Entweder vorher stoppen
     (der Schatten fällt dann kurz aus, das ist harmlos) oder auf eine Zeit
@@ -184,6 +185,12 @@ Betrieb importieren dieselbe Datei, damit beide garantiert dasselbe fragen.
 
 ### 11. Der Checkpoint hängt an einer Zielliste — und niemand prüft das
 
+**Am 2026-10-01 um 19:15 eingetreten:** ein neues Ziel kam dazu
+(capabilities `f07c67d0` → `e93fcc67`). Seitdem fragt der Schatten mit 70
+Optionen, eine davon hat aktuator-v1 nie gesehen. Auf dem Test-Set fiel v1
+von 313/16/1 auf 310/19/1 (richtig/verpasst/FALSCH), ohne dass sich am
+Modell etwas geändert hätte. Im Journal steht davon nichts.
+
 - Die ziel-Frage baut das Training aus dem Schnappschuss
   `testsets/tor_train.capabilities.json`, der Betrieb aus dem Live-Digest.
 - Ändern sich die Ziele, fragt der Schatten mit Optionen, die das Modell nie
@@ -194,7 +201,30 @@ Betrieb importieren dieselbe Datei, damit beide garantiert dasselbe fragen.
   eigene Abfrage) mit der Live-Version. Weichen sie ab, meldet er das und
   startet den Trainingslauf, bzw. stößt ihn an.
 
-### 12. Kleinere Dinge, die man wissen muss
+### 12. Das Training hat Speaches den Speicher weggenommen
+
+- **Was passiert war (2026-10-01, 19:0x–19:3x):** Während das Training
+  lief, antwortete Speaches mit `CUDA failed with error out of memory`. Der
+  Assistent fiel auf den lokalen faster-whisper (CPU) zurück. Ein echter
+  Ruf („Gaston macht mir den Wohnzimmer Rollo zu“) ging dadurch langsamer
+  durch, aber richtig. Auch eine Auswertung, die nebenher die STT brauchte,
+  scheiterte.
+- **Ursache:** Speaches belegt im Ruhezustand 2,4 GB, braucht aber bei jeder
+  Transkription mehr. Das Training (Spitze 2,9 GB) und der
+  Speicher-Cache von torch nahmen genau diesen Spielraum weg. Gesamt lag
+  bei 7,6 von 8 GB.
+- **Was es nicht ist:** kein Absturz. Der Rückfall ist vorgesehen und hat
+  gegriffen. Nur langsam.
+- **Automatisierung**, eine von beiden:
+  - Den Anteil des Trainings hart begrenzen
+    (`torch.cuda.set_per_process_memory_fraction`), sodass für Speaches
+    mindestens ~1 GB über seinem Ruhewert frei bleibt.
+  - Oder in einem Zeitfenster ohne Turns trainieren (nachts) und dann
+    gern auch Dienste stoppen, die gerade niemand braucht (laya, ser).
+  - In beiden Fällen nach dem Lauf eine Probe-Transkription gegen Speaches,
+    bevor „fertig“ gemeldet wird.
+
+### 13. Kleinere Dinge, die man wissen muss
 
 - **MASSIVE** (de-DE, CC BY 4.0) liegt nicht im Repo. Quelle:
   `amazon-massive-nlu-dataset.s3.amazonaws.com/amazon-massive-dataset-1.1.tar.gz`.
@@ -244,7 +274,10 @@ Offene Entscheidungen dafür (nicht von der Automatisierung zu treffen):
 - Soll „Tor ja, aber ziel keins“ eine Rückfrage auslösen statt den Brain?
   Heute geht es an den Brain, wie Gemmas Regel „Rollo ohne Raum“. Siehe
   Schatten-Turn „Lohnsimmerrolle“ unten: Gemma fragte zurück, und das war
-  dort der bessere Weg.
+  dort der bessere Weg. Gemessen mit aktuator-v1 auf dem Test-Set
+  (2026-10-01): Diese Regel würde bei 15 Befehlen ohne bestimmbares Ziel
+  („Rollo zu“), bei 5 verhörten Befehlen mit Ziel und bei 3
+  Nicht-Befehlen (Kauderwelsch) nachfragen.
 
 ## Stand
 
@@ -266,3 +299,27 @@ Erster Schattenvergleich (`tools/aktuator_vergleich.py --schatten`):
   sagte Tor 0,99, ziel keins. Gemma sagte Tor 0,0.
 
 15 Turns sind zu wenig, um zu entscheiden. Weiter sammeln.
+
+**Testlauf „vereinte Frage“ (2026-10-01).** Statt Tor + Ziel eine einzige
+Auswahlfrage über alle Ziele plus „keins“ (Befehl, Gerät unklar) und
+„kein_befehl“ (`laya_intent.VARIANTEN`, `--variante vereint`, Checkpoint
+`aktuator-v2-vereint`, gleiche Daten). Training 24 min statt 7,5, weil
+jeder Satz die lange ziel-Sequenz trägt. Beide gegen capabilities
+`e93fcc67` gemessen:
+
+| | richtig / verpasst / FALSCH | Tor-AUROC | Befehle durch bei 0 / 1 / 3 FALSCH |
+|---|---|---|---|
+| v1 getrennt | 310 / 19 / 1 | 0,989 | 103 / 106 / 114 |
+| v2 vereint | 308 / 20 / 2 | 0,983 | 77 / 81 / 108 |
+
+- **Nicht besser.** Die Schaltabsicht trennt v2 etwas schlechter. Mehrere
+  verhörte Befehle („Esstischrohlos“, „Wohnzimmerverlauf“), die v1 noch
+  als Rückfrage erkannte, hält v2 für „kein Befehl“. Neu falsch:
+  „Gastostop.“ → `rollostop`.
+- **Aber eins kann v2:** Es trennt „Gerät unklar“ von „kein Befehl“
+  sauber (206 von 209 Nicht-Befehlen sagen `kein_befehl`, 12 von 17
+  Befehlen ohne Ziel `keins`). Das ist die Information, die die
+  Rückfrage-Entscheidung braucht.
+- **Entscheidung:** bei „getrennt“ bleiben. Ein einzelner Lauf je Variante;
+  Unterschiede von 2–3 Sätzen liegen im Rauschen, der Abstand bei „0
+  FALSCH“ (103 gegen 77) nicht.

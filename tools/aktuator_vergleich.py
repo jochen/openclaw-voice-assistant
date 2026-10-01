@@ -106,8 +106,8 @@ def kette_gemma(akt: Actuator, satz: str) -> tuple[dict | None, str, float]:
     return intent, v, (time.time() - t0) * 1000
 
 
-def kette_laya(akt: Actuator, url: str, satz: str, schwelle: float):
-    u = frage_laya(url, satz, akt.digest or {}, timeout=10)
+def kette_laya(akt: Actuator, url: str, satz: str, schwelle: float, variante: str = "getrennt"):
+    u = frage_laya(url, satz, akt.digest or {}, timeout=10, variante=variante)
     intent = als_intent(u, akt.digest or {}, schwelle)
     if intent is not None:
         intent = akt._mehrzahl_gruppe(satz, intent, still=True)
@@ -131,34 +131,42 @@ def bewerte(f: dict, intent: dict | None, verdict: str) -> str:
     return "FALSCH" if ausgefuehrt else "richtig"
 
 
-def testset(akt: Actuator, url: str, schwelle: float, datei: str, json_aus: str | None) -> int:
+def testset(akt: Actuator, url: str, schwelle: float, datei: str, json_aus: str | None,
+            variante: str = "getrennt", mit_gemma: bool = True) -> int:
     faelle = [json.loads(z) for z in open(datei, encoding="utf-8")
               if z.strip() and not z.startswith("#")]
     faelle = [f for f in faelle if f.get("schalten") is not None]
-    akt.tor("Mach das Licht an", timeout=120)          # Prompt-Cache warm
-    akt.classify("Mach das Licht an", timeout=120)
-    frage_laya(url, "Mach das Licht an", akt.digest or {}, timeout=60)
+    if mit_gemma:
+        akt.tor("Mach das Licht an", timeout=120)          # Prompt-Cache warm
+        akt.classify("Mach das Licht an", timeout=120)
+    frage_laya(url, "Mach das Licht an", akt.digest or {}, timeout=60, variante=variante)
+    ketten = ("gemma", "laya") if mit_gemma else ("laya",)
 
     zaehl = {"gemma": collections.Counter(), "laya": collections.Counter()}
     ms = {"gemma": [], "laya": []}
     zeilen = []
     for f in faelle:
-        gi, gv, gms = kette_gemma(akt, f["satz"])
-        li, lv, lu = kette_laya(akt, url, f["satz"], schwelle)
-        gk, lk = bewerte(f, gi, gv), bewerte(f, li, lv)
-        zaehl["gemma"][gk] += 1
+        if mit_gemma:
+            gi, gv, gms = kette_gemma(akt, f["satz"])
+            gk = bewerte(f, gi, gv)
+            zaehl["gemma"][gk] += 1
+            ms["gemma"].append(gms)
+        else:
+            gi, gv, gk = None, None, "—"
+        li, lv, lu = kette_laya(akt, url, f["satz"], schwelle, variante)
+        lk = bewerte(f, li, lv)
         zaehl["laya"][lk] += 1
-        ms["gemma"].append(gms)
         ms["laya"].append(lu.ms)
         z = {"satz": f["satz"], "soll": ausgang(f, VERDICT_AUSFUEHRBAR) if f.get("ziel") and f.get("schalten")
              else ("schalten, Ziel offen" if f.get("schalten") else "nichts schalten"),
-             "gemma": ausgang(gi, gv), "gemma_klasse": gk,
+             "gemma": ausgang(gi, gv) if mit_gemma else "—", "gemma_klasse": gk,
              "laya": ausgang(li, lv), "laya_klasse": lk, "laya_roh": lu.als_dict()}
         zeilen.append(z)
 
-    print(f"{len(faelle)} Saetze, capabilities {akt.version}, Laya {url} (Schwelle {schwelle})\n")
+    print(f"{len(faelle)} Saetze, capabilities {akt.version}, Laya {url} "
+          f"(Fragen {variante}, Schwelle {schwelle})\n")
     print(f"{'':8s} {'richtig':>8s} {'verpasst':>9s} {'FALSCH':>7s} {'Ausfall':>8s}   Latenz median / max")
-    for k in ("gemma", "laya"):
+    for k in ketten:
         c = zaehl[k]
         print(f"{k:8s} {c['richtig']:8d} {c['verpasst']:9d} {c['FALSCH']:7d} {c['Ausfall']:8d}   "
               f"{statistics.median(ms[k]):.0f} / {max(ms[k]):.0f} ms")
@@ -166,14 +174,16 @@ def testset(akt: Actuator, url: str, schwelle: float, datei: str, json_aus: str 
             print(f"   ⚠️  {k}: {c['Ausfall']} Ausfaelle — die Zeile ist KEIN Vergleich")
     print("\nAbweichungen (mindestens eine Kette nicht richtig, oder beide verschieden):")
     for z in zeilen:
-        if z["gemma_klasse"] == z["laya_klasse"] == "richtig" and z["gemma"] == z["laya"]:
+        if z["laya_klasse"] == "richtig" and (not mit_gemma or (
+                z["gemma_klasse"] == "richtig" and z["gemma"] == z["laya"])):
             continue
         print(f"  {z['satz'][:80]}\n      soll  {z['soll']}\n"
               f"      gemma {z['gemma']:34s} {z['gemma_klasse']}\n"
               f"      laya  {z['laya']:34s} {z['laya_klasse']}  "
               f"(P ja {z['laya_roh']['p_ja']}, ziel {z['laya_roh']['ziel']} {z['laya_roh']['p_ziel']})")
     if json_aus:
-        json.dump({"capabilities": akt.version, "laya": url, "schwelle": schwelle, "faelle": zeilen},
+        json.dump({"capabilities": akt.version, "laya": url, "variante": variante,
+                   "schwelle": schwelle, "faelle": zeilen},
                   open(json_aus, "w"), ensure_ascii=False, indent=1)
     return 0
 
@@ -223,6 +233,10 @@ def main() -> int:
     ap.add_argument("--schwelle", type=float, help="P(ja) ab der Laya schaltet (Default: Profil)")
     ap.add_argument("--datei", default=_TESTSET)
     ap.add_argument("--json", help="Ergebnis je Satz hierhin schreiben")
+    ap.add_argument("--variante", default="getrennt",
+                    help="Fragesatz des Laya-Checkpoints (laya_intent.VARIANTEN)")
+    ap.add_argument("--nur-laya", action="store_true",
+                    help="Gemma-Kette auslassen (Vergleich zweier Laya-Checkpoints)")
     args = ap.parse_args()
     if args.schatten:
         return schatten(args.seit)
@@ -238,7 +252,7 @@ def main() -> int:
         print("capabilities-refresh fehlgeschlagen — laeuft die Gegenstelle?")
         return 2
     return testset(akt, url, args.schwelle if args.schwelle is not None else cfg.schatten_schwelle,
-                   args.datei, args.json)
+                   args.datei, args.json, args.variante, not args.nur_laya)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,19 @@ TOR_FRAGE = {
 }
 
 KEIN_ZIEL = "keins"
+KEIN_BEFEHL = "kein_befehl"
+
+# Zwei Fragesaetze, und ein Checkpoint ist auf genau einen trainiert:
+#   getrennt  tor (noul) + ziel (choice mit "keins") + aktion — so trainiert
+#             aktuator-v1. Die Trennung stammt von Gemma, die sich bei
+#             classify auf ein Ziel festlegen musste und deren ja/nein nicht
+#             kalibriert war.
+#   vereint   ziel (choice mit "keins" UND "kein_befehl") + aktion. Die
+#             Schaltabsicht ist dann 1 - P(kein_befehl), und das Modell muss
+#             "wollte schalten, Geraet unklar" (keins) von "wollte gar nicht
+#             schalten" (kein_befehl) selbst trennen — genau die Grenze
+#             zwischen Rueckfrage und Brain. Testlauf 2026-10-01.
+VARIANTEN = ("getrennt", "vereint")
 
 AKTIONEN = {
     "ein": "einschalten, anmachen",
@@ -51,10 +64,17 @@ AKTIONEN = {
 }
 
 
-def ziel_frage(digest: dict) -> dict:
+def ziel_frage(digest: dict, variante: str = "getrennt") -> dict:
     """Die ziel-Frage aus dem Digest. Reihenfolge = Reihenfolge im Digest;
-    im Training wird sie gemischt, damit das Modell nicht an Positionen lernt."""
+    im Training wird sie gemischt, damit das Modell nicht an Positionen lernt.
+    Der Wortlaut fuer "getrennt" ist der von aktuator-v1 — nicht aendern,
+    sonst fragt der Betrieb etwas anderes als trainiert."""
     kriterien = {zid: ", ".join(z.get("namen") or [zid]) for zid, z in digest.items()}
+    if variante == "vereint":
+        kriterien[KEIN_ZIEL] = "Schaltbefehl, aber kein bestimmtes Gerät erkennbar"
+        kriterien[KEIN_BEFEHL] = "kein Schaltbefehl: eine Frage, ein Auftrag oder Gerede"
+        return {"type": "choice", "instructions": "Welches Gerät im Haus soll geschaltet werden?",
+                "criteria": kriterien}
     kriterien[KEIN_ZIEL] = "kein bestimmtes Gerät erkennbar"
     return {"type": "choice", "instructions": "Welches Gerät im Haus ist gemeint?",
             "criteria": kriterien}
@@ -64,7 +84,9 @@ AKTION_FRAGE = {"type": "choice", "instructions": "Was soll mit dem Gerät passi
                 "criteria": AKTIONEN}
 
 
-def fragen(digest: dict) -> dict:
+def fragen(digest: dict, variante: str = "getrennt") -> dict:
+    if variante == "vereint":
+        return {"ziel": ziel_frage(digest, "vereint"), "aktion": AKTION_FRAGE}
     return {"tor": TOR_FRAGE, "ziel": ziel_frage(digest), "aktion": AKTION_FRAGE}
 
 
@@ -126,10 +148,10 @@ class LayaUrteil:
 
 
 def frage_laya(url: str, satz: str, digest: dict, timeout: float = 5.0,
-               model: str = "multilingual") -> LayaUrteil:
-    """Alle drei Fragen in einer Anfrage an laya-serve (/v1/systemone)."""
+               model: str = "multilingual", variante: str = "getrennt") -> LayaUrteil:
+    """Alle Fragen der Variante in einer Anfrage an laya-serve (/v1/systemone)."""
     t0 = time.time()
-    body = {"model": model, "state": {"satz": satz}, "questions": fragen(digest)}
+    body = {"model": model, "state": {"satz": satz}, "questions": fragen(digest, variante)}
     req = urllib.request.Request(url.rstrip("/") + "/v1/systemone",
                                  data=json.dumps(body).encode(),
                                  headers={"content-type": "application/json"})
@@ -138,8 +160,10 @@ def frage_laya(url: str, satz: str, digest: dict, timeout: float = 5.0,
             a = json.load(r)["answers"]
         ms = (time.time() - t0) * 1000
         z, ak = a["ziel"], a["aktion"]
+        p_ja = (1.0 - float(z["probabilities"].get(KEIN_BEFEHL, 0.0)) if variante == "vereint"
+                else float(a["tor"]["noul"]))
         return LayaUrteil(
-            p_ja=float(a["tor"]["noul"]),
+            p_ja=p_ja,
             ziel=z["choice"], p_ziel=float(z["probabilities"][z["choice"]]),
             aktion=ak["choice"], p_aktion=float(ak["probabilities"][ak["choice"]]),
             wert=lese_wert(satz) if ak["choice"] == "setzen" else None, ms=ms)
@@ -157,7 +181,7 @@ def als_intent(u: LayaUrteil, digest: dict, schwelle: float = 0.5) -> dict | Non
     """
     if u.fehler or u.p_ja is None:
         return None
-    if u.p_ja < schwelle or u.ziel in (None, KEIN_ZIEL):
+    if u.p_ja < schwelle or u.ziel in (None, KEIN_ZIEL, KEIN_BEFEHL):
         return {"ist_kommando": False, "aktion": None, "ziel": None, "wert": None, "einheit": None}
     einheit = ((digest.get(u.ziel) or {}).get("wert") or {}).get("einheit") if u.wert is not None else None
     return {"ist_kommando": True, "aktion": u.aktion, "ziel": u.ziel,
