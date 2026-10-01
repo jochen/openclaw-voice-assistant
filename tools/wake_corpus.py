@@ -396,6 +396,73 @@ def run_messen(args) -> int:
     return 0
 
 
+# Positiv-Clips gehen geschnitten ins Paket. augment_clips (openwakeword-
+# Training) schneidet überlange Clips per Münzwurf vorn ODER hinten auf die
+# Trainingslänge — bei einem 3-s-Clip, der am Wakewort ENDET, fliegt dabei in
+# der Hälfte der Fälle genau das Wakewort raus. Merksatz aus Runde 3, bis
+# 2026-10-01 nur ein Handgriff auf dem GPU-Host.
+SCHNITT_SEK = 1.8
+# Bei Sätzen mit Wortzeitstempeln: so viel nach dem Wortende stehen lassen.
+NACH_WORT_SEK = 0.15
+_WAKE_FORM = ("gast", "gas", "gest", "gust", "kast", "gerst", "erstaun", "herztau")
+
+
+def _wav_lesen(pfad: str):
+    import wave
+    with wave.open(pfad, "rb") as w:
+        return w.readframes(w.getnframes()), w.getframerate(), w.getsampwidth(), w.getnchannels()
+
+
+def _wav_schreiben(pfad: str, roh: bytes, rate: int, breite: int, kan: int) -> None:
+    import wave
+    os.makedirs(os.path.dirname(pfad), exist_ok=True)
+    with wave.open(pfad, "wb") as w:
+        w.setnchannels(kan); w.setsampwidth(breite); w.setframerate(rate)
+        w.writeframes(roh)
+
+
+def _wake_stellen(roh: bytes, rate: int, breite: int, kan: int, stt) -> list[float]:
+    """Ende jedes Wakewort-Vorkommens (Sekunden) laut Whisper-Wortzeitstempeln."""
+    import io
+    import wave
+    import urllib.request
+    import uuid
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(kan); w.setsampwidth(breite); w.setframerate(rate); w.writeframes(roh)
+    b = "----x" + uuid.uuid4().hex
+    feld = lambda n, v: f'--{b}\r\nContent-Disposition: form-data; name="{n}"\r\n\r\n{v}\r\n'.encode()  # noqa: E731
+    body = (feld("model", stt.model) + feld("response_format", "verbose_json")
+            + feld("timestamp_granularities[]", "word") + feld("language", "de")
+            + f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="a.wav"\r\n'
+              f'Content-Type: audio/wav\r\n\r\n'.encode() + buf.getvalue() + f"\r\n--{b}--\r\n".encode())
+    req = urllib.request.Request(stt.base.rstrip("/") + "/v1/audio/transcriptions", data=body,
+                                 headers={"Content-Type": f"multipart/form-data; boundary={b}"})
+    worte = json.load(urllib.request.urlopen(req, timeout=60)).get("words") or []
+    return [w["end"] for w in worte
+            if w["word"].strip().lower().strip(",.!?-").startswith(_WAKE_FORM)]
+
+
+def _positiv_stuecke(quelle: str, stt) -> list[tuple[str, bytes, dict]]:
+    """(Namenszusatz, PCM, Info) je Trainingsstück eines Positiv-Clips.
+
+    Wake-/Near-Miss-Clips (3 s, enden am Anschlag des Modells): die letzten
+    SCHNITT_SEK. Marker-Rufe (ganze Sätze, ``_marker_rueckspul_ruf``): ein
+    Stück je Wakewort-Vorkommen, endend NACH_WORT_SEK nach dem Wortende — so
+    landet jedes "Gaston" in einem Positiv-Stück, keins als Hintergrund."""
+    roh, rate, breite, kan = _wav_lesen(quelle)
+    rahmen = breite * kan
+    laenge = int(SCHNITT_SEK * rate) * rahmen
+    if "_marker_rueckspul_ruf" not in os.path.basename(quelle):
+        return [("", roh[-laenge:], {"schnitt": f"letzte {SCHNITT_SEK} s"})]
+    out = []
+    for k, ende in enumerate(_wake_stellen(roh, rate, breite, kan, stt), 1):
+        e = min(len(roh), int((ende + NACH_WORT_SEK) * rate) * rahmen)
+        a = max(0, e - laenge)
+        out.append((f"_g{k}", roh[a:e], {"schnitt": f"Wort endet {ende:.2f} s, Stück {a / rahmen / rate:.2f}-{e / rahmen / rate:.2f} s"}))
+    return out
+
+
 def run_paket(args) -> int:
     """Trainingspaket bauen: Tages-Split, Verzeichnisbaum, Manifest, tar.gz."""
     import tarfile
@@ -436,10 +503,27 @@ def run_paket(args) -> int:
         plan.append((pfad, os.path.join("val", "positive_studio", name)))
         zaehl["val/positive_studio"] += 1
 
+    from voice_assistant.config import load_profile
+    from voice_assistant.services.speaches import SpeachesState
+    from voice_assistant.services.stt import SpeachesStt
+    prof = load_profile()
+    stt = SpeachesStt(SpeachesState(), prof.speaches_base, prof.speaches_stt_model)
+    schnitte, ohne_wort = {}, []
     for quelle, rel in plan:
         dst = os.path.join(ziel, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copy2(quelle, dst)
+        if f"{os.sep}positive{os.sep}" not in rel:
+            shutil.copy2(quelle, dst)        # Negative und Studio-Takes ganz
+            continue
+        _, rate, breite, kan = _wav_lesen(quelle)
+        stuecke = _positiv_stuecke(quelle, stt)
+        if not stuecke:
+            ohne_wort.append(os.path.basename(quelle))
+            continue
+        stamm, ext = os.path.splitext(dst)
+        for zusatz, pcm, info in stuecke:
+            _wav_schreiben(stamm + zusatz + ext, pcm, rate, breite, kan)
+            schnitte[os.path.basename(stamm + zusatz + ext)] = info
 
     paket_manifest = {
         "erstellt": datetime.now().isoformat(timespec="seconds"),
@@ -450,6 +534,8 @@ def run_paket(args) -> int:
         "val_tage": sorted(val_tage),
         "zaehlung": dict(zaehl),
         "labels": {a: manifest[a] for a in pos + neg},
+        "schnitte": schnitte,
+        "positiv_ohne_wakewort_gefunden": ohne_wort,
         "vorher_messung": "wake_corpus messen 2026-08-22: positiv 51/68, negativ 19/20 (gaston @0.35)",
     }
     with open(os.path.join(ziel, "paket_manifest.json"), "w", encoding="utf-8") as fh:
@@ -462,6 +548,8 @@ def run_paket(args) -> int:
         tar.add(ziel, arcname=os.path.basename(ziel.rstrip("/")))
 
     print(f"Paket: {tar_pfad}")
+    if ohne_wort:
+        print(f"  ⚠️  {len(ohne_wort)} Positiv-Clips ohne erkennbares Wakewort — NICHT im Paket: {ohne_wort}")
     for k in sorted(zaehl):
         print(f"  {k:22s} {zaehl[k]:3d} Clips")
     print(f"  Split: {len(train_tage)} Train-Tage / {len(val_tage)} Val-Tage (Seed {args.seed})")
@@ -490,7 +578,10 @@ feature/wakeword-nachtraining). Labels: Ohr > Selbst, keine STT-Labels.
   immer MIT Debounce rechnen).
 - Vorher-Zahl, die zu schlagen ist: positiv 51/68, negativ 19/20 (@0.35).
 
-Alle WAVs: 16 kHz mono int16, ~3 s (Wake-Ring vor dem Trigger).
+Alle WAVs: 16 kHz mono int16. Positive sind auf 1,8 s GESCHNITTEN (letzte
+1,8 s des Wake-Rings bzw. je Wakewort-Vorkommen eines Satzes, endend 0,15 s
+nach dem Wortende; `schnitte` im Manifest) — NICHT nochmal schneiden.
+Negative ganz (~3 s).
 Familienstimmen — bleiben auf diesem Host, kein Upload irgendwohin.
 """
 

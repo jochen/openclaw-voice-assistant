@@ -678,6 +678,23 @@ Rufversuchen; die Fehltrigger sind fast alle STT-gelabelt (hart: 3 in A,
 1 in B); die Nutzung hat sich geändert (B: fünfmal so viele echte Rufe/Tag,
 Aktuator-Tests, laute Abende).
 
+**Nachtrag 2026-10-01 nachts — mit Ohr-Labels neu gerechnet.** Jochen hat
+95 Clips seit v3 angehört (`tools/review_audio.py`, Stapel A: Trigger mit
+STT-Label „rauschen/unklar“, B: Near-Misses, C: Marker-Rufe). Von den
+Triggern in Stapel A waren **18 echte Rufe**, die die STT als Rauschen oder
+unklar geführt hatte. Mit Ohr > Selbst > STT:
+
+| | vorher | A 16.–25.09. | B 25.09.–01.10. |
+|---|---|---|---|
+| Fehltrigger/Tag (jetzt alle hart) | 1,16 | 2,37 | **1,16** |
+| Verlustquote | 31 % | 52 % | **28 %** |
+
+Seit der 1-Frame-Pfad aus ist, liegt v3 bei den Fehltriggern genau auf dem
+alten Stand und bei der Verlustquote leicht darunter — Kriterium 1 bleibt
+verfehlt (< 0,6), Kriterium 2 ist nicht verletzt. Die erste Rechnung oben
+(1,99/Tag, 35 %) beruhte auf STT-Labels und war zu schlecht. Das Abschalten
+des 1-Frame-Pfads hat die Fehltrigger halbiert (2,37 → 1,16/Tag).
+
 **Lesart:** v3 ist auf frischen Rufen nicht schlechter als v2, eher besser —
 aber es hat im Betrieb nicht geliefert, was der Offline-Gewinn versprach.
 Die Wette sagt für diesen Fall „zurück zu Schritt 4“: Runde 4 mit den echten

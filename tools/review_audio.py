@@ -329,7 +329,9 @@ def cmd_export_marker(args) -> int:
                 continue          # überlappende Clips desselben Moments
             if any(-2 < (e - t0).total_seconds() < b - a + 3 for e in ereignisse):
                 continue          # schon als Trigger/Near-Miss erfasst
-            s0, s1 = max(0.0, a - 0.5), min(len(meta["pegel_pro_sekunde"]), b + 1.5)
+            # 2 s Vorlauf: das Trainingsstück (1,8 s) endet kurz nach dem Wort
+            # und braucht davor echten Raumklang statt Auffüllung (2026-10-01).
+            s0, s1 = max(0.0, a - 2.0), min(len(meta["pegel_pro_sekunde"]), b + 1.5)
             stueck = roh[int(s0 * rate) * breite * kan: int(s1 * rate) * breite * kan]
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
