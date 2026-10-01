@@ -703,6 +703,35 @@ Fehlschlägen seit v3 (Near-Miss-Mitschnitte, Marker-Clips, siehe Nachtrag
 belastbarer machen (Ohr-Labels für eine Stichprobe der STT-„rauschen“).
 Entscheidung über Merge von `feature/wakeword-nachtraining`: Jochen.
 
+## Nachtraining Runde 4 — Schranke, formuliert VOR dem Training (2026-10-02 nachts)
+
+Jochen hat das Training freigegeben und ist schlafen gegangen („mach alles
+komplett fertig“). Deshalb steht hier VORHER, was v4 erfüllen muss, um
+ohne Rückfrage deployt zu werden — und was sonst passiert.
+
+Paket: `wake_corpus paket`, Seed 20260916 (wie Runde 3), Positive selbst
+geschnitten (1,8 s), Marker-Rufe je Wakewort, Ohr-Labels aus dem Review
+vom 2026-10-01. Einspeisung wie Runde 3: `real_*`, je ×10, die
+Runde-3-Clips raus (Sicherung daneben), 30k synthetische unverändert.
+
+Vergleich auf den FRISCHEN Val-Clips des Pakets (11 Tage). Drei davon
+(20260801, 20260802, 20260906) waren Trainingstage von v3 — dort misst
+sich v3 selbst, der Vergleich wird für v4 strenger. Zusätzlich wird ohne
+diese drei Tage gerechnet.
+
+| | v3 (Vorher) | v4 muss |
+|---|---|---|
+| val/positive (48) | 37 lösen aus | **≥ 37**, gepaart nicht mehr Verluste als Gewinne |
+| val/negative (36, harte Fehltrigger) | 21 lösen aus | **≤ 21** |
+| val/positive_studio (20 Takes leise/fern) | wird gemessen | **≥ v3 − 1** |
+| FP/h generisch (`eval_debounce.py`, 3-Frame @0,35) | 0,00 (Runde 3) | **≤ 0,5** |
+
+**Alle vier erfüllt →** Deploy (Modell im `gaston`-Bundle ersetzen,
+Gate-Parameter unverändert, v3 bleibt in der Git-Historie), neue
+Beobachtungswette, Morgen-Bericht an Jochen mit Rollback-Befehl.
+**Eins verfehlt →** kein Deploy; Kandidat als Bundle `gaston_v4` daneben
+ablegen, Befund notieren, Entscheidung bei Jochen.
+
 ### Wette 1-Frame-Pfad aus (2026-09-25, formuliert VOR den Daten)
 
 `min_peak_single` 0.75 → 0.0, vorzeitig vor dem Ende der v3-Wette. Stand beim
