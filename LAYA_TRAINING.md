@@ -349,11 +349,50 @@ Speaches lief diesmal ungestört mit. Gleiche Daten sonst, 11 min.
 - `setzen` ohne Zahl im Satz war bei Laya ausführbar — jetzt Rückfrage
   (`laya_intent.als_intent`).
 
-**Rollentausch vorbereitet, nicht geschaltet.** Jochen will Laya als
-Entscheider und Gemma als Schatten. Der Code kann es
-(`klassifikator: laya`, Gemma als Rückfall bei Ausfall). Gegen Gemma hat v3
-gleich viele FALSCH (3–4) und mehr Verpasste (meist harmlos: Rückfrage oder
-Brain), ist aber ~5x schneller als Gemma auf dem Test-Set (72 gegen 379 ms)
-und ~20x im Betrieb. Die selbst gesetzte Schranke („nicht schlechter als der
-laufende Checkpoint“, also v1) hat v3 nicht bestanden — Entscheidung bei
-Jochen.
+**Rollentausch geschaltet: 2026-10-01 20:50** (Jochen: „go zum tausch“).
+Laya v3 entscheidet, Gemma urteilt im Schatten und springt ein, wenn Laya
+ausfällt. Die selbst gesetzte Schranke gegen v1 war nicht bestanden — sie
+stützte sich auf Unterschiede von 3–4 Sätzen, und die liegen, wie sich
+danach zeigte, im Rauschen (unten). Gegen Gemma (alte Labels): gleich viele FALSCH
+(3–4), mehr Verpasste (meist harmlos: Rückfrage oder Brain), ~5x schneller
+auf dem Test-Set (72 gegen 379 ms) und ~20x im Betrieb (92 ms gegen 1,8 s).
+
+**Streuung zwischen Läufen gemessen (v3b, 2026-10-01).** Gleiches Rezept,
+gleiche Daten, nur `--seed 7` statt 20260928: **9 von 330 Sätzen** gehen
+verschieden aus (alte Labels: v3 306/20/4, v3b 308/21/1). Unterschiede
+zwischen Modellen von wenigen Sätzen sind ohne mehrere Läufe je Modell nicht
+deutbar — eine Automatisierung muss das berücksichtigen (mehrere Seeds,
+oder eine Schranke mit Abstand statt „nicht schlechter“).
+
+**Gemeinsam gelabelt (2026-10-01, `label_von: jochen-2026-10-01`).**
+41 neue Sätze aus Schatten-Log, Brain-Turns und den Rückspul-Clips (Rufe,
+die das Wakeword verpasst hatte), dazu Korrekturen. Zwei Regeln von Jochen:
+
+- **Verhörte Namen: „je nach Ähnlichkeit“.** Ist Raum oder Gerät noch
+  erkennbar („Lohnsimmerrolle“, „Wohnzimmerwallo“, „Türboden“, „Tyrolo“,
+  „Kickenlicht“, „abendlich“, „Mondzimmer“ = Wohnzimmer), soll geschaltet
+  werden; ist er es nicht („Atemgericht“, „Zwiebel-Rolo“), nachgefragt.
+  Achtung: das widerspricht der Erwartung in `tools/actuator_grammar_test.py`
+  für „Gastau Tyrol(o) auf 40%“ (dort: nicht schalten). Die stammt aus dem
+  Vorfall, bei dem Tyrolo zu ALLEN Rollos wurde — Gruppen schützt Regel A
+  weiter; der Einzelfall Türrollo ist jetzt erwünscht. Noch nicht angeglichen.
+- **Ein Rollostop ist immer unkritisch** („lieber zu früh als zu
+  schlecht“). Eine falsch ausgelöste `rollostop`-Routine zählt nicht als
+  teurer Fehler.
+
+Mit den neuen Labels (370 Sätze, mit Rückfrage-Regel):
+
+| | richtig / verpasst / FALSCH | davon 40 Sätze nach dem Training |
+|---|---|---|
+| v3 (live) | 343 / 26 / 1 | 35 / 4 / 1 |
+| v3b | 339 / 29 / 2 | 32 / 6 / 2 |
+| beide, schalten nur bei Einigkeit | 338 / 32 / **0** | — |
+
+Das eine FALSCH von v3: „Gastau, Lohnsimmerrolle auf 50 Prozent.“ →
+**Rosazimmer**rollo statt Wohnzimmer — die Kehrseite von „je nach
+Ähnlichkeit“. Jochen: „mit dem 1 falsch kann ich erst mal leben“.
+
+**Idee, nicht gebaut:** zwei Checkpoints (verschiedene Seeds) fragen und nur
+bei Einigkeit schalten, sonst nachfragen — auf diesem Set 0 FALSCH für 6
+Rückfragen mehr. Kostet einen zweiten Container (+1,4 GB VRAM) und etwas
+Latenz.

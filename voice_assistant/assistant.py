@@ -351,7 +351,8 @@ def _listdir_safe(pfad: str) -> list[str]:
 def _cleanup_trigger_audio() -> None:
     """Löscht Trigger-Archiv-Dateien älter als TRIGGER_AUDIO_MAX_AGE_DAYS.
 
-    Ausgenommen sind ungesicherte Ohr-Urteile, siehe _geschuetzte_clips().
+    Ausgenommen sind ungesicherte Ohr-Urteile, siehe _geschuetzte_clips(),
+    und die Marker-Clips des Rückspul-Puffers (*_marker_rueckspul.wav).
     """
     try:
         if not os.path.isdir(TRIGGER_AUDIO_DIR):
@@ -366,13 +367,17 @@ def _cleanup_trigger_audio() -> None:
             path = os.path.join(TRIGGER_AUDIO_DIR, name)
             if not name.endswith(".wav") or os.path.getmtime(path) >= cutoff:
                 continue
-            if name in geschuetzt:
+            if name in geschuetzt or "_marker_rueckspul" in name:
+                # Marker-Clips (Rückspul-Taster) sind selten, von einem Menschen
+                # angefordert und die einzigen Belege für Rufe, die nicht einmal
+                # ein Near-Miss wurden — Trainingsmaterial fürs Wakeword
+                # (WAKEWORD_PROCESS.md, Nachtrag 2026-10-01). Nie automatisch löschen.
                 behalten += 1
                 continue
             os.remove(path)
             removed += 1
         if removed or behalten:
-            zusatz = f", {behalten} wegen Ohr-Urteil behalten" if behalten else ""
+            zusatz = f", {behalten} behalten (Ohr-Urteil oder Marker)" if behalten else ""
             print(f"🧹 Trigger-Archiv: {removed} Datei(en) > {TRIGGER_AUDIO_MAX_AGE_DAYS} Tage gelöscht{zusatz}")
     except Exception as e:
         print(f"⚠️  Trigger-Archiv-Cleanup: {e}")
