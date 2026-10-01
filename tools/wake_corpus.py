@@ -459,7 +459,8 @@ def _positiv_stuecke(quelle: str, stt) -> list[tuple[str, bytes, dict]]:
     for k, ende in enumerate(_wake_stellen(roh, rate, breite, kan, stt), 1):
         e = min(len(roh), int((ende + NACH_WORT_SEK) * rate) * rahmen)
         a = max(0, e - laenge)
-        out.append((f"_g{k}", roh[a:e], {"schnitt": f"Wort endet {ende:.2f} s, Stück {a / rahmen / rate:.2f}-{e / rahmen / rate:.2f} s"}))
+        out.append((f"_g{k}", roh[a:e], {"wort_ende": round(ende, 2),
+                                          "schnitt": f"Wort endet {ende:.2f} s, Stück {a / rahmen / rate:.2f}-{e / rahmen / rate:.2f} s"}))
     return out
 
 
@@ -508,7 +509,11 @@ def run_paket(args) -> int:
     from voice_assistant.services.stt import SpeachesStt
     prof = load_profile()
     stt = SpeachesStt(SpeachesState(), prof.speaches_base, prof.speaches_stt_model)
-    schnitte, ohne_wort = {}, []
+    schnitte, ohne_wort, doppelt = {}, [], []
+    # Marker-Clips überlappen (jeder Tastendruck sichert 120 s), dieselben
+    # Rufe stecken dann in zwei Ausschnitten. Absolute Zeit des Wortendes =
+    # Zeit im Dateinamen - Vorlauf (2 s, review_audio export-marker) + Stelle.
+    marker_enden: list[float] = []
     for quelle, rel in plan:
         dst = os.path.join(ziel, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -521,6 +526,17 @@ def run_paket(args) -> int:
             ohne_wort.append(os.path.basename(quelle))
             continue
         stamm, ext = os.path.splitext(dst)
+        if "_marker_rueckspul_ruf" in quelle:
+            t0 = datetime.strptime(os.path.basename(quelle)[:15], "%Y%m%d_%H%M%S").timestamp() - 2.0
+            behalten = []
+            for zusatz, pcm, info in stuecke:
+                ende = t0 + info["wort_ende"]
+                if any(abs(ende - e) < 0.5 for e in marker_enden):
+                    doppelt.append(os.path.basename(stamm + zusatz + ext))
+                    continue
+                marker_enden.append(ende)
+                behalten.append((zusatz, pcm, info))
+            stuecke = behalten
         for zusatz, pcm, info in stuecke:
             _wav_schreiben(stamm + zusatz + ext, pcm, rate, breite, kan)
             schnitte[os.path.basename(stamm + zusatz + ext)] = info
@@ -536,6 +552,7 @@ def run_paket(args) -> int:
         "labels": {a: manifest[a] for a in pos + neg},
         "schnitte": schnitte,
         "positiv_ohne_wakewort_gefunden": ohne_wort,
+        "doppelt_verworfen": doppelt,
         "vorher_messung": "wake_corpus messen 2026-08-22: positiv 51/68, negativ 19/20 (gaston @0.35)",
     }
     with open(os.path.join(ziel, "paket_manifest.json"), "w", encoding="utf-8") as fh:
@@ -550,6 +567,8 @@ def run_paket(args) -> int:
     print(f"Paket: {tar_pfad}")
     if ohne_wort:
         print(f"  ⚠️  {len(ohne_wort)} Positiv-Clips ohne erkennbares Wakewort — NICHT im Paket: {ohne_wort}")
+    if doppelt:
+        print(f"  {len(doppelt)} Marker-Stück(e) doppelt (gleicher Ruf in überlappenden Clips) — verworfen: {doppelt}")
     for k in sorted(zaehl):
         print(f"  {k:22s} {zaehl[k]:3d} Clips")
     print(f"  Split: {len(train_tage)} Train-Tage / {len(val_tage)} Val-Tage (Seed {args.seed})")
