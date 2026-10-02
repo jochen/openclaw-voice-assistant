@@ -578,6 +578,19 @@ Es gibt bewusst **kein** Freitext-Werkzeug: der ganze Gewinn ist, dass ein
 Gerätename, der in `haus_ziele()` nicht vorkommt, nicht existiert — statt
 erraten zu werden.
 
+Eine Regel dazu gehört in die Werkzeug-Anleitung des großen Modells, sonst
+kommt sie nicht von selbst: **steht ein Eintrag aus `namen` wörtlich im Satz,
+ist das das Ziel** — nicht nach der Wortbedeutung auf eine größere Gruppe
+umdeuten. Ein großes Modell liest Bedeutung, nicht Namen. Gibt es eine
+Alltagsgruppe „alle Rollos" (bewusst ohne Kinderzimmer) neben einer Gruppe
+„Rollos im ganzen Haus", nimmt es für „alle Rollos" die vollständige Menge,
+denn wörtlich heißt „alle" ja alle. Die Rückfrage des teuren Ziels fängt das
+nicht ab: sie wird bestätigt, und es fährt mehr als gemeint. Gesehen in dieser
+Installation, fünfmal in Folge. Das kleine Modell des Aktuators hat das Problem
+nicht, es vergleicht Namen. Und Vorsicht mit Beispielen in der Anleitung
+selbst: eine Formulierung wie „Rückfrage bei teuren Zielen, etwa alle Rollos"
+setzt genau die falsche Gleichung.
+
 Gepostet wird mit einer eigenen `quelle`, damit die ausführende Seite ihr Gate
 genauso anwendet wie beim Aktuator; das Reservieren weiterer `quelle`-Werte
 für andere Aufrufer bleibt dadurch möglich. Jeder Aufruf landet in derselben

@@ -565,6 +565,19 @@ model the same guarded interface, with two tools:
 There is deliberately **no** free-text tool: the whole point is that a device
 name absent from `haus_ziele()` does not exist — rather than being guessed at.
 
+One rule belongs in the large model's tool instructions, because it will not
+arrive on its own: **if an entry from `namen` appears verbatim in the
+sentence, that is the target** — do not reinterpret it by word meaning as a
+larger group. A large model reads meaning, not names. With an everyday group
+"all shutters" (deliberately excluding the children's rooms) next to a group
+"shutters in the whole house", it picks the complete set for "all shutters" —
+literally, "all" does mean all. The confirmation prompt of the expensive
+target does not catch this: it gets confirmed, and more moves than intended.
+Seen in this installation five times in a row. The actuator's small model does
+not have the problem; it matches names. And mind the examples in the
+instructions themselves: a phrase like "confirmation for expensive targets,
+e.g. all shutters" teaches exactly the wrong equation.
+
 Requests carry their own `quelle`, so the executing side applies its gate just
 as it does for the actuator, and reserving further `quelle` values for other
 callers stays possible. Every call is appended to the same log file as the
