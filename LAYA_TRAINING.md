@@ -177,7 +177,14 @@ Betrieb importieren dieselbe Datei, damit beide garantiert dasselbe fragen.
   Formen.
 - **Automatisierung**, zwei Hebel:
   - **Der Generator zerlegt Komposita** (Wohnzimmerrollo → Wohnzimmer
-    Rollo, Wohnzimmer-Rollo) und baut STT-artige Verhörer ein.
+    Rollo, Wohnzimmer-Rollo) und baut STT-artige Verhörer ein. Seit
+    2026-10-02 (Anlass „Gaston macht alle Wolos auf.“): `_VERHOERER` in
+    `tor_trainset.py` tauscht in rund 20 % der Sätze das Gerätewort gegen
+    eine **in den Logs belegte** Form (Rollo → Roller, Rolle, Wolle, Wallo,
+    Rolli, Rolo; Rollos → Roller, Rollen, Rohlos, Wolos, Rolos; Licht →
+    lich nur im Kompositum), bei Befehlen und schweren Negativen gleich oft.
+    `--verhoert 0` erzeugt Byte für Byte die Daten von vorher. Verhörte
+    Raumnamen („Lohnsimmer“) bleiben offen. Noch nicht trainiert.
   - **Ausgeführte echte Turns** (aus `actuator_turns.log`, nach Urteil von
     Hand) **gehen als Trainingsdaten ein.** Dann muss die Trennung von
     Training und Test über die Zeit laufen (Punkt 9), nicht über die

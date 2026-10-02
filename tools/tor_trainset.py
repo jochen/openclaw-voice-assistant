@@ -259,8 +259,58 @@ def _schreibvarianten(name: str) -> list[str]:
     return []
 
 
+# Verhoerte Geraetewoerter, wie die STT sie liefert — jede Form ist in echten
+# Transkripten belegt (actuator_turns/-tor/-schatten.log, Test-Set; Zaehlung
+# 2026-10-02: Roller 17x als "Wohnzimmerroller", Wolle 5x, Wolos 2x, ...).
+# Anlass: "Gaston macht alle Wolos auf." (2026-10-02) — Laya v1 sah kein
+# Kommando, der Satz ging an den Brain (LAYA_TRAINING.md Nr. 10).
+# Nur Formen aus den Logs, keine ausgedachten: eine geratene Verhoerung
+# lehrt das Modell ein Wort, das nie kommt. Verhoerte RAUMnamen
+# ("Lohnsimmer", "Kicken") sind bewusst nicht hier — die gehoeren je Haus
+# zu den Namen und muessen erst gelabelt sein ("je nach Aehnlichkeit").
+# Reihenfolge zaehlt: "rollos" vor "rollo".
+_VERHOERER = (
+    ("rollos", ("roller", "rollen", "rohlos", "wolos", "rolos")),
+    ("rollo", ("roller", "rolle", "wolle", "wallo", "rolli", "rolo")),
+    ("licht", ("lich",)),
+)
+# "licht" nur am Ende eines Kompositums: belegt ist "abendlich", ein
+# freistehendes "Lich" nie.
+_VERHOERER_RE = re.compile(r"(rollos|rollo|(?<=[a-zäöüß])licht)\b", re.I)
+
+
+def _verhoert(name: str, rng: random.Random) -> str | None:
+    """Letztes Geraetewort im Namen durch eine belegte STT-Form ersetzen:
+    'Wohnzimmerrollo' -> 'Wohnzimmerwolle', 'alle Rollos' -> 'alle Wolos'.
+    None, wenn der Name kein bekanntes Geraetewort traegt ("Lichter",
+    "Abendlicht" ja, "Steckdose" nein)."""
+    treffer = list(_VERHOERER_RE.finditer(name))
+    if not treffer:
+        return None
+    m = treffer[-1]
+    form = rng.choice(dict(_VERHOERER)[m.group(1).lower()])
+    if m.group(1)[0].isupper():
+        form = form.capitalize()
+    return name[:m.start()] + form + name[m.end():]
+
+
 def synthetisch(digest: dict, rng: random.Random, anrede: list[str],
-                je_ziel: int) -> list[dict]:
+                je_ziel: int, p_verhoert: float = 0.0,
+                rng_v: random.Random | None = None) -> list[dict]:
+    # Verhoerer mit eigenem Zufall: dieselbe Saat ergibt dieselben Saetze
+    # wie ohne Verhoerer, nur ein Teil der Namen ist ausgetauscht.
+    # Verhoert wird NACH dem Artikel: der richtet sich nach dem gemeinten
+    # Wort ("das Wohnzimmerwolle", wie die STT es schreibt), nicht nach dem
+    # verhoerten ("die Wohnzimmerwolle" waere ein anderer Fehler).
+    rng_v = rng_v or random.Random(0)
+
+    def verhoeren(n: str) -> tuple[str, bool]:
+        if p_verhoert and rng_v.random() < p_verhoert:
+            v = _verhoert(n, rng_v)
+            if v:
+                return v, True
+        return n, False
+
     zeilen = []
     for zid, z in digest.items():
         namen = list(z.get("namen") or [zid])
@@ -285,10 +335,11 @@ def synthetisch(digest: dict, rng: random.Random, anrede: list[str],
                 w = max(lo, min(hi, w))
                 if "halb" in vorlage:
                     w = 50
-            satz = vorlage.format(n=_mit_artikel(name, rng), w=w)
+            n, verhoert = verhoeren(_mit_artikel(name, rng))
+            satz = vorlage.format(n=n, w=w)
             zeilen.append({"satz": _ende(_vorne(satz, rng, anrede), rng), "schalten": True,
                            "ziel": zid, "aktion": aktion, "wert": w,
-                           "herkunft": "synth:befehl"})
+                           "herkunft": "synth:befehl_verhoert" if verhoert else "synth:befehl"})
         # schwere Negative mit demselben Namen — nicht fuer Szenen/Routinen,
         # deren Namen selbst schon Befehle sind ("Stop alle Rollos")
         if z.get("typ") in ("szene", "routine"):
@@ -299,11 +350,14 @@ def synthetisch(digest: dict, rng: random.Random, anrede: list[str],
         if z.get("typ") == "heizung":
             neg += _NICHT_SCHALTEN_HEIZUNG * 2
         for vorlage in rng.sample(neg, min(len(neg), max(4, je_ziel // 3))):
-            n = _mit_artikel(rng.choice(namen), rng)
+            # Verhoerer auch hier, mit derselben Rate: sonst lernt das Tor
+            # "verhoertes Geraetewort = Befehl" statt das Wort zu erkennen.
+            n, verhoert = verhoeren(_mit_artikel(rng.choice(namen), rng))
             satz = vorlage.format(n=n, N=n[0].upper() + n[1:])
             zeilen.append({"satz": _ende(_vorne(satz, rng, anrede, 0.4), rng), "schalten": False,
                            "ziel": None, "aktion": None, "wert": None,
-                           "herkunft": "synth:ziel_ohne_schalten"})
+                           "herkunft": "synth:ziel_ohne_schalten_verhoert" if verhoert
+                           else "synth:ziel_ohne_schalten"})
     for satz in _BEFEHL_OHNE_ZIEL:
         for _ in range(2):
             zeilen.append({"satz": _ende(_vorne(satz, rng, anrede), rng), "schalten": True,
@@ -355,6 +409,8 @@ def main() -> int:
     ap.add_argument("--massive-nein", type=int, default=3000,
                     help="hoechstens so viele MASSIVE-Negative (Ja-Saetze immer alle)")
     ap.add_argument("--seed", type=int, default=20260928)
+    ap.add_argument("--verhoert", type=float, default=0.2,
+                    help="Anteil der Saetze mit verhoertem Geraetewort (0 = aus)")
     ap.add_argument("--aus", default=_AUS)
     ap.add_argument("--probe", type=int, default=0, help="n zufaellige Zeilen je Herkunft zeigen")
     args = ap.parse_args()
@@ -366,7 +422,8 @@ def main() -> int:
         print("capabilities-refresh fehlgeschlagen — laeuft die Gegenstelle?")
         return 2
     rng = random.Random(args.seed)
-    zeilen = synthetisch(akt.digest or {}, rng, _ANREDE, args.je_ziel)
+    zeilen = synthetisch(akt.digest or {}, rng, _ANREDE, args.je_ziel,
+                         args.verhoert, random.Random(args.seed + 1))
     if args.massive:
         zeilen += massive(os.path.expanduser(args.massive), rng, _ANREDE, args.massive_nein)
 
