@@ -312,6 +312,49 @@ kein Training, keine Sprecherbindung. Beide lassen sich kombinieren — Pegel
 davor, Verifier dahinter. Ob der Verifier daneben noch etwas beiträgt, ist
 offen und erst zu messen, wenn das Pegel-Gate scharf ist.
 
+### Mehr Mikrofon-Verstärkung bringt dem Modell nichts (2026-10-02)
+
+Frage: hilft eine höhere Eingangsverstärkung, wenn man das Pegel-Gate
+entsprechend mit anhebt? Anlass war der Eindruck, die Aufnahmen seien leise,
+und die Erinnerung an eine frühere Absenkung — die war aber im **Fablab**
+(`fcd4cb9`, `respeaker-fablab.yaml`), nicht hier. Und die dort gesenkten
+Firmware-Werte `auto_gain`/`volume_multiplier`/`noise_suppression_level`
+wirken in diesem Aufbau gar nicht: ESPHome schickt sie als `audio_settings`
+an den Server, `RespeakerSource` nimmt sie entgegen und ignoriert sie. Die
+einzige Verstärkung ist das digitale `samples * 4` in `audio/respeaker.py`.
+
+Gemessen mit `wake_corpus messen --gain G --rms-min 400` (Clips × G mit
+Übersteuerung wie live, Pegel-Gate 400 × G) über den Dauer-Korpus:
+
+| | ×1 | ×1,5 | ×2 |
+|---|---|---|---|
+| v4, ganzer Korpus — echte Rufe | 152/180 | 153/180 | 153/180 |
+| v4, ganzer Korpus — Fehltrigger | 24/79 | 24/79 | 24/79 |
+| v3, frisch (nach 2026-09-16) — echte Rufe | 70/100 | 70/100 | 70/100 |
+| v3, frisch — Fehltrigger | 25/50 | 25/50 | 25/50 |
+
+v4 hat den Korpus im Training gesehen (Pegel ×1); v3 auf den frischen Clips
+ist die ehrliche Gegenprobe. Beide Modelle bleiben auf ±1 Clip gleich: der
+Score ist praktisch pegelunabhängig, und mit mitskaliertem Gate ändert sich
+nichts. Die STT normalisiert ohnehin auf Peak. Damit ist ein Mehr an
+**digitaler** Verstärkung erledigt.
+
+**Grenze dieser Messung (Jochen):** im Korpus steht nur, was schon einmal
+aufgefallen ist — als Trigger, Near-Miss oder im Rückspul-Puffer. Ein Ruf,
+der zu leise war, um überhaupt aufzufallen, fehlt; genau um den ginge es bei
+mehr Empfindlichkeit. Beantwortbar ist das nur mit neuen, geführten
+Aufnahmen (feste Positionen, vorher/nachher). Physikalisch bestätigt die
+Messung nur, was ohnehin gilt: digitale Verstärkung verbessert den
+Rauschabstand nicht.
+
+Und der Pegel ist nicht abgesenkt, er ist geregelt: der XVF3800 hat eine
+eigene AGC (`PP_AGCONOFF`, Default an) mit Zielpegel `PP_AGCDESIREDLEVEL`
+0,0045 ≈ −23,5 dBFS RMS — passt zu den gemessenen Spitzen von −16 bis
+−21 dBFS. Die Stellschrauben dort (AGC-Maximum, Rauschunterdrückung,
+Beam) sind der nächste Schritt, siehe `esphome/respeaker.yaml`. Offen bleibt nur die analoge Seite
+(Mikrofon-Gain/AGC im XVF3800 selbst) — die ist nicht über die Firmware
+dieses Repos eingestellt und ungemessen.
+
 ## Prozess (wiederholend)
 
 1. **Sammeln** — passiv aus dem Alltag. Tage bis Wochen.

@@ -321,6 +321,20 @@ def run_messen(args) -> int:
     scorer = BundleScorer(args.bundle, args.threshold)
     print(f"Bundle '{scorer.bundle}' — threshold={scorer.threshold}, "
           f"min_hits={scorer.min_hits}, min_peak={scorer.min_peak}")
+    # --gain: was waere, wenn die Quelle lauter/leiser liefe? Die Clips liegen
+    # NACH der Live-Verstaerkung vor (ReSpeaker x4); Faktor 2 entspricht also
+    # x8, mit Uebersteuerung wie live. Das Pegel-Gate wird mitskaliert
+    # (wake_rms_min x gain), sonst misst man die Gate-Aenderung mit statt der
+    # Wirkung des Pegels aufs Modell. Messreihe: WAKEWORD_PROCESS.md.
+    gate = 0.0
+    if args.gain != 1.0 or args.rms_min:
+        import numpy as np
+        from voice_assistant.config import load_profile
+        from voice_assistant.wake_rms import loudest_window_rms
+        from wakeword_studio.scoring import load_wav_16k
+        gate = (args.rms_min if args.rms_min is not None
+                else load_profile().wake_rms_min) * args.gain
+        print(f"gain x{args.gain}, Pegel-Gate {gate:.0f}")
     print(f"Korpus: {len(im_korpus)} Clips\n")
 
     from tools.verifier_probe import _day   # gleiche Tages-Ableitung wie im Paket
@@ -347,7 +361,14 @@ def run_messen(args) -> int:
         if unter not in ("positiv", "negativ"):
             continue
         gruppe = "train" if _day(audio) in train_tage else "frisch"
-        r = scorer.score_wav(pfad)
+        if gate or args.gain != 1.0:
+            pcm = load_wav_16k(pfad).astype(np.float32) * args.gain
+            pcm = np.clip(pcm, -32768, 32767).astype(np.int16)
+            r = scorer.score_pcm(pcm)
+            if gate and loudest_window_rms(pcm) < gate:
+                r = {**r, "triggered": False}
+        else:
+            r = scorer.score_wav(pfad)
         ergebnis.setdefault((gruppe, unter), []).append((audio, r))
         if args.verbose:
             print(f"  [{gruppe:6s}] {audio}  score={r['max_score']:.2f} "
@@ -622,6 +643,10 @@ def main() -> int:
     p.add_argument("--bundle", default="gaston")
     p.add_argument("--threshold", type=float, default=None)
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--gain", type=float, default=1.0,
+                   help="Clips vor dem Scoren so verstaerken (Pegel-Gate wird mitskaliert)")
+    p.add_argument("--rms-min", type=float, default=None,
+                   help="Pegel-Gate vor dem Gain-Faktor (Default: wake_rms_min des Profils)")
     p.add_argument("--split", default=None, metavar="PAKET_MANIFEST.JSON",
                    help="paket_manifest.json des Nachtrainings. Trennt die "
                         "Messung in 'frisch' (nie im Training gesehen) und "
