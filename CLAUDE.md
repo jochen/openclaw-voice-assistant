@@ -559,10 +559,30 @@ den neuesten Stand, der dann eine andere ESPHome-Version verlangte. Ein Update
 ist eine bewusste Änderung dieser Refs, zusammen mit `esphome` im venv und
 `min_version`.
 
-Stand 2026-10-02: auf dem Gerät läuft die April-Firmware (ESPHome 2026.4),
-von der es keine Kopie mehr gibt. Der Build mit 2026.9.1 (`c46e0bd`, liest die
-XVF3800-Parameter ins Log) ist kompiliert, **nicht geflasht** — zuerst den
-Rückweg herstellen (USB-Sicherung, ggf. Build-Reste auf dem alten Pi).
+Stand 2026-10-02: auf dem Heim-Gerät läuft die April-Firmware (ESPHome
+2026.4), von der es keine Kopie mehr gibt. Der Build mit 2026.9.1 ist
+kompiliert, **nicht geflasht** — zuerst den Rückweg herstellen
+(USB-Sicherung, ggf. Build-Reste auf dem alten Pi).
+
+**2026.9.1 im Fablab getestet und zurückgenommen (2026-10-02 19:45–19:56).**
+Zwei Befunde, beide vor dem nächsten Versuch zu klären:
+
+1. **Wiedergabe zeitweise verstümmelt** (Jochen, vor Ort). Mit der
+   Mai-Firmware unmittelbar davor klang derselbe Ablauf sauber. Ursache
+   offen; der Lautsprecher-Puffer ist es nicht (Default jetzt 500 ms).
+2. **Die Hör-Session riss ab, als sich ein zweiter API-Client abmeldete**
+   (`esphome logs`). Verbindung blieb stehen, Audio kam keins mehr — sichtbar
+   nur an der CPU-Last des Assistenten (≈ 4 % statt ≈ 30 %). Erst ein
+   Neustart des Assistenten (neue Verbindung, „Start Listening") half.
+   Getrennt davon, auch in der alten Firmware: `api: on_client_disconnected`
+   setzt den LED-Ring zurück, egal welcher Client ging.
+
+Was der Test geliefert hat: die Ist-Werte des XVF3800 (Fablab-Gerät, DSP
+1.0.7) — `AUDIO_MGR_MIC_GAIN` 90, `AUDIO_MGR_REF_GAIN` 8, AGC an mit Maximum 32
+und Zielpegel 0,0045, `PP_MIN_NS`/`PP_MIN_NN` 0,15/0,51, `AUDIO_MGR_OP_L`
+(8,0), `AUDIO_MGR_OP_R` (7,3). Die Seeed-Firmware setzt also eigene Werte,
+die Doku-Defaults gelten nicht. Mai-Firmware samt Build-Verzeichnis liegt in
+`~/esphome-firmware/respeaker-fablab/` (Assistenz- und Fablab-Rechner).
 
 ## Profile System
 
