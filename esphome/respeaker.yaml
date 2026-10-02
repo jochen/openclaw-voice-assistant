@@ -22,6 +22,8 @@ esphome:
     - priority: -100
       then:
         - script.execute: animation_loop
+        - delay: 10s
+        - script.execute: xvf_params_lesen
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -195,6 +197,13 @@ button:
     id: start_listening_btn
     on_press:
       - voice_assistant.start:
+  # Nur LESEN: die Signalverarbeitung des XVF3800 ins Log (Tag xvf_params).
+  - platform: template
+    name: "XVF-Parameter lesen"
+    id: xvf_params_btn
+    entity_category: diagnostic
+    on_press:
+      - script.execute: xvf_params_lesen
 
 number:
   # Hauptzustand — Pi schickt Phase 0–11, ESP spielt passende Animation
@@ -259,6 +268,69 @@ globals:
     initial_value: '0'
 
 script:
+  # Ist-Werte der XVF3800-Signalverarbeitung, nur lesend. Anlass (2026-10-02):
+  # die Aufnahmen wirkten leise, und digitale Verstaerkung auf dem Pi brachte
+  # nachweislich nichts (WAKEWORD_PROCESS.md). Der Pegel kommt aus der AGC des
+  # XVF3800 selbst; was dort eingestellt ist, hat bisher niemand gelesen — die
+  # Doku nennt je Fassung andere Defaults (PP_AGCMAXGAIN 31,6 bzw. 125).
+  # Die voice_assistant-Werte auto_gain/volume_multiplier weiter unten wirken
+  # hier NICHT: sie gehen als audio_settings an den Server, und der Pi
+  # ignoriert sie.
+  # IDs (resid, cmd) aus Seeeds python_control/xvf_host.py
+  # (github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY); Protokoll wie
+  # read_led_beam_direction() der Integration: {resid, cmd|0x80, n+1} senden,
+  # Statusbyte + n Bytes lesen. Status != 0 = noch nicht bereit -> 1x wiederholen.
+  - id: xvf_params_lesen
+    mode: single
+    then:
+      - lambda: |-
+          struct P { const char *name; uint8_t resid, cmd, anzahl; char typ; };
+          // typ: f = float, i = int32, u = uint8 (je anzahl Werte)
+          static const P params[] = {
+            {"AUDIO_MGR_MIC_GAIN",  35,  0, 1, 'f'},
+            {"AUDIO_MGR_REF_GAIN",  35,  1, 1, 'f'},
+            {"AUDIO_MGR_OP_L",      35, 15, 2, 'u'},
+            {"AUDIO_MGR_OP_R",      35, 19, 2, 'u'},
+            {"AUDIO_MGR_SYS_DELAY", 35, 26, 1, 'i'},
+            {"AEC_FIXEDBEAMSONOFF", 33, 37, 1, 'i'},
+            {"PP_AGCONOFF",         17, 10, 1, 'i'},
+            {"PP_AGCMAXGAIN",       17, 11, 1, 'f'},
+            {"PP_AGCDESIREDLEVEL",  17, 12, 1, 'f'},
+            {"PP_AGCGAIN",          17, 13, 1, 'f'},
+            {"PP_AGCTIME",          17, 14, 1, 'f'},
+            {"PP_AGCFASTTIME",      17, 15, 1, 'f'},
+            {"PP_MIN_NS",           17, 21, 1, 'f'},
+            {"PP_MIN_NN",           17, 22, 1, 'f'},
+          };
+          for (const auto &p : params) {
+            const uint8_t breite = (p.typ == 'u') ? 1 : 4;
+            const uint8_t n = p.anzahl * breite;
+            uint8_t req[3] = {p.resid, (uint8_t) (p.cmd | 0x80), (uint8_t) (n + 1)};
+            uint8_t resp[9] = {0};
+            bool ok = false;
+            for (int versuch = 0; versuch < 2 && !ok; versuch++) {
+              if (id(respeaker).write_read(req, 3, resp, n + 1) != i2c::ERROR_OK) {
+                ESP_LOGW("xvf_params", "%s: I2C-Fehler", p.name);
+                break;
+              }
+              ok = resp[0] == 0;
+              if (!ok) delay(5);
+            }
+            if (!ok) {
+              ESP_LOGW("xvf_params", "%s: Status %u", p.name, resp[0]);
+              continue;
+            }
+            if (p.typ == 'f') {
+              float v; memcpy(&v, &resp[1], 4);
+              ESP_LOGI("xvf_params", "%s = %g", p.name, v);
+            } else if (p.typ == 'i') {
+              int32_t v; memcpy(&v, &resp[1], 4);
+              ESP_LOGI("xvf_params", "%s = %d", p.name, (int) v);
+            } else {
+              ESP_LOGI("xvf_params", "%s = %u, %u", p.name, resp[1], resp[2]);
+            }
+          }
+
   # Haupt-Animations-Loop — läuft permanent, wertet va_phase alle 50ms aus
   - id: animation_loop
     mode: restart
