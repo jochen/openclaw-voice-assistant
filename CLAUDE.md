@@ -265,7 +265,7 @@ Fortsetzung des zuletzt erkannten Sprechers erlaubte.
 
 Am **2026-09-18** hat das im Fablab genau so versagt: Speaches-Diarization gab
 ab 20:01 HTTP 500, jeder Turn wurde dadurch zu „unbekannt", und Mister Handy
-hat Desktop-Rechner ausgeschaltet. Nachlesbar im Journal des Pi und in seiner
+hat Desktop-Rechner ausgeschaltet. Nachlesbar im Journal des Fablab-Rechners und in seiner
 eigenen Antwort um 20:05:49.
 
 Zwei Dinge sind daraus entstanden:
@@ -508,7 +508,7 @@ Dateilänge), und der Raum-Grundpegel wird gemessen statt angenommen.
 
 `RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die
 `voice_assistant`-Session des ESP (`handle_stop` → EOS), weshalb am Ende der
-Methode `press_start_button()` stand. Folge: der Pi war während **jeder**
+Methode `press_start_button()` stand. Folge: der Assistenz-Rechner war während **jeder**
 Ansage taub — kein Wakeword, kein Barge-in, nichts. Jetzt geht die Wiedergabe
 direkt über die `media_player`-Entity (`media_player_command(media_url=…,
 announcement=True)`); die VA-Session bleibt unberührt, der Mic-Strom läuft
@@ -525,18 +525,64 @@ der WAV-Datei zurück, damit ein Turn nicht hängt. Die Player-Befehle gehen üb
 asyncio-Client: ein verschluckter Wiedergabe-Befehl ließe einen Turn hängen,
 eine verschluckte LED-Farbe nicht.
 
+## ReSpeaker-Firmware: bauen, flashen, aufheben
+
+**Eine erfolgreich getestete Firmware wird aufgehoben** (Jochen, 2026-10-02):
+
+```bash
+esphome/firmware_sichern.sh respeaker.yaml "was getestet wurde"
+```
+
+legt den letzten Build mit Zeitstempel, ESPHome-Version und Git-Stand unter
+`~/esphome-firmware/<gerät>/` ab — **außerhalb des Repos**, denn eine gebaute
+Firmware enthält WLAN-Passwort, OTA-Passwort und API-Schlüssel, und das Repo
+ist öffentlich. `firmware.factory.bin` ist für USB (`esptool write_flash 0x0`),
+`firmware.ota.bin` für OTA.
+
+Anlass: am 2026-10-02 hat der erste Build mit ESPHome 2026.9 das
+Build-Verzeichnis neu erzeugt und dabei die einzige Kopie der laufenden
+April-Firmware gelöscht, samt der Quellen, aus denen sie entstand. Daraus
+zwei Regeln:
+
+- **Vor einem Flash muss es einen Rückweg geben:** die zuletzt getestete
+  Firmware im Archiv, oder eine USB-Vollsicherung vom Gerät
+  (`esptool read_flash 0 0x800000 …`, XIAO per USB am Assistenz-Rechner). Der
+  OTA-Rollback des ESP32 springt nur zurück, wenn die neue Firmware gar nicht
+  startet — nicht, wenn sie schlechter klingt.
+- **Vor einem Wechsel der ESPHome-Version das Build-Verzeichnis
+  (`esphome/.esphome/build/`) sichern**; ein Build kann es komplett ersetzen.
+
+Gebaut wird mit `esphome-venv/bin/esphome` (2026.9.1). Die externen
+Komponenten in `esphome/respeaker.yaml` hängen an vollen Commit-Hashes mit
+`refresh: never` — vorher zog `ref: main` + `refresh: 0s` jeden Build still auf
+den neuesten Stand, der dann eine andere ESPHome-Version verlangte. Ein Update
+ist eine bewusste Änderung dieser Refs, zusammen mit `esphome` im venv und
+`min_version`.
+
+Stand 2026-10-02: auf dem Gerät läuft die April-Firmware (ESPHome 2026.4),
+von der es keine Kopie mehr gibt. Der Build mit 2026.9.1 (`c46e0bd`, liest die
+XVF3800-Parameter ins Log) ist kompiliert, **nicht geflasht** — zuerst den
+Rückweg herstellen (USB-Sicherung, ggf. Build-Reste auf dem alten Pi).
+
 ## Profile System
 
-Zwei Profile werden automatisch per Hostname oder `GASTON_PROFILE` gewählt:
+„Assistenz-Rechner" heißt hier der Rechner, auf dem `voice_assistant` läuft
+und der den Audio-Strom des ReSpeakers empfängt — heute ein x86-Rechner mit
+GPU. Früher war das ein Raspberry Pi; wo im Code oder in alten Notizen „der
+Pi" steht, ist dieser Rechner gemeint. Hostnamen stehen bewusst nicht hier
+(öffentliches Repo), sondern in `config.yaml` (`hostname_map`).
 
-- **`clawdpi`** — `clawdpi1`, Mic Index 1 @ 48 kHz (resample), WLED
-- **`openclaw`** — zweiter Pi, Mic Index 0 @ 16 kHz, eigenes Telegram/Session
+Das Profil wird per `GASTON_PROFILE` oder über `hostname_map` (Teilstring des
+Hostnamens) gewählt. In `config.yaml` (nicht im Repo) stehen das Profil des
+laufenden Betriebs (`mode: respeaker`, Aktuator, Überwacher) und ältere
+Pi-Profile, teils noch im flachen Schema.
 
 Jedes Profil hat einen **`mode`**-Schalter:
 
-- `mode: local` — ALSA-Mic + ALSA-Speaker + openwakeword auf dem Pi (bisheriges Verhalten)
+- `mode: local` — ALSA-Mic + ALSA-Speaker + openwakeword auf dem Assistenz-Rechner
 - `mode: respeaker` — Mic + LED-Ring + optional Speaker über ReSpeaker XVF3800 + XIAO ESP32-S3
-  (ESPHome Native API, `micro_wakeword` läuft auf dem ESP)
+  (ESPHome Native API). Das Wakeword läuft auch hier als openwakeword auf dem
+  Assistenz-Rechner gegen den Audio-Strom, nicht als `micro_wakeword` auf dem ESP.
 
 Das alte flache YAML-Schema wird weiter akzeptiert und als `mode: local`
 interpretiert (Rückwärtskompatibilität in `voice_assistant/config.py`).
