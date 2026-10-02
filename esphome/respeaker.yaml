@@ -17,7 +17,7 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
-  min_version: 2026.4.0
+  min_version: 2026.9.0
   on_boot:
     - priority: -100
       then:
@@ -147,22 +147,31 @@ audio_dac:
     id: aic3104_dac
     i2c_id: internal_i2c
 
+# Feste Commits statt Branches: mit "ref: main" + "refresh: 0s" zog jeder
+# Build den neuesten Stand. Am 2026-10-02 verlangte der ESPHome 2026.9, der
+# Flash-venv hatte 2026.4 — und der Fork-Stand des laufenden Aprilbuilds war
+# online nicht mehr vorhanden (Branch neu aufgesetzt). Ein Update ist jetzt
+# eine bewusste Aenderung dieser zwei Zeilen, zusammen mit esphome im
+# esphome-venv und min_version.
+#   i2s_audio-Fork: nimmt jeden dritten 48-kHz-Frame -> 16 kHz (seit Januar
+#   unveraendert, auch im Aprilbuild); der Original-Treiber geht mit dem
+#   Board nicht.
 external_components:
   - source:
       type: git
       url: https://github.com/formatBCE/esphome
-      ref: respeaker_microphone
+      ref: 9f8c1d07dec4dd81d4b19d53621a63ede85391f1   # respeaker_microphone, 2026-09-26
     components:
       - i2s_audio
-    refresh: 0s
+    refresh: never
   - source:
       type: git
       url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
-      ref: main
+      ref: 8115b7b3ce73da5c22d0edf83ac5ae3430dba940   # main, 2026-09-29, fuer ESPHome 2026.9.0
     components:
       - respeaker_xvf3800
       - aic3104
-    refresh: 0s
+    refresh: never
 
 # XVF3800-DSP über I2C
 respeaker_xvf3800:
@@ -279,7 +288,8 @@ script:
   # IDs (resid, cmd) aus Seeeds python_control/xvf_host.py
   # (github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY); Protokoll wie
   # read_led_beam_direction() der Integration: {resid, cmd|0x80, n+1} senden,
-  # Statusbyte + n Bytes lesen. Status != 0 = noch nicht bereit -> 1x wiederholen.
+  # Statusbyte + n Bytes lesen. Nur Status 0 (CTRL_DONE) ist gueltig; CTRL_WAIT
+  # und 0x40 (RETRY) sind laut Integration normal -> bis zu 10x wiederholen.
   - id: xvf_params_lesen
     mode: single
     then:
@@ -308,13 +318,13 @@ script:
             uint8_t req[3] = {p.resid, (uint8_t) (p.cmd | 0x80), (uint8_t) (n + 1)};
             uint8_t resp[9] = {0};
             bool ok = false;
-            for (int versuch = 0; versuch < 2 && !ok; versuch++) {
+            for (int versuch = 0; versuch < 10 && !ok; versuch++) {
               if (id(respeaker).write_read(req, 3, resp, n + 1) != i2c::ERROR_OK) {
                 ESP_LOGW("xvf_params", "%s: I2C-Fehler", p.name);
                 break;
               }
               ok = resp[0] == 0;
-              if (!ok) delay(5);
+              if (!ok) delay(10);
             }
             if (!ok) {
               ESP_LOGW("xvf_params", "%s: Status %u", p.name, resp[0]);
