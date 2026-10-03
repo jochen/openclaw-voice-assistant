@@ -41,7 +41,9 @@ for f in firmware.factory.bin firmware.ota.bin; do
 done
 
 esphome_ver="$("$repo/esphome-venv/bin/esphome" version | awk '{print $2}')"
-git_stand="$(git -C "$repo" rev-parse --short HEAD)"
+# Letzter Commit DIESER YAML, nicht HEAD: danach geaenderte Werkzeuge oder
+# Doku aendern die Firmware nicht.
+git_stand="$(git -C "$repo" log -1 --format=%h -- "$yaml_pfad")"
 git -C "$repo" diff --quiet -- "$yaml_pfad" || git_stand="${git_stand}-geaendert"
 stempel="$(date -r "$build/firmware.ota.bin" +%Y-%m-%d_%H%M)"
 
