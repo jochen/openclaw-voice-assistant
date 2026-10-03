@@ -22,27 +22,42 @@ Was im zweiten Kanal liegt, bestimmt respeaker.kanal2_quelle:
 
 Anlass: im Fablab-Test von ESPHome 2026.9.1 (2026-10-02) klang die Ausgabe
 "teilweise verstuemmelt". Hoeren kann das Werkzeug nicht; es misst, was man
-hoeren wuerde:
+hoeren wuerde — ueber Huelle (5-ms-Pegel) und Spektrum, nicht ueber die
+Wellenform (Grund: siehe unten, "Taktdrift"):
 
-    Versatz   Kreuzkorrelation: wann setzt der Ton im Mitschnitt ein
-    Luecken   20-ms-Fenster, in denen gesendet Sprache ist, im Mitschnitt
+    Versatz   wann setzt der Ton im Mitschnitt ein (Huellen-Korrelation)
+    Drift     wie gleichmaessig der Versatz ueber die Datei wandert. Eine
+              glatte Drift ist ein Taktunterschied und hoerbar nichts.
+    Sprung    Versatz-Aenderung zwischen benachbarten 0,5-s-Fenstern, die die
+              Drift nicht erklaert: Audio fehlt oder ist doppelt. Vermutlich
+              die Signatur von "verstuemmelt".
+    Luecke    Huellen-Werte, bei denen gesendet Sprache ist, im Mitschnitt
               aber (relativ zum Rest der Datei) fast nichts — Aussetzer
-    Verzerrt  100-ms-Fenster mit Sprache, deren Korrelation zum Gesendeten
-              weit unter dem Median der Datei liegt — Knacken, Stottern,
-              verschobene Stuecke. Nur bei "referenz" belastbar; bei "roh"
-              druecken Hall und Geraeusch die Korrelation ohnehin.
+    Verzerrt  100-ms-Fenster, deren Spektrum weit unter dem Median der Datei
+              zum Gesendeten passt. Nur bei "referenz" belastbar.
     STT       (--stt) beide Dateien durch die Speaches-STT des Profils,
               Wort-Uebereinstimmung. Verstuemmelte Sprache verhoert sich.
     Bild      (--bild) Spektrogramm gesendet ueber Mitschnitt als PNG neben
               die Dateien — zum Ansehen, wo es klemmt.
 
-Die Schwellen sind Startwerte ohne Messreihe. Erst eine Aufnahme mit
-bekannt sauberer Wiedergabe (Werkszustand) zeigt, wo die gesunden Werte
-liegen; dann hier eintragen.
+Taktdrift: der Mitschnitt laeuft gegenueber der Datei ~0,4 % schneller —
+gleichmaessig, ohne Spruenge. Dazu nimmt der i2s_audio-Fork jeden dritten
+48-kHz-Frame ohne Tiefpass (Aliasing). Beides liess eine Wellenform-
+Korrelation ueber 7 s auf ~0 fallen, obwohl die Huellen in jedem Fenster mit
+0,95-1,00 uebereinstimmten und die STT wortgleich war. Die erste Fassung
+meldete deshalb an einer sauberen Aufnahme reihenweise Befunde.
 
 Messreihe
 ---------
-(noch keine)
+
+    2026-10-03  Heim-ReSpeaker, ESPHome 2026.9.1, kanal2_quelle referenz (5,0).
+                Jochen: "hoerte sich gut an, ohne jede Verstuemmelung" —
+                die Nulllinie. 8 Wiedergaben (0,3-7,8 s), 0 auffaellig.
+                Versatz 0,20-0,25 s, Drift -3,1 bis -4,0 ‰ (ab 1,9 s
+                messbar), Huellen-Korrelation 0,99, Spektral-Median
+                0,87-0,94 (Sprache), 0,57 beim Follow-up-Beep (Ton, unter
+                der Mindestmenge). STT gesendet = Mitschnitt in 7 von 8,
+                der achte ist der Beep ("Beep!" / "Oh!").
 """
 
 from __future__ import annotations
@@ -71,11 +86,27 @@ from voice_assistant.config import VOICE_DIR  # noqa: E402
 
 _DIR = os.path.join(VOICE_DIR, "wiedergabe")
 _RATE = 16000
-_FENSTER_LUECKE = 0.020       # s
-_FENSTER_KORR = 0.100         # s
-_SPRACHE_DB = -35.0           # gesendet: Fenster gilt als Sprache ab Pegel ueber Dateimaximum
+# Alle Vergleiche laufen ueber Huelle (5-ms-Pegel) und Spektrum, nicht ueber
+# die Wellenform: der Mitschnitt laeuft gegenueber der Datei ~0,4 % schneller
+# (gleichmaessige Taktdrift, gemessen 2026-10-03), und der i2s_audio-Fork nimmt
+# jeden dritten 48-kHz-Frame ohne Tiefpass — beides zerstoert eine
+# Wellenform-Korrelation, ohne dass man etwas hoert.
+_HUELLE_S = 0.005             # s je Huellen-Wert
+_VERLAUF_FENSTER_S = 0.5      # Fenster fuer den Versatz-Verlauf, Schritt die Haelfte
+_VERLAUF_SUCHE_S = 0.1        # so weit wird je Fenster um den Grobversatz gesucht
+_VERLAUF_MIN_KORR = 0.6       # Fenster mit schwaecherer Huellen-Korrelation zaehlen nicht
+_SPRUNG_S = 0.015             # Abweichung von der Drift-Geraden, ab der ein Sprung gemeldet wird
+_SPRACHE_DB = -35.0           # gesendet: Huellen-Wert gilt als Sprache ab Pegel ueber Dateimaximum
 _LUECKE_DB = -20.0            # Mitschnitt: so weit unter dem fuer diese Datei typischen Verhaeltnis
-_VERZERRT_ANTEIL = 0.5        # Korrelation unter Anteil x Median der Datei
+_LUECKE_MIN_S = 0.015         # kuerzere Einbrueche sind Rauschen der Messung
+_SPEKTRUM_FENSTER_S = 0.1     # Fenster fuer den Spektral-Vergleich
+_VERZERRT_ABSTAND = 0.25      # spektrale Korrelation so weit unter dem Median der Datei
+# Mindestmaterial fuer ein Urteil. Am 2026-10-03 schlug ohne diese Grenze der
+# 0,3-s-Follow-up-Beep als "verzerrt" an (ein Ton, zwei Fenster — der Median
+# der Datei ist dann kein Massstab), und eine 1,2-s-Ansage zeigte aus drei
+# Punkten -10 ‰ Drift statt der ueberall sonst gemessenen -4 ‰.
+_MIN_SPEKTRUM_FENSTER = 5
+_MIN_VERLAUF_PUNKTE = 4
 
 
 def lies_mono16k(pfad: str) -> np.ndarray:
@@ -92,77 +123,158 @@ def lies_mono16k(pfad: str) -> np.ndarray:
     return x - (x.mean() if len(x) else 0.0)
 
 
-def versatz(gesendet: np.ndarray, mitschnitt: np.ndarray) -> tuple[int, float]:
-    """Samples, um die der Mitschnitt spaeter beginnt, und die Spitzenkorrelation."""
-    n = len(gesendet) + len(mitschnitt)
-    nfft = 1 << (n - 1).bit_length()
-    a = np.fft.rfft(mitschnitt, nfft)
-    b = np.fft.rfft(gesendet, nfft)
-    xc = np.fft.irfft(a * np.conj(b), nfft)
-    xc = np.concatenate([xc[-(len(gesendet) - 1):], xc[:len(mitschnitt)]])
-    i = int(np.argmax(np.abs(xc)))
-    lag = i - (len(gesendet) - 1)
-    norm = np.sqrt(np.sum(gesendet ** 2) * np.sum(mitschnitt ** 2)) or 1.0
-    return lag, float(np.abs(xc[i]) / norm)
-
-
 def _db(x: np.ndarray) -> np.ndarray:
     return 10 * np.log10(np.maximum(x, 1e-12))
 
 
-def _intervalle(maske: np.ndarray, fenster: float) -> list[tuple[float, float]]:
+def _huelle(x: np.ndarray) -> np.ndarray:
+    w = int(_HUELLE_S * _RATE)
+    k = len(x) // w
+    return 10 * np.log10((x[:k * w].reshape(k, w) ** 2).mean(axis=1) + 1e-3)
+
+
+def _intervalle(maske: np.ndarray, schritt: float, min_s: float = 0.0) -> list[tuple[float, float]]:
     out, start = [], None
     for k, m in enumerate(list(maske) + [False]):
         if m and start is None:
             start = k
         elif not m and start is not None:
-            out.append((round(start * fenster, 2), round(k * fenster, 2)))
+            if (k - start) * schritt >= min_s - 1e-9:
+                out.append((round(start * schritt, 2), round(k * schritt, 2)))
             start = None
     return out
+
+
+def versatz_verlauf(eg: np.ndarray, em: np.ndarray) -> tuple[int, list[tuple[float, float, float]]]:
+    """Grobversatz und Versatz je Fenster (in Huellen-Einheiten).
+
+    Rueckgabe (grob, [(mitte, versatz, korrelation), ...]) — nur Fenster mit
+    Sprache und ausreichend eindeutiger Lage.
+    """
+    a, b = eg - eg.mean(), em - em.mean()
+    grob = int(np.argmax(np.correlate(b, a, "full"))) - (len(a) - 1)
+    n = int(_VERLAUF_FENSTER_S / _HUELLE_S)
+    such = int(_VERLAUF_SUCHE_S / _HUELLE_S)
+    punkte = []
+    for s0 in range(0, len(a) - n + 1, n // 2):
+        if eg[s0:s0 + n].max() < eg.max() + _SPRACHE_DB:
+            continue
+        seg = a[s0:s0 + n]
+        if seg.std() == 0:
+            continue
+        kurve = {}
+        for d in range(-such, such + 1):
+            b0 = s0 + grob + d
+            if b0 < 0 or b0 + n > len(b) or b[b0:b0 + n].std() == 0:
+                continue
+            kurve[d] = float(np.corrcoef(seg, b[b0:b0 + n])[0, 1])
+        if not kurve:
+            continue
+        d = max(kurve, key=kurve.get)
+        if kurve[d] < _VERLAUF_MIN_KORR:
+            continue
+        # Unter-Raster-Lage per Parabel durch den Gipfel: die Huelle hat 5-ms-
+        # Stufen, die Drift (~4 ms/s) aendert sich zwischen benachbarten
+        # Fenstern aber nur um ~1 ms — ohne Verfeinerung waere sie unsichtbar.
+        fein = 0.0
+        if d - 1 in kurve and d + 1 in kurve:
+            y0, y1, y2 = kurve[d - 1], kurve[d], kurve[d + 1]
+            nenner = y0 - 2 * y1 + y2
+            if nenner < 0:
+                fein = float(np.clip(0.5 * (y0 - y2) / nenner, -0.5, 0.5))
+        punkte.append((s0 + n / 2, grob + d + fein, round(kurve[d], 3)))
+    return grob, punkte
+
+
+def _drift(punkte: list) -> float:
+    """Steigung des Versatz-Verlaufs (Huellen-Einheiten je Einheit), Theil-Sen.
+
+    Ueber ALLE Punktpaare: robust gegen das Zittern einzelner Fenster
+    (synthetisch +-10 ms), das die Drift je Schritt (~1 ms) ueberdeckt — ein
+    Median nur benachbarter Steigungen lag dann bei 0. Ein echter Sprung
+    verbiegt diese Schaetzung etwas; erkannt wird er trotzdem, weil die
+    Sprungsuche benachbarte Fenster vergleicht (siehe analysiere).
+    """
+    if len(punkte) < 2:
+        return 0.0
+    t = np.array([p[0] for p in punkte])
+    v = np.array([p[1] for p in punkte], dtype=float)
+    return float(np.median([(v[j] - v[i]) / (t[j] - t[i])
+                            for i in range(len(t)) for j in range(i + 1, len(t))]))
 
 
 def analysiere(gesendet: np.ndarray, mitschnitt: np.ndarray) -> dict:
     if len(mitschnitt) == 0:
         return {"fehler": "Mitschnitt leer — zweiter Kanal kam nicht an"}
-    lag, spitze = versatz(gesendet, mitschnitt)
-    if lag >= 0:
-        m = mitschnitt[lag:lag + len(gesendet)]
-        g = gesendet[:len(m)]
+    eg, em = _huelle(gesendet), _huelle(mitschnitt)
+    grob, punkte = versatz_verlauf(eg, em)
+    steig = _drift(punkte) if len(punkte) >= _MIN_VERLAUF_PUNKTE else 0.0
+    if punkte:
+        tt = np.array([p[0] for p in punkte])
+        vv = np.array([p[1] for p in punkte], dtype=float)
     else:
-        g = gesendet[-lag:-lag + len(mitschnitt)]
-        m = mitschnitt[:len(g)]
+        tt, vv = np.array([0.0]), np.array([float(grob)])
 
-    # Luecken: Energie je 20 ms
-    w = int(_FENSTER_LUECKE * _RATE)
-    k = len(g) // w
-    eg = _db((g[:k * w].reshape(k, w) ** 2).mean(axis=1))
-    em = _db((m[:k * w].reshape(k, w) ** 2).mean(axis=1))
+    def lage(i: float) -> int:
+        """Versatz an Huellen-Stelle i — entlang des GEMESSENEN Verlaufs
+        (interpoliert), damit nach einem Sprung nicht der Rest der Datei
+        falsch ausgerichtet ist."""
+        return int(round(float(np.interp(i, tt, vv))))
+
+    # Spruenge: Versatz-Aenderung zwischen benachbarten Fenstern, die nicht
+    # durch die Drift erklaert ist — fehlendes oder doppeltes Audio. Eine
+    # glatte Drift ist nur ein Taktunterschied und hoerbar nichts.
+    spruenge = []
+    for (t0, v0, _), (t1, v1, _) in zip(punkte, punkte[1:]):
+        rest = (v1 - v0) - steig * (t1 - t0)
+        if abs(rest) * _HUELLE_S > _SPRUNG_S:
+            spruenge.append((round((t0 + t1) / 2 * _HUELLE_S, 2), int(round(rest * _HUELLE_S * 1000))))
+
+    # Luecken: Huelle entlang der Geraden vergleichen
     sprache = eg > eg.max() + _SPRACHE_DB
-    verh = em - eg
-    typisch = float(np.median(verh[sprache])) if sprache.any() else 0.0
-    luecke = sprache & (verh < typisch + _LUECKE_DB)
+    verh = np.full(len(eg), np.nan)
+    for i in range(len(eg)):
+        j = i + lage(i)
+        if 0 <= j < len(em):
+            verh[i] = em[j] - eg[i]
+    gueltig = sprache & ~np.isnan(verh)
+    typisch = float(np.median(verh[gueltig])) if gueltig.any() else 0.0
+    luecke = gueltig & (verh < typisch + _LUECKE_DB)
 
-    # Verzerrt: Korrelation je 100 ms
-    w2 = int(_FENSTER_KORR * _RATE)
-    k2 = len(g) // w2
-    korr = np.zeros(k2)
-    sprache2 = np.zeros(k2, dtype=bool)
-    for j in range(k2):
-        a, b = g[j * w2:(j + 1) * w2], m[j * w2:(j + 1) * w2]
-        na, nb = np.linalg.norm(a), np.linalg.norm(b)
-        korr[j] = float(a @ b / (na * nb)) if na and nb else 0.0
-        sprache2[j] = sprache[j * (w2 // w):(j + 1) * (w2 // w)].mean() > 0.5 if len(sprache) else False
-    med = float(np.median(korr[sprache2])) if sprache2.any() else 0.0
-    verzerrt = sprache2 & (korr < _VERZERRT_ANTEIL * med)
+    # Verzerrt: log-Spektren je 100 ms entlang der Geraden
+    hop = 2 * int(_HUELLE_S * _RATE)              # 10 ms = 2 Huellen-Werte
+    _, _, zg = stft(gesendet, fs=_RATE, nperseg=400, noverlap=400 - hop, boundary=None)
+    _, _, zm = stft(mitschnitt, fs=_RATE, nperseg=400, noverlap=400 - hop, boundary=None)
+    oben = int(7500 / (_RATE / 400))              # Bins bis 7,5 kHz
+    sg, sm = _db(np.abs(zg[:oben]) ** 2), _db(np.abs(zm[:oben]) ** 2)
+    w = int(round(_SPEKTRUM_FENSTER_S * _RATE / hop))
+    korr, ist_sprache = [], []
+    for h in range(0, sg.shape[1] - w + 1, w):
+        i = 2 * h
+        h2 = h + int(round(lage(i) / 2))
+        if h2 < 0 or h2 + w > sm.shape[1]:
+            korr.append(np.nan)
+            ist_sprache.append(False)
+            continue
+        korr.append(float(np.corrcoef(sg[:, h:h + w].ravel(), sm[:, h2:h2 + w].ravel())[0, 1]))
+        ist_sprache.append(bool(sprache[i:i + 2 * w].mean() > 0.5))
+    korr, ist_sprache = np.array(korr), np.array(ist_sprache)
+    med = float(np.nanmedian(korr[ist_sprache])) if ist_sprache.any() else 0.0
+    verzerrt = ist_sprache & (korr < med - _VERZERRT_ABSTAND)
+    if ist_sprache.sum() < _MIN_SPEKTRUM_FENSTER:
+        verzerrt[:] = False
 
     return {
-        "versatz_s": round(lag / _RATE, 3),
-        "spitzenkorrelation": round(spitze, 3),
+        "versatz_s": round(lage(0) * _HUELLE_S, 3),
+        "drift_promille": round(steig * 1000, 2) if len(punkte) >= _MIN_VERLAUF_PUNKTE else None,
+        "huelle_korr": round(float(np.median([p[2] for p in punkte])), 3) if punkte else None,
+        "verlauf_fenster": len(punkte),
+        "spektral_median": round(med, 3),
         "pegel_verhaeltnis_db": round(typisch, 1),
-        "korrelation_median": round(med, 3),
-        "luecken": _intervalle(luecke, _FENSTER_LUECKE),
-        "verzerrt": _intervalle(verzerrt, _FENSTER_KORR),
-        "sprache_s": round(sprache.sum() * _FENSTER_LUECKE, 2),
+        "spruenge": spruenge,
+        "luecken": _intervalle(luecke, _HUELLE_S, _LUECKE_MIN_S),
+        "verzerrt": _intervalle(verzerrt, _SPEKTRUM_FENSTER_S),
+        "sprache_s": round(float(sprache.sum()) * _HUELLE_S, 2),
     }
 
 
@@ -252,11 +364,14 @@ def main() -> int:
         if "fehler" in r:
             print(f"{r['stamm']}  {r['fehler']}")
             continue
-        auffaellig = r["luecken"] or r["verzerrt"]
+        auffaellig = r["luecken"] or r["verzerrt"] or r["spruenge"]
         print(f"{r['stamm']}  {r['quelle']:12s} {r['dauer_s']:5.1f}s  "
-              f"Versatz {r['versatz_s']:+.2f}s  Korr {r['spitzenkorrelation']:.2f} "
-              f"(Median 100ms {r['korrelation_median']:.2f})  "
+              f"Versatz {r['versatz_s']:+.2f}s  Drift "
+              f"{'—' if r['drift_promille'] is None else format(r['drift_promille'], '+.1f') + '‰'}  "
+              f"Huelle {r['huelle_korr']}  Spektrum {r['spektral_median']:.2f}  "
               f"{'AUFFAELLIG' if auffaellig else 'ok'}")
+        for t, ms in r["spruenge"]:
+            print(f"    Sprung   bei {t:6.2f}s um {ms:+d} ms neben der Drift-Geraden")
         for a, b in r["luecken"]:
             print(f"    Luecke   {a:6.2f}–{b:.2f}s")
         for a, b in r["verzerrt"]:
@@ -267,7 +382,7 @@ def main() -> int:
         if "bild" in r:
             print(f"    Bild: {r['bild']}  (oben gesendet, unten Mitschnitt)")
 
-    n_auff = sum(1 for r in ergebnisse if r.get("luecken") or r.get("verzerrt"))
+    n_auff = sum(1 for r in ergebnisse if r.get("luecken") or r.get("verzerrt") or r.get("spruenge"))
     n_leer = sum(1 for r in ergebnisse if "fehler" in r)
     print(f"\n{len(ergebnisse)} Mitschnitte, {n_auff} auffaellig, {n_leer} leer")
     if args.json:
