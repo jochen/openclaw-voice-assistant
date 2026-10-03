@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import http.server
+import json
 import logging
 import os
 import queue
@@ -27,11 +28,19 @@ from scipy.signal import resample_poly
 
 import aioesphomeapi
 
-from voice_assistant.config import CHUNK_SIZE, RespeakerAudio
+from voice_assistant.config import CHUNK_SIZE, VOICE_DIR, RespeakerAudio
 
 log = logging.getLogger(__name__)
 
 _SAMPLES_PER_CHUNK = CHUNK_SIZE // 2  # 640 int16-Samples = 40 ms @ 16 kHz
+
+# Optionen des Selects "XVF-Ausgang links" in esphome/respeaker.yaml — die
+# Texte muessen dort exakt so stehen.
+_KANAL2_OPTIONEN = {
+    "asr": "ASR-Strahl (8,0)",
+    "referenz": "Wiedergabe-Referenz (5,0)",
+    "roh": "Rohmikrofon 0 (1,0)",
+}
 
 _clients: dict[tuple[str, int], RespeakerClient] = {}
 _clients_lock = threading.Lock()
@@ -72,6 +81,13 @@ class RespeakerClient:
         self._button_key: int | None = None
         self._player_key: int | None = None
         self._beam_key: int | None = None
+        self._kanal2_key: int | None = None
+        # Mitschnitt des zweiten Kanals (data2): None = aus, sonst Liste der
+        # Chunks seit mitschnitt_start(). Gefuellt im asyncio-Thread, gelesen
+        # im Wiedergabe-Thread — daher der Lock.
+        self._mitschnitt: list[bytes] | None = None
+        self._mitschnitt_lock = threading.Lock()
+        self._data2_gemeldet = False
         self.led_phase_key: int | None = None   # von RespeakerRing gelesen
         self.boot_step_key: int | None = None   # von RespeakerRing.set_boot_step gelesen
         self.beam_angle: float = 0.0            # aktueller Beam-Winkel in Grad (0–360)
@@ -100,6 +116,8 @@ class RespeakerClient:
         self._api = None
         self._button_key = None
         self._player_key = None
+        self._kanal2_key = None
+        self._data2_gemeldet = False
         self.led_phase_key = None
         self.boot_step_key = None
         self._in_session = False
@@ -164,6 +182,22 @@ class RespeakerClient:
             if hasattr(e, "name") and "Voice Direction" in e.name:
                 self._beam_key = e.key
                 log.info("Beam sensor key=%d", e.key)
+            if hasattr(e, "name") and "XVF-Ausgang links" in e.name:
+                self._kanal2_key = e.key
+                log.info("XVF-Ausgang-links select key=%d", e.key)
+
+        quelle = self._cfg.kanal2_quelle
+        if quelle:
+            option = _KANAL2_OPTIONEN.get(quelle)
+            if option is None:
+                log.warning("kanal2_quelle '%s' unbekannt (erlaubt: %s)",
+                            quelle, ", ".join(_KANAL2_OPTIONEN))
+            elif self._kanal2_key is None:
+                log.warning("kanal2_quelle gesetzt, aber die Firmware hat kein "
+                            "Select 'XVF-Ausgang links' (vor ESPHome 2026.9?)")
+            else:
+                self._api.select_command(self._kanal2_key, option)
+                log.info("XVF-Ausgang links → %s", option)
 
         if self._player_key is not None:
             self._api.media_player_command(self._player_key, volume=self._cfg.volume)
@@ -183,12 +217,20 @@ class RespeakerClient:
             self._audio_q.put(b"")  # EOS
 
         async def handle_audio(data: bytes, data2: bytes | None = None) -> None:
-            # data2 kam mit einer neueren aioesphomeapi-Version dazu (optionales
-            # Zusatzfeld) - fuer unsere Single-Channel-Pipeline ohne Belang.
+            # data ist Kanal 1 (Wakeword + STT, wie bisher). data2 ist der
+            # zweite Kanal (XVF-Ausgang links), den die Firmware ab ESPHome
+            # 2026.9 mitschickt — er geht nur in einen laufenden Mitschnitt.
             try:
                 self._audio_q.put_nowait(data)
             except queue.Full:
                 pass
+            if data2:
+                if not self._data2_gemeldet:
+                    self._data2_gemeldet = True
+                    log.info("Zweiter Audiokanal kommt an (%d Bytes je Paket)", len(data2))
+                with self._mitschnitt_lock:
+                    if self._mitschnitt is not None:
+                        self._mitschnitt.append(data2)
 
         self._api.subscribe_voice_assistant(
             handle_start=handle_start,
@@ -328,6 +370,16 @@ class RespeakerClient:
     def in_session(self) -> bool:
         return self._in_session
 
+    def mitschnitt_start(self) -> None:
+        with self._mitschnitt_lock:
+            self._mitschnitt = []
+
+    def mitschnitt_stop(self) -> bytes:
+        """Beendet den Mitschnitt; 16-kHz-mono-int16-PCM (leer ohne data2)."""
+        with self._mitschnitt_lock:
+            teile, self._mitschnitt = self._mitschnitt or [], None
+        return b"".join(teile)
+
     def read_chunk(self) -> np.ndarray:
         """Gibt genau _SAMPLES_PER_CHUNK int16-Samples (16 kHz mono) zurück."""
         target = _SAMPLES_PER_CHUNK * 2  # Bytes
@@ -436,8 +488,15 @@ class RespeakerSink:
     # Betrieb liegt er bei 0,5 s (TTS-Synthese des naechsten Satzes + Datei
     # holen), gemessen 2026-09-20 ueber vier aufeinanderfolgende Saetze.
     _UEBERHANG_WARNUNG = 2.0
+    # Mitschnitt des zweiten Kanals (respeaker.mitschnitt): so lange wird nach
+    # dem Ende noch mitgeschnitten (Nachhall, verspaeteter Ton), und so lange
+    # bleiben die Dateien liegen.
+    _MITSCHNITT_NACHLAUF = 0.3
+    _MITSCHNITT_DIR = os.path.join(VOICE_DIR, "wiedergabe")
+    _MITSCHNITT_MAX_TAGE = 7
 
     def __init__(self, cfg: RespeakerAudio) -> None:
+        self._cfg = cfg
         self._client = get_client(cfg)
         self._serve_dir = tempfile.mkdtemp(prefix="respeaker_tts_")
         self._pi_ip = _get_local_ip()
@@ -450,6 +509,44 @@ class RespeakerSink:
         # Zwischenspeichern und Entdoppeln aus dem Weg.
         self._folge = 0
         self._start_http_server()
+        if cfg.mitschnitt:
+            self._mitschnitt_aufraeumen()
+            log.info("Wiedergabe-Mitschnitt an → %s", self._MITSCHNITT_DIR)
+
+    def _mitschnitt_aufraeumen(self) -> None:
+        grenze = time.time() - self._MITSCHNITT_MAX_TAGE * 86400
+        try:
+            for name in os.listdir(self._MITSCHNITT_DIR):
+                pfad = os.path.join(self._MITSCHNITT_DIR, name)
+                if os.path.getmtime(pfad) < grenze:
+                    os.unlink(pfad)
+        except FileNotFoundError:
+            pass
+
+    def _mitschnitt_sichern(self, gesendet: str, pcm: bytes, meta: dict) -> None:
+        """Gesendete Datei, Mitschnitt und Zeiten nebeneinander ablegen.
+
+        Ausgewertet von tools/wiedergabe_pruefen.py. Ein leerer Mitschnitt
+        (Firmware schickt keinen zweiten Kanal) wird trotzdem vermerkt —
+        sonst saehe ein stummer Fehler aus wie "nichts aufgezeichnet".
+        """
+        os.makedirs(self._MITSCHNITT_DIR, exist_ok=True)
+        basis = os.path.join(
+            self._MITSCHNITT_DIR,
+            time.strftime("%Y%m%d_%H%M%S") + f"_{meta['folge']:04d}",
+        )
+        shutil.copyfile(gesendet, basis + "_gesendet.wav")
+        with wave.open(basis + "_kanal2.wav", "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(pcm)
+        meta = {**meta, "kanal2_quelle": self._cfg.kanal2_quelle or "unveraendert",
+                "kanal2_sekunden": round(len(pcm) / 32000, 2)}
+        with open(basis + ".json", "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False)
+        if not pcm:
+            log.warning("Mitschnitt leer — kommt der zweite Kanal an? (%s)", basis)
 
     def _start_http_server(self) -> None:
         handler = _make_http_handler(self._serve_dir)
@@ -535,6 +632,10 @@ class RespeakerSink:
         log.info("Play → %s (%.1fs)", url, dauer)
 
         t_start = time.monotonic()
+        gestartet = None
+        ueberhang = None
+        if self._cfg.mitschnitt:
+            client.mitschnitt_start()
         try:
             if not client.play_url(url):
                 return
@@ -577,6 +678,17 @@ class RespeakerSink:
         except Exception as exc:
             log.error("Wiedergabe fehlgeschlagen: %s", exc)
         finally:
+            if self._cfg.mitschnitt:
+                try:
+                    time.sleep(self._MITSCHNITT_NACHLAUF)
+                    self._mitschnitt_sichern(dest, client.mitschnitt_stop(), {
+                        "folge": folge, "url": url, "dauer_s": round(dauer, 3),
+                        "anker": gestartet,
+                        "ueberhang_s": None if ueberhang is None else round(ueberhang, 3),
+                        "abgebrochen": self._stopped,
+                    })
+                except Exception as exc:
+                    log.warning("Mitschnitt nicht gesichert: %s", exc)
             try:
                 os.unlink(dest)
             except OSError:

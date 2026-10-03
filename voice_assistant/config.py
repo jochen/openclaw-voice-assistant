@@ -37,6 +37,15 @@ class RespeakerAudio:
     encryption_key: str = ""
     use_speaker: bool = True  # False → TTS geht auf ALSA (Fallback)
     volume: float = 0.8  # 0.0–1.0, wird beim Connect via API gesetzt
+    # Zweiter Audiokanal (Firmware ab ESPHome 2026.9 mit "XVF-Ausgang links").
+    # mitschnitt: bei jeder Wiedergabe den zweiten Kanal mitschneiden, nach
+    #   VOICE_DIR/wiedergabe/ — zum Nachpruefen verstuemmelter Ausgabe
+    #   (tools/wiedergabe_pruefen.py). Default aus.
+    # kanal2_quelle: beim Verbinden den XVF-Ausgang links setzen — "asr"
+    #   (Werk), "referenz" (was der ESP an den Lautsprecher gibt), "roh"
+    #   (Rohmikrofon). Leer = am Geraet nichts aendern.
+    mitschnitt: bool = False
+    kanal2_quelle: str = ""
 
 
 _DEFAULT_VOICE_INSTRUCTION = (
@@ -690,6 +699,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         encryption_key=str(resp_raw.get("encryption_key", "")),
         use_speaker=bool(resp_raw.get("use_speaker", True)),
         volume=float(resp_raw.get("volume", 0.8)),
+        mitschnitt=bool(resp_raw.get("mitschnitt", False)),
+        kanal2_quelle=str(resp_raw.get("kanal2_quelle", "") or ""),
     )
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---

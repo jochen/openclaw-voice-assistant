@@ -218,6 +218,11 @@ profiles:
       encryption_key: ""                          # Native-API-Key falls gesetzt
       use_speaker: true                           # TTS über ReSpeaker-Speaker
                                                   # (false → Fallback auf local_audio.playback_device)
+      # Zweiter Audiokanal (Firmware ab ESPHome 2026.9 mit Select
+      # "XVF-Ausgang links"), beide Default aus:
+      # mitschnitt: true            # zweiten Kanal bei jeder Wiedergabe mitschneiden
+      #                             # → voice/wiedergabe/, Auswertung: tools/wiedergabe_pruefen.py
+      # kanal2_quelle: referenz     # asr | referenz | roh — setzt den XVF-Ausgang links beim Verbinden
 
     local_audio:
       # wird nur gebraucht, wenn use_speaker=false (Fallback)
