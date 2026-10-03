@@ -69,6 +69,16 @@ class GleichschrittTest(unittest.TestCase):
         self.assertGreater(np.corrcoef(b, k2)[0, 1], 0.99)
         self.assertGreater(np.corrcoef(a, k1)[0, 1], 0.99)
 
+    def test_kanal2_wird_nicht_verstaerkt(self):
+        # Der ASR-Strahl kommt AGC-geregelt laut an; x4 wie bei Kanal 1 schnitt
+        # ihn ab (2026-10-03). Kanal 2 bleibt im Pegel, wie er kam.
+        c = _client()
+        k2 = np.full(640, 9000, dtype=np.int16)
+        k2[::2] = -9000
+        c._audio_q.put((np.zeros(640, dtype=np.int16).tobytes(), k2.tobytes()))
+        c.read_chunk()
+        self.assertEqual(int(np.abs(c.kanal2_letzte(1)[0]).max()), 9000)
+
     def test_ohne_zweiten_kanal_leer(self):
         c = _client()
         c._data2_gemeldet = False

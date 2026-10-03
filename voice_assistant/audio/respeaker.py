@@ -413,15 +413,18 @@ class RespeakerClient:
         if len(chunk2) < target:          # Firmware ohne zweiten Kanal / Luecke
             chunk2 = b""
             self._buf2 = b""
-        self._kanal2_ring.append(self._aufbereiten(chunk2) if chunk2
+        # Kanal 2 OHNE die x4: der ASR-Strahl ist durch die AGC des XVF3800
+        # schon laut, x4 schnitt ihn am 2026-10-03 ab (Spitzen 32768) und
+        # verfaelschte den STT-Vergleich gegen ihn. Die STT normalisiert ohnehin.
+        self._kanal2_ring.append(self._aufbereiten(chunk2, 1.0) if chunk2
                                  else np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16))
         return self._aufbereiten(chunk)
 
     @staticmethod
-    def _aufbereiten(roh: bytes) -> np.ndarray:
+    def _aufbereiten(roh: bytes, verstaerkung: float = 4.0) -> np.ndarray:
         samples = np.frombuffer(roh, dtype=np.int16).astype(np.float32)
         samples -= samples.mean()
-        return np.clip(samples * 4, -32768, 32767).astype(np.int16)
+        return np.clip(samples * verstaerkung, -32768, 32767).astype(np.int16)
 
     def _leer(self) -> np.ndarray:
         self._buf = b""
