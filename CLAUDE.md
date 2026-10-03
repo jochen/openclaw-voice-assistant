@@ -559,10 +559,13 @@ den neuesten Stand, der dann eine andere ESPHome-Version verlangte. Ein Update
 ist eine bewusste Änderung dieser Refs, zusammen mit `esphome` im venv und
 `min_version`.
 
-Stand 2026-10-02: auf dem Heim-Gerät läuft die April-Firmware (ESPHome
-2026.4), von der es keine Kopie mehr gibt. Der Build mit 2026.9.1 ist
-kompiliert, **nicht geflasht** — zuerst den Rückweg herstellen
-(USB-Sicherung, ggf. Build-Reste auf dem alten Pi).
+Stand 2026-10-03: auf dem Heim-Gerät läuft die April-Firmware (ESPHome
+2026.4.0, gebaut 2026-04-23 15:02 auf dem alten Pi). Sie ist wieder gesichert
+— auf dem alten Pi fanden sich Firmware und Build-Verzeichnis, jetzt in
+`~/esphome-firmware/respeaker-openclaw/2026-04-23_1502_…/` auf beiden
+Rechnern. Rückweg per OTA:
+`esphome upload esphome/respeaker.yaml --device <ip> --file …/firmware.ota.bin`.
+Der Build mit 2026.9.1 ist kompiliert, nicht geflasht.
 
 **2026.9.1 im Fablab getestet und zurückgenommen (2026-10-02 19:45–19:56).**
 Zwei Befunde, beide vor dem nächsten Versuch zu klären:
