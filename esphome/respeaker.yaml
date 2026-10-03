@@ -214,6 +214,38 @@ button:
     on_press:
       - script.execute: xvf_params_lesen
 
+select:
+  # Was der XVF3800 auf den LINKEN Ausgang legt = was als zweiter Kanal
+  # (data2) beim Assistenz-Rechner ankommt. Geschrieben wird
+  # AUDIO_MGR_OP_L (resid 35, cmd 15, <category>, <source>), IDs aus Seeeds
+  # xvf_host.py. Nicht dauerhaft: nach jedem Neustart wieder Werkszustand
+  # (restore_value: false), damit kein Mitschnitt-Modus haengen bleibt.
+  # Kategorien laut XMOS-Tuning-Doku: 8 = ASR-/Auto-Strahl (Werk, (8,0)),
+  # 5 = Referenz nach Gain (das, was der ESP an den Lautsprecher gibt),
+  # 1 = Rohmikrofon.
+  - platform: template
+    name: "XVF-Ausgang links"
+    id: xvf_op_l
+    entity_category: config
+    optimistic: true
+    restore_value: false
+    options:
+      - "ASR-Strahl (8,0)"
+      - "Wiedergabe-Referenz (5,0)"
+      - "Rohmikrofon 0 (1,0)"
+    initial_option: "ASR-Strahl (8,0)"
+    on_value:
+      - lambda: |-
+          static const uint8_t wahl[][2] = {{8, 0}, {5, 0}, {1, 0}};
+          if (i >= sizeof(wahl) / sizeof(wahl[0])) return;
+          // {resid, cmd, Anzahl Bytes, Werte} wie xmos_write_bytes() der Integration
+          uint8_t payload[5] = {35, 15, 2, wahl[i][0], wahl[i][1]};
+          if (id(respeaker).write(payload, sizeof(payload)) != i2c::ERROR_OK) {
+            ESP_LOGW("xvf_op", "AUDIO_MGR_OP_L setzen fehlgeschlagen");
+          } else {
+            ESP_LOGI("xvf_op", "AUDIO_MGR_OP_L = %u, %u", wahl[i][0], wahl[i][1]);
+          }
+
 number:
   # Hauptzustand — Pi schickt Phase 0–11, ESP spielt passende Animation
   - platform: template
@@ -245,9 +277,20 @@ number:
 # voice_assistant — Pi steuert alle LED-Phasen, keine internen Handler
 voice_assistant:
   id: va
+  # Zwei Kanaele (ESPHome 2026.5, #16265): der erste kommt beim
+  # Assistenz-Rechner als data, der zweite als data2 in handle_audio an.
+  # Kanal 1 (rechts) = XVF-Ausgang R, Werkseinstellung (7,3): AEC-Residual
+  # von Mikrofon 3 — EIN Mikrofon, ohne Beam/Rauschunterdrueckung/AGC. Darauf
+  # laufen seit April Wakeword UND STT. formatBCE nimmt fuer die STT Kanal 0.
+  # Kanal 0 (links) = XVF-Ausgang L, umschaltbar per "XVF-Ausgang links":
+  # ASR-Strahl (Werk), Wiedergabe-Referenz oder Rohmikrofon. Erster Zweck:
+  # die eigene Wiedergabe mitschneiden (Verstuemmelung im Fablab-Test
+  # 2026-10-02); zweiter: Kanal 0 gegen Kanal 1 fuer die STT messen.
   microphone:
-    microphone: i2s_mics
-    channels: 1
+    - microphone: i2s_mics
+      channels: 1
+    - microphone: i2s_mics
+      channels: 0
   media_player: respeaker_player
   noise_suppression_level: 1
   auto_gain: 31dBFS
@@ -301,6 +344,7 @@ script:
             {"AUDIO_MGR_REF_GAIN",  35,  1, 1, 'f'},
             {"AUDIO_MGR_OP_L",      35, 15, 2, 'u'},
             {"AUDIO_MGR_OP_R",      35, 19, 2, 'u'},
+            {"AUDIO_MGR_OP_UPSAMPLE", 35, 14, 2, 'u'},
             {"AUDIO_MGR_SYS_DELAY", 35, 26, 1, 'i'},
             {"AEC_FIXEDBEAMSONOFF", 33, 37, 1, 'i'},
             {"PP_AGCONOFF",         17, 10, 1, 'i'},
