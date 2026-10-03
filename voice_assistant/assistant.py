@@ -182,6 +182,36 @@ def _is_stop_command(text: str, followup_round: int) -> bool:
     return bool(_STOP_PATTERN_FIRST.search(text))
 
 
+# Ein Follow-up darf auch mit "Danke" enden statt mit "Stopp" — das ist die
+# hoeflichere Form (Jochen, 2026-10-03). Vorher ging "Danke." als Auftrag an
+# den Brain, der darauf antwortete und die naechste Follow-up-Runde oeffnete
+# (Journal: "Danke." in Runde 2/3, "Danke, wunderbar." in Runde 3/3).
+#
+# Anders als "stopp" zaehlt "Danke" nur, wenn der GANZE Satz ein Dank ist:
+# "Danke dir. Trag das gleich fuer morgen ein." (ebenfalls echt) ist ein
+# Auftrag. Erlaubt sind neben dem Dank nur Fuellwoerter und die Anrede —
+# "gast…" deckt die STT-Verhoerer des Wakeworts ab wie beim Stopp-Muster.
+#
+# Nur im echten Follow-up (siehe Aufruf), nicht im Barge-in: dort schreibt
+# ein Stopp-Wort ein Fehltrigger-Label auf den abgebrochenen Clip, und ein
+# "Danke" mitten in der Antwort sagt darueber nichts.
+_DANK_FUELL = frozenset("""
+    vielen herzlichen schön schoen sehr dir euch ihnen
+    gut super wunderbar prima toll perfekt klasse spitze passt
+    ok okay alles klar ja jo na
+    das wars war's war s reicht erstmal erst mal soweit
+    mister mr handy
+""".split())
+
+
+def _is_dank_abschluss(text: str) -> bool:
+    woerter = re.findall(r"[\wäöüß']+", (text or "").lower())
+    if not any(w.startswith("dank") for w in woerter):
+        return False
+    return all(w.startswith("dank") or w.startswith("gast") or w in _DANK_FUELL
+               for w in woerter)
+
+
 # Aktuator-Handshake: Ja/Nein-Antwort auf eine Rückfrage (z.B. "alle Rollos"
 # bei kosten=hoch). Nein zuerst prüfen — bei Mehrdeutigkeit lieber sicher
 # abbrechen als versehentlich schalten.
@@ -1687,14 +1717,21 @@ def run() -> None:
                     # unklar_round zählt hier wie eine Follow-up-Runde: das Mikro
                     # ist ohne Wakewort offen, also muss ein einzelnes "Stopp"
                     # reichen (das strengere Erst-Muster verlangt zwei Wörter).
-                    elif _is_stop_command(text, followup_round or unklar_round or war_bargein):
-                        print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
+                    # dank_abschluss zuerst auswerten: hinter einem "or" bliebe
+                    # die Variable ungesetzt, sobald schon das Stopp-Muster trifft.
+                    elif (dank_abschluss := (followup_round > 0 and not war_bargein
+                                             and _is_dank_abschluss(text))) or \
+                            _is_stop_command(text, followup_round or unklar_round or war_bargein):
+                        if dank_abschluss:
+                            print(f"[{now:.1f}s] 🙏 Dank beendet das Gespräch: '{text}'")
+                        else:
+                            print(f"[{now:.1f}s] 🛑 Stop word detected: '{text}'")
                         _log_outcome(
-                            "stopwort", transcript=text,
+                            "dank" if dank_abschluss else "stopwort", transcript=text,
                             via="bargein" if war_bargein else None,
                         )
                         _flush_endpoint(
-                            text, ausgang="stopwort",
+                            text, ausgang="dank" if dank_abschluss else "stopwort",
                             via="bargein" if war_bargein else None,
                         )
                         # Diarization- und Mood-Resultat verwerfen damit Queues nicht überlaufen
