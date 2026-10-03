@@ -11,6 +11,7 @@ TTS läuft vollständig unabhängig via announce (keine Session-State-Abhängigk
 from __future__ import annotations
 
 import asyncio
+import collections
 import http.server
 import json
 import logging
@@ -75,7 +76,9 @@ class RespeakerClient:
 
     def __init__(self, cfg: RespeakerAudio) -> None:
         self._cfg = cfg
-        self._audio_q: queue.Queue[bytes] = queue.Queue(maxsize=500)
+        # (Kanal 1, Kanal 2) je ESPHome-Audionachricht. Kanal 2 ist b"", wenn
+        # die Firmware nur einen Kanal schickt; (b"", b"") ist das Ende-Signal.
+        self._audio_q: queue.Queue[tuple[bytes, bytes]] = queue.Queue(maxsize=500)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._api: aioesphomeapi.APIClient | None = None
         self._button_key: int | None = None
@@ -93,6 +96,12 @@ class RespeakerClient:
         self.beam_angle: float = 0.0            # aktueller Beam-Winkel in Grad (0–360)
         self._last_led_phase: int = 1           # 1 = LED_IDLE — nach Reconnect wiederherstellen
         self._buf = b""
+        self._buf2 = b""
+        # Kanal 2 deckungsgleich zu jedem Chunk, den read_chunk geliefert hat
+        # (gleiche Verarbeitung). Daraus schreibt assistant.py neben jede
+        # *_rec.wav eine *_rec_kanal2.wav — Grundlage fuer den STT-Vergleich
+        # Kanal 0 (ASR-Strahl) gegen Kanal 1 (tools/stt_vergleich.py --kanaele).
+        self._kanal2_ring: collections.deque[np.ndarray] = collections.deque(maxlen=2000)
         self._in_session = False
         # Zustand des Media-Players (fuer die Wiedergabe-Verfolgung, siehe
         # RespeakerSink.play_wav). Condition statt Event, weil auf einen
@@ -122,6 +131,7 @@ class RespeakerClient:
         self.boot_step_key = None
         self._in_session = False
         self._buf = b""
+        self._buf2 = b""
         with self._player_cv:
             self._player_state = None
             self._player_cv.notify_all()
@@ -214,14 +224,14 @@ class RespeakerClient:
 
         async def handle_stop(abort: bool) -> None:
             self._in_session = False
-            self._audio_q.put(b"")  # EOS
+            self._audio_q.put((b"", b""))  # EOS
 
         async def handle_audio(data: bytes, data2: bytes | None = None) -> None:
             # data ist Kanal 1 (Wakeword + STT, wie bisher). data2 ist der
             # zweite Kanal (XVF-Ausgang links), den die Firmware ab ESPHome
             # 2026.9 mitschickt — er geht nur in einen laufenden Mitschnitt.
             try:
-                self._audio_q.put_nowait(data)
+                self._audio_q.put_nowait((data, data2 or b""))
             except queue.Full:
                 pass
             if data2:
@@ -381,24 +391,51 @@ class RespeakerClient:
         return b"".join(teile)
 
     def read_chunk(self) -> np.ndarray:
-        """Gibt genau _SAMPLES_PER_CHUNK int16-Samples (16 kHz mono) zurück."""
+        """Gibt genau _SAMPLES_PER_CHUNK int16-Samples (16 kHz mono) zurück.
+
+        Kanal 2 laeuft im Gleichschritt mit: zu JEDEM gelieferten Chunk (auch
+        den Null-Chunks bei Ausfall/EOS) kommt genau ein Eintrag in den Ring,
+        sonst verrutscht die Zuordnung in kanal2_letzte().
+        """
         target = _SAMPLES_PER_CHUNK * 2  # Bytes
         while len(self._buf) < target:
             try:
-                data = self._audio_q.get(timeout=0.15)
+                data, data2 = self._audio_q.get(timeout=0.15)
             except queue.Empty:
-                self._buf = b""
-                return np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16)
+                return self._leer()
             if data == b"":  # EOS
-                self._buf = b""
-                return np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16)
+                return self._leer()
             self._buf += data
+            self._buf2 += data2
 
         chunk, self._buf = self._buf[:target], self._buf[target:]
-        samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
+        chunk2, self._buf2 = self._buf2[:target], self._buf2[target:]
+        if len(chunk2) < target:          # Firmware ohne zweiten Kanal / Luecke
+            chunk2 = b""
+            self._buf2 = b""
+        self._kanal2_ring.append(self._aufbereiten(chunk2) if chunk2
+                                 else np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16))
+        return self._aufbereiten(chunk)
+
+    @staticmethod
+    def _aufbereiten(roh: bytes) -> np.ndarray:
+        samples = np.frombuffer(roh, dtype=np.int16).astype(np.float32)
         samples -= samples.mean()
-        samples = np.clip(samples * 4, -32768, 32767).astype(np.int16)
-        return samples
+        return np.clip(samples * 4, -32768, 32767).astype(np.int16)
+
+    def _leer(self) -> np.ndarray:
+        self._buf = b""
+        self._buf2 = b""
+        null = np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16)
+        self._kanal2_ring.append(null)
+        return null
+
+    def kanal2_letzte(self, n: int) -> list[np.ndarray]:
+        """Kanal 2 zu den letzten n gelieferten Chunks; leer, wenn die Firmware
+        keinen zweiten Kanal schickt."""
+        if not self._data2_gemeldet or n <= 0:
+            return []
+        return list(self._kanal2_ring)[-n:]
 
     def flush(self) -> None:
         """Queue leeren."""
@@ -408,6 +445,7 @@ class RespeakerClient:
             except queue.Empty:
                 break
         self._buf = b""
+        self._buf2 = b""
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +499,9 @@ class RespeakerSource:
 
     def flush(self) -> None:
         self._client.flush()
+
+    def kanal2_letzte(self, n: int) -> list[np.ndarray]:
+        return self._client.kanal2_letzte(n)
 
     def close(self) -> None:
         pass

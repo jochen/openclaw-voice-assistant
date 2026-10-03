@@ -6,6 +6,18 @@ Aufruf (Projekt-venv wird selbst gesucht):
     ow-venv/bin/python -m tools.stt_vergleich --modelle guillaumekln/faster-whisper-medium \\
         deepdml/faster-whisper-large-v3-turbo-ct2 --json /tmp/stt.json
 
+Kanal-Vergleich (--kanaele)
+---------------------------
+    ow-venv/bin/python -m tools.stt_vergleich --kanaele --seit 20261003_1200
+
+Dasselbe Modell (A) auf beiden Kanaelen DERSELBEN Aufnahme: *_rec.wav ist
+Kanal 1 (rechts, XVF (7,3): AEC-Residual eines Mikrofons — darauf laufen
+Wakeword und STT seit April), *_rec_kanal2.wav ist der zweite Kanal, den
+die Firmware seit 2026-10-03 mitschickt. Was darin liegt, bestimmt
+respeaker.kanal2_quelle zur Aufnahmezeit — fuer diese Frage "asr" (XVF (8,0),
+ASR-Strahl mit Beam, Rauschunterdrueckung und AGC; formatBCE nimmt ihn fuer
+die STT). Deshalb --seit: nur Aufnahmen ab der Umstellung auf "asr" zaehlen.
+
 Was gespielt wird
 -----------------
 Die `*_rec.wav` aus TRIGGER_AUDIO_DIR — genau die Chunks, die live an die
@@ -182,12 +194,32 @@ def main() -> int:
     ap.add_argument("--ordner", default=TRIGGER_AUDIO_DIR)
     ap.add_argument("--json", help="Ergebnis je Clip hierhin schreiben")
     ap.add_argument("--ohne-aktuator", action="store_true", help="nur Transkripte und Latenz")
+    ap.add_argument("--kanaele", action="store_true",
+                    help="statt zweier Modelle: Modell A auf Kanal 1 (*_rec.wav, live) "
+                         "gegen Kanal 2 (*_rec_kanal2.wav)")
+    ap.add_argument("--seit", help="nur Clips ab diesem Zeitpunkt (JJJJMMTT_HHMMSS oder ISO)")
     args = ap.parse_args()
 
     profil = load_profile()
     base = profil.speaches_base
-    stts = {m: SpeachesStt(SpeachesState(), base, m) for m in args.modelle}
+    # Variante = (Modell, Datei-Endung). Zwei Modelle auf derselben Aufnahme,
+    # oder (--kanaele) dasselbe Modell auf beiden Kanaelen derselben Aufnahme.
+    if args.kanaele:
+        m = args.modelle[0]
+        varianten = {f"{_kurz(m)} Kanal 1": (m, "_rec.wav"),
+                     f"{_kurz(m)} Kanal 2": (m, "_rec_kanal2.wav")}
+    else:
+        varianten = {m: (m, "_rec.wav") for m in args.modelle}
+    stts = {m: SpeachesStt(SpeachesState(), base, m) for m, _ in set(varianten.values())}
     clips = sorted(glob.glob(os.path.join(args.ordner, "*_rec.wav")))
+    if args.kanaele:
+        clips = [c for c in clips if os.path.exists(c[:-len("_rec.wav")] + "_rec_kanal2.wav")]
+    if args.seit:
+        grenze = re.sub(r"[-:T]", "", args.seit).replace("_", "")[:14].ljust(14, "0")
+        clips = [c for c in clips if os.path.basename(c)[:15].replace("_", "") >= grenze]
+    if not clips:
+        print("Keine passenden Clips" + (" mit *_rec_kanal2.wav" if args.kanaele else ""))
+        return 1
     live = live_ausgaenge()
     lab = labels()
     akt = None
@@ -200,21 +232,23 @@ def main() -> int:
     # Aufwaermen: das erste Laden eines Modells kostet Sekunden und gehoert
     # nicht in die Latenz.
     probe = lies_wav(clips[0])
-    for m, stt in stts.items():
+    for stt in stts.values():
         transkribiere(stt, probe)
 
     zeilen = []
     for i, pfad in enumerate(clips):
         cid = os.path.basename(pfad)[:15]
-        wav = lies_wav(pfad)
+        stamm = pfad[:-len("_rec.wav")]
         lv = live.get(cid) or {}
         z = {"clip": os.path.basename(pfad), "live": lv.get("transcript"),
              "live_ausgang": lv.get("ausgang"), "modelle": {}}
         f = lab.get(_norm(lv.get("transcript") or "")) if lv.get("transcript") else None
         z["label"] = f
-        reihe = args.modelle if i % 2 == 0 else list(reversed(args.modelle))
-        for m in reihe:
-            text, nsp, ms = transkribiere(stts[m], wav)
+        namen = list(varianten)
+        reihe = namen if i % 2 == 0 else list(reversed(namen))
+        for name in reihe:
+            modell, endung = varianten[name]
+            text, nsp, ms = transkribiere(stts[modell], lies_wav(stamm + endung))
             e = {"text": text, "nsp": nsp, "ms": ms}
             if akt and text:
                 k = aktuator_schatten.kette_laya(akt, text, timeout=10)
@@ -224,18 +258,18 @@ def main() -> int:
             elif f:
                 e["ausgang"] = "verworfen"
                 e["klasse"] = "verpasst" if f.get("schalten") and f.get("ziel") else "richtig"
-            z["modelle"][m] = e
+            z["modelle"][name] = e
         zeilen.append(z)
         print(f"\r{i + 1}/{len(clips)}", end="", file=sys.stderr, flush=True)
     print(file=sys.stderr)
 
-    a, b = args.modelle
+    a, b = list(varianten)
     print(f"{len(clips)} Clips aus {args.ordner}, Speaches {base}")
     print(f"  mit Live-Transkript {sum(1 for z in zeilen if z['live'])}, "
           f"davon gelabelt {sum(1 for z in zeilen if z['label'])}\n")
     print(f"{'Modell':22s} {'= live':>7s} {'verworfen':>9s}   Latenz median / max   "
           f"{'richtig':>7s} {'verpasst':>8s} {'FALSCH':>6s}")
-    for m in args.modelle:
+    for m in varianten:
         es = [z["modelle"][m] for z in zeilen]
         gleich = sum(1 for z in zeilen if z["live"] and _norm(z["modelle"][m]["text"]) == _norm(z["live"]))
         mit_live = sum(1 for z in zeilen if z["live"])
@@ -265,7 +299,7 @@ def main() -> int:
     print(f"  ({n} von {len(zeilen)})")
 
     if args.json:
-        json.dump({"modelle": args.modelle, "clips": zeilen},
+        json.dump({"varianten": varianten, "clips": zeilen},
                   open(args.json, "w"), ensure_ascii=False, indent=1)
     return 0
 

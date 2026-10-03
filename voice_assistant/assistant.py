@@ -1614,6 +1614,18 @@ def run() -> None:
                     }
                     if trigger_audio_id is not None:
                         _save_trigger_audio(recorded_chunks, trigger_audio_bundle, "rec", trigger_audio_id)
+                        # Zweiter Kanal derselben Aufnahme (ReSpeaker-Firmware mit
+                        # zweitem Audiokanal): die letzten len(recorded_chunks)
+                        # gelieferten Chunks — die Aufnahme besteht aus genau
+                        # diesen, Pre-Roll eingeschlossen. Fuer den STT-Vergleich
+                        # Kanal 0 gegen Kanal 1 (tools/stt_vergleich.py --kanaele).
+                        # Endet auf _kanal2.wav, nicht _rec.wav: die Werkzeuge,
+                        # die *_rec.wav suchen, sehen die Datei nicht.
+                        if hasattr(audio_source, "kanal2_letzte"):
+                            _save_trigger_audio(
+                                audio_source.kanal2_letzte(len(recorded_chunks)),
+                                trigger_audio_bundle, "rec_kanal2", trigger_audio_id,
+                            )
                         trigger_audio_id = None
                     # Der Pre-Roll zählt für MIN_SPEECH_CHUNKS nicht mit — sonst
                     # wäre das Gate allein durch ihn immer erfüllt.
