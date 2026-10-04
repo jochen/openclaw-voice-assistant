@@ -211,7 +211,7 @@ jedem `refresh()` aus `/capabilities` erzeugt und über die Platzhalter
 liegt im Repo, weil eine frühere Messung ("20/20") nur in einem Scratchpad
 stand und einen Tag später weder reproduzierbar noch gültig war. Wiederholen
 nach jeder Änderung an den capabilities — die Zahl gilt immer nur für eine
-capabilities-Version. Stand: **32/32 bei capabilities `9b429c57`** (kompaktes JSON, Vega), Messreihe
+capabilities-Version. Stand: **31/32 bei capabilities `70866bd6`** (2026-10-04; der Durchfaller ist der bekannte Kipper „Rollo auf 70%“), Messreihe
 im Docstring des Werkzeugs.
 
 **Ein Gruppen-Ziel braucht seinen Beleg im Satz (Regel A, 2026-08-02).** Wählt

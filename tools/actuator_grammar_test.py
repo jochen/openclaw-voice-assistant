@@ -57,6 +57,9 @@ Messreihe (jede Zahl gilt NUR fuer ihre capabilities-Version):
                      Gemma auf der Vega-iGPU. "Rollo auf 70%" kippt schon
                      vorher zwischen Laeufen (31 oder 32) — die Zahl ist also
                      kein Fortschritt, sondern "nicht schlechter".
+    31/32  70866bd6  2026-10-04: nur fussbodenheizung_badoben kosten
+                     niedrig -> mittel (Jochen). Einziger Durchfaller wieder
+                     "Rollo auf 70%" (-> wohnzimmerrollo), der bekannte Kipper.
 
 Dieses Werkzeug misst nur classify() + verdict(), NICHT die Torfrage davor
 (tor_enabled). Die wurde auf 182 Saetzen inkl. echter Turns gemessen, siehe
