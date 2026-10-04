@@ -669,6 +669,19 @@ Denkpause direkt nach „Gaston" und das Kommando ist komplett weg (belegt an
 `20260730_181211`; 30 von 37 protokollierten Entscheidungen lauten
 „Ein-Satz", der Erkenner springt also leicht an).
 
+Seit 2026-10-04 zählt für diese Sperre nur Sprache ab 25 % des
+Wakewort-Pegels (`_COMMAND_MIN_LEVEL_RATIO`). Anlass war `20261004_134706`:
+„Gaston", dann gewartet. Eine leisere Hintergrundstimme füllte die 0,5 s, und
+der Kommando-Modus schnitt nach 1 s ab. Gegen das Archiv ist das **nicht**
+vermessen (bewusst, Jochen); der Fehlschlag wäre gutmütig, es gäbe 2 s statt
+1 s Nachlauf. Die Ein-Satz-Entscheidung selbst (kein „Ja?") bleibt
+ungeschützt. Dafür fängt der Verarbeitungsschritt sie ab: besteht das
+Transkript eines Erst-Turns nur aus dem Wakewort (`_ist_nur_wakewort`), wird
+das „Ja?" nachgeholt und eine Dialog-Aufnahme geöffnet, statt „Gaston." an
+den Brain zu schicken. Das gilt einmal je Trigger, nicht nach Follow-up,
+Rückfrage oder Barge-in. `endpoint.log`: `ausgang=nur_wakewort`, danach
+`nach_nur_wakewort`, außerdem `wake_rms` und `laute_sprache_s` je Aufnahme.
+
 **Warum überhaupt zwei Sätze:** Bei laufendem Fernseher endete die Aufnahme
 nie — die Sprechpausen einer Störquelle sind ~1,7 s lang und setzen den
 Stille-Zähler vor der 2-s-Schwelle zurück. Ein Turn lief so 21,9 s bis zum

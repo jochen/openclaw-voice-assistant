@@ -117,6 +117,16 @@ _ACK_DELAY_SEC = 0.4
 # typisch 1–2 Chunks (~0,16 s) — 0,5 s liegt sicher darüber und ist von jedem
 # echten Kommando nach einem halben Wort erreicht.
 _COMMAND_MIN_SPEECH_SEC = 0.5
+# Für diese Sperre zählt nur Sprache, die mindestens diesen Anteil vom Pegel
+# des Wakeworts erreicht (lautestes 300-ms-Fenster, wie beim Pegel-Gate).
+# Anlass 2026-10-04 13:47 (20261004_134706): "Gaston", dann gewartet — eine
+# leisere Stimme im Hintergrund (RMS 100–700 gegen 1430 beim Wakewort,
+# Grundton 213 statt 127 Hz) erfüllte die 0,5 s, der Kommando-Modus wurde
+# scharf und schnitt nach 1 s Stille: Transkript "Gaston.". Mit 0,25 wären
+# dort 6 statt 25 Chunks gezählt worden. Nicht gegen das Archiv vermessen
+# (Jochen, 2026-10-04: bewusst verzichtet) — der Fehlschlag ist gutmütig:
+# ein leise gesprochenes Kommando bekommt den Dialog-Nachlauf (2 s statt 1 s).
+_COMMAND_MIN_LEVEL_RATIO = 0.25
 
 # Pre-Roll: so viel Audio VOR dem Trigger wird der Aufnahme vorangestellt.
 #
@@ -210,6 +220,26 @@ def _is_dank_abschluss(text: str) -> bool:
         return False
     return all(w.startswith("dank") or w.startswith("gast") or w in _DANK_FUELL
                for w in woerter)
+
+
+def _ist_nur_wakewort(text: str, bundle: str) -> bool:
+    """Besteht das Transkript nur aus dem Wakewort (oder einem Verhörer davon)?
+
+    Dann hat der Nutzer auf das "Ja?" gewartet, und die Aufnahme wurde zu früh
+    beendet — etwa weil Hintergrundsprache die Ein-Satz-Einstufung auslöste
+    (2026-10-04 13:47: "Ich habe verstanden: Gaston."). Das Transkript selbst
+    ist der Beleg, unabhängig davon, warum der Schnitt kam.
+
+    Verglichen wird ohne Leer- und Satzzeichen gegen den Bundle-Namen
+    (``hey_jarvis`` → ``heyjarvis``). Verhörer: gleicher Anfang (4 Zeichen),
+    Länge ±2 ("Gastro", "Gastón"). "Gastostop" fällt bewusst heraus — da steckt
+    mehr drin als der Name.
+    """
+    t = re.sub(r"[^\wäöüß]|_", "", (text or "").lower())
+    w = re.sub(r"[^\wäöüß]|_", "", (bundle or "").lower())
+    if not t or len(w) < 4:
+        return False
+    return t == w or (t[:4] == w[:4] and abs(len(t) - len(w)) <= 2)
 
 
 # Aktuator-Handshake: Ja/Nein-Antwort auf eine Rückfrage (z.B. "alle Rollos"
@@ -1013,6 +1043,12 @@ def run() -> None:
     turn_max_sec = RECORDING_MAX_SEC
     turn_ein_satz = False                   # Ein-Satz erkannt → Kommando-Modus scharf machen
     turn_speech_chunks = 0                  # Chunks mit Sprache seit Aufnahmebeginn
+    turn_loud_chunks = 0                    # davon nah am Wakewort-Pegel (_COMMAND_MIN_LEVEL_RATIO)
+    turn_wake_rms = 0.0                     # Pegel des Wakeworts dieses Turns (0 = kein Vergleich)
+    # Der Turn ist die Dialog-Aufnahme nach einem Transkript, das nur das
+    # Wakewort enthielt (siehe _ist_nur_wakewort). Verhindert eine Schleife,
+    # falls auch die zweite Aufnahme nur "Gaston" ergibt.
+    nur_wakewort_runde = False
     # Pegel/VAD-Verlauf der laufenden Aufnahme (Rohstoff fürs Nachtunen).
     turn_rms: list[float] = []
     turn_frames_speech = 0
@@ -1346,6 +1382,7 @@ def run() -> None:
                             # die Lücke zwischen Pre-Roll und Aufnahme.
                             # "Ja?" kommt verzögert (siehe STATE_RECORDING, ack_pending).
                             pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
+                            turn_wake_rms = _wake_level_rms(wake_ring)
                             wake_ring.clear()
                             wake_ring_samples = 0
                             leds.set_phase(LED_RECORDING)
@@ -1364,6 +1401,8 @@ def run() -> None:
                             turn_max_sec = RECORDING_MAX_SEC
                             turn_ein_satz = False
                             turn_speech_chunks = 0
+                            turn_loud_chunks = 0
+                            nur_wakewort_runde = False
                             turn_rms = []
                             turn_frames_speech = 0
                             turn_frames_total = 0
@@ -1478,6 +1517,7 @@ def run() -> None:
                         # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
                         # kein play_wav, Pre-Roll statt flush, "Ja?" verzögert.
                         pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
+                        turn_wake_rms = _wake_level_rms(wake_ring)
                         wake_ring.clear()
                         wake_ring_samples = 0
                         leds.set_phase(LED_RECORDING)
@@ -1496,6 +1536,8 @@ def run() -> None:
                         turn_max_sec = RECORDING_MAX_SEC
                         turn_ein_satz = False
                         turn_speech_chunks = 0
+                        turn_loud_chunks = 0
+                        nur_wakewort_runde = False
                         turn_rms = []
                         turn_frames_speech = 0
                         turn_frames_total = 0
@@ -1523,6 +1565,8 @@ def run() -> None:
                     speech_detected = True
                     silence_counter = 0
                     turn_speech_chunks += 1
+                    if _rms >= _COMMAND_MIN_LEVEL_RATIO * turn_wake_rms:
+                        turn_loud_chunks += 1
                 elif speech_detected:
                     silence_counter += 1
 
@@ -1573,10 +1617,13 @@ def run() -> None:
                 # Ohne diese Sperre stirbt so eine Aufnahme mitten in der
                 # Pause und das Kommando ist komplett weg. Mit ihr verhält
                 # sich der Fall wie bisher, bis genug Sprache da war.
+                # Gezählt wird nur Sprache nahe am Wakewort-Pegel: eine
+                # leisere Stimme im Hintergrund füllt die Sperre sonst
+                # ebenso (siehe _COMMAND_MIN_LEVEL_RATIO).
                 if (
                     turn_ein_satz
                     and turn_mode == "dialog"
-                    and turn_speech_chunks >= _command_min_speech_chunks
+                    and turn_loud_chunks >= _command_min_speech_chunks
                 ):
                     turn_mode = "kommando"
                     turn_silence_limit = _command_silence_limit
@@ -1610,6 +1657,8 @@ def run() -> None:
                         "max_seconds": turn_max_sec,
                         "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
                         "followup_round": followup_round,
+                        "wake_rms": round(turn_wake_rms, 1),
+                        "laute_sprache_s": round(turn_loud_chunks * _chunk_sec, 2),
                         **_signal_stats(turn_rms, turn_frames_speech, turn_frames_total),
                     }
                     if trigger_audio_id is not None:
@@ -1782,6 +1831,59 @@ def run() -> None:
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
+                    elif (
+                        followup_round == 0
+                        and not unklar_round
+                        and not war_bargein
+                        and not nur_wakewort_runde
+                        and _ist_nur_wakewort(text, current_wakeword.bundle)
+                    ):
+                        # Nur "Gaston" im Transkript: der Nutzer hat auf das
+                        # "Ja?" gewartet, die Aufnahme endete zu früh. Statt
+                        # "Gaston." an den Brain zu schicken, das "Ja?"
+                        # nachholen und eine Dialog-Aufnahme öffnen. Kein
+                        # _log_outcome: der Trigger war echt, sein Ausgang
+                        # ist der des nächsten Turns. Der Aktuator bleibt
+                        # dort erlaubt (followup_round bleibt 0) — es ist
+                        # weiterhin die Erstansprache.
+                        print(f"[{now:.1f}s] 🙋 Nur das Wakewort ('{text}') → Ja? und zuhören")
+                        _flush_endpoint(text, ausgang="nur_wakewort")
+                        try:
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        nur_wakewort_runde = True
+                        audio_source.flush()
+                        wakeword.reset()
+                        if ack_path and os.path.exists(ack_path):
+                            audio_sink.play_wav(ack_path)
+                        elif os.path.exists(FOLLOWUP_BEEP_PATH):
+                            audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
+                        audio_source.flush()
+                        leds.set_phase(LED_RECORDING)
+                        state = STATE_FOLLOWUP
+                        state_start = time.time()
+                        recorded_chunks = []
+                        pre_roll_chunks = 0
+                        silence_counter = 0
+                        max_internal_pause = 0
+                        speech_detected = False
+                        turn_mode = "dialog"
+                        turn_silence_limit = _silence_limit
+                        turn_max_sec = RECORDING_MAX_SEC
+                        turn_ein_satz = False
+                        turn_speech_chunks = 0
+                        turn_loud_chunks = 0
+                        turn_rms = []
+                        turn_frames_speech = 0
+                        turn_frames_total = 0
+                        followup_rms_sum = 0.0
+                        followup_rms_count = 0
+                        followup_vad_speech = 0
                     elif text:
                         # Kein Stopp-Wort: der Barge-in war ein neuer Auftrag,
                         # kein Urteil ueber den abgebrochenen Trigger. Das
@@ -2259,6 +2361,9 @@ def run() -> None:
                         turn_max_sec = profile.command_max_seconds
                         turn_ein_satz = True
                         turn_speech_chunks = 0
+                        turn_loud_chunks = 0
+                        turn_wake_rms = 0.0
+                        nur_wakewort_runde = False
                         turn_rms = []
                         turn_frames_speech = 0
                         turn_frames_total = 0
@@ -2319,6 +2424,7 @@ def run() -> None:
                         turn_max_sec = RECORDING_MAX_SEC
                         turn_ein_satz = False
                         turn_speech_chunks = 0
+                        turn_loud_chunks = 0
                         turn_rms = []
                         turn_frames_speech = 0
                         turn_frames_total = 0
@@ -2380,6 +2486,7 @@ def run() -> None:
                         "avg_rms": round(avg_rms, 4),
                         "vad_ratio": round(vad_ratio, 2),
                         "followup_round": followup_round,
+                        **({"nach_nur_wakewort": True} if nur_wakewort_runde and followup_round == 0 else {}),
                         **_signal_stats(turn_rms, turn_frames_speech, turn_frames_total),
                     }
                     # VAD-Anteil-Gate: echte Äußerungen liegen bei >= 50 %
@@ -2401,6 +2508,10 @@ def run() -> None:
                     else:
                         print(f"[{now:.1f}s] 🔇 Follow-up: insufficient speech (VAD {vad_ratio:.0%})")
                         _flush_endpoint(ausgang="followup_zu_wenig_sprache")
+                        if nur_wakewort_runde:
+                            # Ja? gespielt, danach kam nichts — Ausgang des
+                            # Triggers, der sonst ohne Zeile bliebe.
+                            _log_outcome("nur_wakewort")
                         leds.set_phase(LED_IDLE)
                         pending_confirm = None
                         followup_round = 0
