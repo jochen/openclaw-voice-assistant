@@ -5,6 +5,8 @@ Aufruf (Projekt-venv wird selbst gesucht):
     ow-venv/bin/python -m tools.wake_corpus bilanz     # was ist da, was fehlt
     ow-venv/bin/python -m tools.wake_corpus sichern    # Clips in den Dauer-Korpus
     ow-venv/bin/python -m tools.wake_corpus messen     # Modell gegen den Korpus
+    ow-venv/bin/python -m tools.wake_corpus messen --split /pfad/paket_manifest.json
+                                                       # getrennt: frisch vs. trainiert
 
 Warum es dieses Werkzeug gibt
 -----------------------------
@@ -55,6 +57,68 @@ Das ist die Negativ-Hälfte des Validierungs-Gates aus
 ``Wakeword_Studio_Spec.md`` (Phase D), gerechnet auf echtem Haus-Material statt
 auf Fremd-Audio.
 
+``--split`` — die ehrliche Hälfte von der Selbstmessung trennen
+--------------------------------------------------------------
+``messen --split <paket_manifest.json>`` liest die Tagesaufteilung des
+Trainingspakets und weist zwei Blöcke getrennt aus: FRISCH (Val-Tage plus alles
+danach — Clips, die das Modell im Training nicht gesehen hat) und TRAIN
+(Selbstmessung). Ohne die Aufteilung ist die Zahl eine Mischung aus beidem und
+sagt weniger, als sie zeigt; der Abstand zwischen den Blöcken ist das Maß der
+Überanpassung.
+
+Zwei Modelle auf demselben Material vergleichen (A/B, z.B. nach einem
+Nachtraining oder vor einem Rollback) — der Vorgänger liegt in der
+Git-Historie:
+
+    mkdir -p models/wakewords/gaston_alt
+    git show <commit>^:models/wakewords/gaston/gaston.tflite \
+        > models/wakewords/gaston_alt/gaston_alt.tflite
+    sed -e 's/^name: gaston$/name: gaston_alt/' \
+        -e 's/^model: gaston.tflite$/model: gaston_alt.tflite/' \
+        models/wakewords/gaston/manifest.yaml > models/wakewords/gaston_alt/manifest.yaml
+    ow-venv/bin/python -m tools.wake_corpus messen --bundle gaston_alt --split …
+    ow-venv/bin/python -m tools.wake_corpus messen --bundle gaston     --split …
+    rm -rf models/wakewords/gaston_alt          # temporär, nicht committen
+
+Die Gate-Parameter im Ersatz-Manifest müssen **unverändert** bleiben, sonst
+vergleicht man Schwellen statt Modelle.
+
+**Was dieses Werkzeug grundsätzlich nicht messen kann: die Kurz-Streak-Pfade.**
+``BundleScorer`` probiert mehrere Frame-Phasen und nimmt den besten Streak — ein
+1-Frame-Trigger entsteht dabei praktisch nie, während live die Phase festliegt.
+Ein A/B „mit gegen ohne ``min_peak_single``" ergab am 2026-09-20 deshalb exakt
+identische Zahlen, obwohl der Pfad live 4 von 7 Fehltriggern lieferte. Diese
+Frage gehört an die live geloggten Score-Verläufe: ``tools/wake_triage.py``,
+Abschnitt „TRIGGER NACH GATE-PFAD".
+
+``paket`` — Trainingspaket mit Tages-Split für das Nachtraining
+---------------------------------------------------------------
+Schnürt aus Dauer-Korpus + Studio-Takes ein tar.gz für die Trainings-
+Pipeline auf dem ai-stack (``~/ai-stack/wakeword-studio/``, siehe README
+dort). Die echten Clips werden VOR dem Packen in Train und Val geteilt,
+und zwar über GANZE TAGE (Verfahren aus ``tools/verifier_probe.py``,
+gleicher Grund: Wiederholungs-Cluster — derselbe Ruf mehrfach binnen
+Sekunden — dürfen nicht über beide Seiten verteilt werden, sonst misst
+die Validierung das Training).
+
+Drei Entscheidungen, die das Paket festschreibt:
+
+1. STUDIO-TAKES GEHEN KOMPLETT IN DIE VALIDIERUNG. Sie sind das härteste
+   Recall-Set (absichtlich leise/fern/abgewandt) und das etablierte
+   Test-Set von ``wakeword_studio score``. Gingen sie ins Training, wäre
+   die empfindlichste Messlatte verbrannt.
+2. AUCH DIE NEGATIVES WERDEN GESPLITTET, mit derselben Tagespartition.
+   Gingen alle harten Fehltrigger ins Training, wäre die Negativseite von
+   ``wake_corpus messen`` hinterher Selbstmessung.
+3. DIE VAL-SEITE DES PAKETS IST DIE NACHHER-MESSUNG. Nach dem Training
+   zählt nur sie (plus FP/h gegen ``validation_set_features.npy`` auf dem
+   ai-stack) — nicht die Train-Clips, auf denen das Modell gut sein MUSS.
+
+Einspeisung drüben: WAVs aus ``train/`` zu den synthetischen Clips nach
+``train_out/gaston/{positive,negative}_train/`` legen, dann
+``--augment_clips --overwrite`` und ``--train_model`` (vorher
+``podman stop llm``!). Details im README, das im Paket liegt.
+
 Grenzen, ehrlich
 ----------------
 1. KEINE FP-RATE PRO STUNDE. Der Korpus enthält nur Clips, die das Modell
@@ -64,10 +128,14 @@ Grenzen, ehrlich
 2. ÜBERANPASSUNG IST MÖGLICH. Wer auf genau diese Clips trainiert und auf
    genau diesen Clips misst, misst sich selbst. Das Ergebnis ist eine untere
    Schranke, kein Beleg für Generalisierung — der kommt erst aus frischen
-   Fehltriggern der Wochen nach dem Deploy.
+   Fehltriggern der Wochen nach dem Deploy. Der Tages-Split in ``paket``
+   entschärft das für die Val-Seite, hebt es aber nicht auf.
 3. DER KORPUS IST SCHIEF. Fehltrigger sammeln sich abends (TV), echte Rufe
    verteilen sich über den Tag. Klassenanteile hier sind kein Abbild des
    Alltags.
+4. DIE VAL-NEGATIVSEITE IST KLEIN. Bei ~25 harten Fehltriggern landen nach
+   dem Split nur eine Handvoll in Val — die Nachher-Zahl dort hat breite
+   Streuung und trägt erst zusammen mit FP/h und frischen Betriebswochen.
 """
 
 from __future__ import annotations
@@ -78,6 +146,7 @@ import os
 import shutil
 import sys
 from collections import Counter
+from datetime import datetime
 
 # --- venv-Re-Exec wie in voice_assistant/__main__.py -----------------------
 _VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -252,34 +321,309 @@ def run_messen(args) -> int:
     scorer = BundleScorer(args.bundle, args.threshold)
     print(f"Bundle '{scorer.bundle}' — threshold={scorer.threshold}, "
           f"min_hits={scorer.min_hits}, min_peak={scorer.min_peak}")
+    # --gain: was waere, wenn die Quelle lauter/leiser liefe? Die Clips liegen
+    # NACH der Live-Verstaerkung vor (ReSpeaker x4); Faktor 2 entspricht also
+    # x8, mit Uebersteuerung wie live. Das Pegel-Gate wird mitskaliert
+    # (wake_rms_min x gain), sonst misst man die Gate-Aenderung mit statt der
+    # Wirkung des Pegels aufs Modell. Messreihe: WAKEWORD_PROCESS.md.
+    gate = 0.0
+    if args.gain != 1.0 or args.rms_min:
+        import numpy as np
+        from voice_assistant.config import load_profile
+        from voice_assistant.wake_rms import loudest_window_rms
+        from wakeword_studio.scoring import load_wav_16k
+        gate = (args.rms_min if args.rms_min is not None
+                else load_profile().wake_rms_min) * args.gain
+        print(f"gain x{args.gain}, Pegel-Gate {gate:.0f}")
     print(f"Korpus: {len(im_korpus)} Clips\n")
 
-    ergebnis: dict[str, list] = {"positiv": [], "negativ": []}
+    from tools.verifier_probe import _day   # gleiche Tages-Ableitung wie im Paket
+
+    train_tage: set[str] = set()
+    if args.split:
+        try:
+            with open(args.split) as fh:
+                paket = json.load(fh)
+            train_tage = set(paket.get("train_tage") or [])
+            print(f"Trainings-Split aus {args.split}: "
+                  f"{len(train_tage)} Train-Tage, "
+                  f"{len(paket.get('val_tage') or [])} Val-Tage "
+                  f"(erstellt {paket.get('erstellt', '?')})\n")
+        except Exception as e:
+            print(f"⚠️  Split-Manifest nicht lesbar ({e}) — messe ohne Aufteilung")
+
+    # (gruppe, unter) → Liste; gruppe ist "train" (im Nachtraining gesehen) oder
+    # "frisch" (nicht gesehen: Val-Tage plus alles nach dem Training).
+    ergebnis: dict[tuple[str, str], list] = {}
     for audio, pfad in sorted(im_korpus.items()):
         klasse = manifest.get(audio, {}).get("klasse")
         unter = ORDNER.get(klasse) or os.path.basename(os.path.dirname(pfad))
-        if unter not in ergebnis:
+        if unter not in ("positiv", "negativ"):
             continue
-        r = scorer.score_wav(pfad)
-        ergebnis[unter].append((audio, r))
+        gruppe = "train" if _day(audio) in train_tage else "frisch"
+        if gate or args.gain != 1.0:
+            pcm = load_wav_16k(pfad).astype(np.float32) * args.gain
+            pcm = np.clip(pcm, -32768, 32767).astype(np.int16)
+            r = scorer.score_pcm(pcm)
+            if gate and loudest_window_rms(pcm) < gate:
+                r = {**r, "triggered": False}
+        else:
+            r = scorer.score_wav(pfad)
+        ergebnis.setdefault((gruppe, unter), []).append((audio, r))
         if args.verbose:
-            print(f"  {audio}  score={r['max_score']:.2f} streak={r['best_streak']} "
+            print(f"  [{gruppe:6s}] {audio}  score={r['max_score']:.2f} "
+                  f"streak={r['best_streak']} "
                   f"trigger={'JA' if r['triggered'] else 'nein'} robust={r['robust']}")
+
+    def _zeile(gruppe: str, unter: str, richtung: str) -> None:
+        clips = ergebnis.get((gruppe, unter), [])
+        if not clips:
+            print(f"  {unter:8s} — keine Clips")
+            return
+        feuert = sum(1 for _, r in clips if r["triggered"])
+        print(f"  {unter:8s} {feuert:3d}/{len(clips):3d} lösen aus  "
+              f"({feuert / len(clips):.0%})   ← {richtung}")
 
     print("=" * 62)
     print("AUSGANGSMESSUNG — was ein nachtrainiertes Modell schlagen muss")
     print("=" * 62)
-    for unter, richtung in (("positiv", "soll hoch bleiben"), ("negativ", "soll fallen")):
-        clips = ergebnis[unter]
-        if not clips:
-            print(f"{unter:8s} — keine Clips im Korpus")
-            continue
-        feuert = sum(1 for _, r in clips if r["triggered"])
-        print(f"{unter:8s} {feuert:3d}/{len(clips):3d} lösen aus  "
-              f"({feuert / len(clips):.0%})   ← {richtung}")
+    if not train_tage:
+        print("Ganzer Korpus (ohne --split ist nicht zu trennen, was das Modell "
+              "im Training schon gesehen hat):")
+        for unter, richtung in (("positiv", "soll hoch bleiben"), ("negativ", "soll fallen")):
+            clips = (ergebnis.get(("train", unter), [])
+                     + ergebnis.get(("frisch", unter), []))
+            if not clips:
+                print(f"  {unter:8s} — keine Clips im Korpus")
+                continue
+            feuert = sum(1 for _, r in clips if r["triggered"])
+            print(f"  {unter:8s} {feuert:3d}/{len(clips):3d} lösen aus  "
+                  f"({feuert / len(clips):.0%})   ← {richtung}")
+    else:
+        # Die FRISCHE Hälfte zuerst und zuerst genannt: sie ist die Zahl, die
+        # etwas behauptet. Die Train-Hälfte steht daneben, weil ihre Differenz
+        # zeigt, wie viel Ueberanpassung im Spiel ist — nicht als Erfolgsmeldung.
+        print("FRISCH — Clips, die dieses Modell im Training NICHT gesehen hat")
+        print("         (Val-Tage des Pakets plus alles danach). Diese Zahl gilt.")
+        _zeile("frisch", "positiv", "soll hoch bleiben")
+        _zeile("frisch", "negativ", "soll fallen")
+        print()
+        print("TRAIN  — Clips AUS dem Training. Selbstmessung, kein Beleg;")
+        print("         der Abstand zur frischen Hälfte ist das Mass der Ueberanpassung.")
+        _zeile("train", "positiv", "muss hoch sein, sonst lief das Training schief")
+        _zeile("train", "negativ", "muss niedrig sein, sonst lief das Training schief")
     print("\nGrenzen dieser Zahl: siehe Docstring (keine FP/Stunde, "
           "Überanpassungs-Gefahr, schiefer Korpus).")
     return 0
+
+
+# Positiv-Clips gehen geschnitten ins Paket. augment_clips (openwakeword-
+# Training) schneidet überlange Clips per Münzwurf vorn ODER hinten auf die
+# Trainingslänge — bei einem 3-s-Clip, der am Wakewort ENDET, fliegt dabei in
+# der Hälfte der Fälle genau das Wakewort raus. Merksatz aus Runde 3, bis
+# 2026-10-01 nur ein Handgriff auf dem GPU-Host.
+SCHNITT_SEK = 1.8
+# Bei Sätzen mit Wortzeitstempeln: so viel nach dem Wortende stehen lassen.
+NACH_WORT_SEK = 0.15
+_WAKE_FORM = ("gast", "gas", "gest", "gust", "kast", "gerst", "erstaun", "herztau")
+
+
+def _wav_lesen(pfad: str):
+    import wave
+    with wave.open(pfad, "rb") as w:
+        return w.readframes(w.getnframes()), w.getframerate(), w.getsampwidth(), w.getnchannels()
+
+
+def _wav_schreiben(pfad: str, roh: bytes, rate: int, breite: int, kan: int) -> None:
+    import wave
+    os.makedirs(os.path.dirname(pfad), exist_ok=True)
+    with wave.open(pfad, "wb") as w:
+        w.setnchannels(kan); w.setsampwidth(breite); w.setframerate(rate)
+        w.writeframes(roh)
+
+
+def _wake_stellen(roh: bytes, rate: int, breite: int, kan: int, stt) -> list[float]:
+    """Ende jedes Wakewort-Vorkommens (Sekunden) laut Whisper-Wortzeitstempeln."""
+    import io
+    import wave
+    import urllib.request
+    import uuid
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(kan); w.setsampwidth(breite); w.setframerate(rate); w.writeframes(roh)
+    b = "----x" + uuid.uuid4().hex
+    feld = lambda n, v: f'--{b}\r\nContent-Disposition: form-data; name="{n}"\r\n\r\n{v}\r\n'.encode()  # noqa: E731
+    body = (feld("model", stt.model) + feld("response_format", "verbose_json")
+            + feld("timestamp_granularities[]", "word") + feld("language", "de")
+            + f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="a.wav"\r\n'
+              f'Content-Type: audio/wav\r\n\r\n'.encode() + buf.getvalue() + f"\r\n--{b}--\r\n".encode())
+    req = urllib.request.Request(stt.base.rstrip("/") + "/v1/audio/transcriptions", data=body,
+                                 headers={"Content-Type": f"multipart/form-data; boundary={b}"})
+    worte = json.load(urllib.request.urlopen(req, timeout=60)).get("words") or []
+    return [w["end"] for w in worte
+            if w["word"].strip().lower().strip(",.!?-").startswith(_WAKE_FORM)]
+
+
+def _positiv_stuecke(quelle: str, stt) -> list[tuple[str, bytes, dict]]:
+    """(Namenszusatz, PCM, Info) je Trainingsstück eines Positiv-Clips.
+
+    Wake-/Near-Miss-Clips (3 s, enden am Anschlag des Modells): die letzten
+    SCHNITT_SEK. Marker-Rufe (ganze Sätze, ``_marker_rueckspul_ruf``): ein
+    Stück je Wakewort-Vorkommen, endend NACH_WORT_SEK nach dem Wortende — so
+    landet jedes "Gaston" in einem Positiv-Stück, keins als Hintergrund."""
+    roh, rate, breite, kan = _wav_lesen(quelle)
+    rahmen = breite * kan
+    laenge = int(SCHNITT_SEK * rate) * rahmen
+    if "_marker_rueckspul_ruf" not in os.path.basename(quelle):
+        return [("", roh[-laenge:], {"schnitt": f"letzte {SCHNITT_SEK} s"})]
+    out = []
+    for k, ende in enumerate(_wake_stellen(roh, rate, breite, kan, stt), 1):
+        e = min(len(roh), int((ende + NACH_WORT_SEK) * rate) * rahmen)
+        a = max(0, e - laenge)
+        out.append((f"_g{k}", roh[a:e], {"wort_ende": round(ende, 2),
+                                          "schnitt": f"Wort endet {ende:.2f} s, Stück {a / rahmen / rate:.2f}-{e / rahmen / rate:.2f} s"}))
+    return out
+
+
+def run_paket(args) -> int:
+    """Trainingspaket bauen: Tages-Split, Verzeichnisbaum, Manifest, tar.gz."""
+    import tarfile
+
+    from tools.verifier_probe import _day, _split_days
+
+    im_korpus = _korpus_dateien()
+    manifest = _manifest_lesen()
+    pos = sorted(a for a in im_korpus if manifest.get(a, {}).get("klasse") == "echter_ruf")
+    neg = sorted(a for a in im_korpus if manifest.get(a, {}).get("klasse") == "rauschen")
+    if not pos or not neg:
+        print("Korpus unvollständig — erst 'sichern' laufen lassen.")
+        return 1
+
+    studio = sorted(
+        os.path.join(d, f)
+        for d, _, files in os.walk(args.samples_dir)
+        for f in files if f.endswith(".wav")
+    )
+
+    val_tage, train_tage = _split_days(pos, neg, args.seed, args.val_anteil)
+
+    ziel = args.out
+    if os.path.exists(ziel):
+        print(f"Zielverzeichnis existiert schon: {ziel} — erst wegräumen.")
+        return 1
+
+    plan = []  # (quelle, relpfad)
+    zaehl = Counter()
+    for audio in pos + neg:
+        klasse = "positive" if audio in set(pos) else "negative"
+        seite = "val" if _day(audio) in val_tage else "train"
+        plan.append((im_korpus[audio], os.path.join(seite, klasse, audio)))
+        zaehl[f"{seite}/{klasse}"] += 1
+    for pfad in studio:
+        # Sprecher bleibt im Namen — Kollisionen zwischen Sprechern ausschließen
+        name = os.path.basename(os.path.dirname(pfad)) + "_" + os.path.basename(pfad)
+        plan.append((pfad, os.path.join("val", "positive_studio", name)))
+        zaehl["val/positive_studio"] += 1
+
+    from voice_assistant.config import load_profile
+    from voice_assistant.services.speaches import SpeachesState
+    from voice_assistant.services.stt import SpeachesStt
+    prof = load_profile()
+    stt = SpeachesStt(SpeachesState(), prof.speaches_base, prof.speaches_stt_model)
+    schnitte, ohne_wort, doppelt = {}, [], []
+    # Marker-Clips überlappen (jeder Tastendruck sichert 120 s), dieselben
+    # Rufe stecken dann in zwei Ausschnitten. Absolute Zeit des Wortendes =
+    # Zeit im Dateinamen - Vorlauf (2 s, review_audio export-marker) + Stelle.
+    marker_enden: list[float] = []
+    for quelle, rel in plan:
+        dst = os.path.join(ziel, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if f"{os.sep}positive{os.sep}" not in rel:
+            shutil.copy2(quelle, dst)        # Negative und Studio-Takes ganz
+            continue
+        _, rate, breite, kan = _wav_lesen(quelle)
+        stuecke = _positiv_stuecke(quelle, stt)
+        if not stuecke:
+            ohne_wort.append(os.path.basename(quelle))
+            continue
+        stamm, ext = os.path.splitext(dst)
+        if "_marker_rueckspul_ruf" in quelle:
+            t0 = datetime.strptime(os.path.basename(quelle)[:15], "%Y%m%d_%H%M%S").timestamp() - 2.0
+            behalten = []
+            for zusatz, pcm, info in stuecke:
+                ende = t0 + info["wort_ende"]
+                if any(abs(ende - e) < 0.5 for e in marker_enden):
+                    doppelt.append(os.path.basename(stamm + zusatz + ext))
+                    continue
+                marker_enden.append(ende)
+                behalten.append((zusatz, pcm, info))
+            stuecke = behalten
+        for zusatz, pcm, info in stuecke:
+            _wav_schreiben(stamm + zusatz + ext, pcm, rate, breite, kan)
+            schnitte[os.path.basename(stamm + zusatz + ext)] = info
+
+    paket_manifest = {
+        "erstellt": datetime.now().isoformat(timespec="seconds"),
+        "seed": args.seed,
+        "val_anteil_ziel": args.val_anteil,
+        "split_verfahren": "ganze Tage, tools/verifier_probe._split_days",
+        "train_tage": sorted(train_tage),
+        "val_tage": sorted(val_tage),
+        "zaehlung": dict(zaehl),
+        "labels": {a: manifest[a] for a in pos + neg},
+        "schnitte": schnitte,
+        "positiv_ohne_wakewort_gefunden": ohne_wort,
+        "doppelt_verworfen": doppelt,
+        "vorher_messung": "wake_corpus messen 2026-08-22: positiv 51/68, negativ 19/20 (gaston @0.35)",
+    }
+    with open(os.path.join(ziel, "paket_manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(paket_manifest, fh, ensure_ascii=False, indent=1)
+    with open(os.path.join(ziel, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write(_PAKET_README.format(seed=args.seed))
+
+    tar_pfad = ziel.rstrip("/") + ".tar.gz"
+    with tarfile.open(tar_pfad, "w:gz") as tar:
+        tar.add(ziel, arcname=os.path.basename(ziel.rstrip("/")))
+
+    print(f"Paket: {tar_pfad}")
+    if ohne_wort:
+        print(f"  ⚠️  {len(ohne_wort)} Positiv-Clips ohne erkennbares Wakewort — NICHT im Paket: {ohne_wort}")
+    if doppelt:
+        print(f"  {len(doppelt)} Marker-Stück(e) doppelt (gleicher Ruf in überlappenden Clips) — verworfen: {doppelt}")
+    for k in sorted(zaehl):
+        print(f"  {k:22s} {zaehl[k]:3d} Clips")
+    print(f"  Split: {len(train_tage)} Train-Tage / {len(val_tage)} Val-Tage (Seed {args.seed})")
+    return 0
+
+
+_PAKET_README = """# Nachtrainings-Paket gaston — echte Clips mit Tages-Split (Seed {seed})
+
+Erzeugt von `tools/wake_corpus.py paket` (Repo openclaw_voice_assist, Branch
+feature/wakeword-nachtraining). Labels: Ohr > Selbst, keine STT-Labels.
+
+## Einspeisung (ai-stack, ~/wakeword-studio/)
+
+1. `train/positive/*.wav`  -> zu den synthetischen Clips nach `train_out/gaston/positive_train/`
+2. `train/negative/*.wav`  -> nach `train_out/gaston/negative_train/` (adversarial negatives)
+3. `val/**`                -> NICHT einspeisen. Das ist die Nachher-Messung.
+4. `podman stop llm`, dann `train.py --training_config gaston.yaml --augment_clips --overwrite`
+   und `--train_model`, danach `podman start llm`. Stolpersteine: README im ai-stack-Repo.
+
+## Validierungs-Gate vor jedem Deploy
+
+- Recall: `val/positive/` + `val/positive_studio/` durchs neue Modell (Ziel >= 0.9);
+  auf dem Pi: `wakeword_studio score` + `wake_corpus messen`.
+- FP-Seite: `val/negative/` (klein! nur Richtungsindikator) UND
+  `eval_debounce.py` gegen `validation_set_features.npy` (Ziel < 1 FP/h,
+  immer MIT Debounce rechnen).
+- Vorher-Zahl, die zu schlagen ist: positiv 51/68, negativ 19/20 (@0.35).
+
+Alle WAVs: 16 kHz mono int16. Positive sind auf 1,8 s GESCHNITTEN (letzte
+1,8 s des Wake-Rings bzw. je Wakewort-Vorkommen eines Satzes, endend 0,15 s
+nach dem Wortende; `schnitte` im Manifest) — NICHT nochmal schneiden.
+Negative ganz (~3 s).
+Familienstimmen — bleiben auf diesem Host, kein Upload irgendwohin.
+"""
 
 
 def main() -> int:
@@ -299,7 +643,28 @@ def main() -> int:
     p.add_argument("--bundle", default="gaston")
     p.add_argument("--threshold", type=float, default=None)
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--gain", type=float, default=1.0,
+                   help="Clips vor dem Scoren so verstaerken (Pegel-Gate wird mitskaliert)")
+    p.add_argument("--rms-min", type=float, default=None,
+                   help="Pegel-Gate vor dem Gain-Faktor (Default: wake_rms_min des Profils)")
+    p.add_argument("--split", default=None, metavar="PAKET_MANIFEST.JSON",
+                   help="paket_manifest.json des Nachtrainings. Trennt die "
+                        "Messung in 'frisch' (nie im Training gesehen) und "
+                        "'train' (Selbstmessung) — ohne das ist die Zahl "
+                        "teilweise Selbstmessung und sagt weniger, als sie zeigt.")
     p.set_defaults(func=run_messen)
+
+    p = sub.add_parser("paket", help="Trainingspaket mit Tages-Split schnüren")
+    p.add_argument("--seed", type=int, default=20260916,
+                   help="Seed der Tagespartition — im Manifest festgehalten")
+    p.add_argument("--val-anteil", type=float, default=0.3, dest="val_anteil")
+    p.add_argument("--out", default="/tmp/gaston_nachtraining_paket")
+    p.add_argument("--samples-dir", dest="samples_dir",
+                   default=os.path.join(os.path.dirname(os.path.dirname(
+                       os.path.abspath(__file__))),
+                       "models", "wakewords", "gaston", "samples"),
+                   help="Studio-Takes (gehen komplett in die Validierung)")
+    p.set_defaults(func=run_paket)
 
     args = ap.parse_args()
     return args.func(args)

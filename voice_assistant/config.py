@@ -37,6 +37,15 @@ class RespeakerAudio:
     encryption_key: str = ""
     use_speaker: bool = True  # False → TTS geht auf ALSA (Fallback)
     volume: float = 0.8  # 0.0–1.0, wird beim Connect via API gesetzt
+    # Zweiter Audiokanal (Firmware ab ESPHome 2026.9 mit "XVF-Ausgang links").
+    # mitschnitt: bei jeder Wiedergabe den zweiten Kanal mitschneiden, nach
+    #   VOICE_DIR/wiedergabe/ — zum Nachpruefen verstuemmelter Ausgabe
+    #   (tools/wiedergabe_pruefen.py). Default aus.
+    # kanal2_quelle: beim Verbinden den XVF-Ausgang links setzen — "asr"
+    #   (Werk), "referenz" (was der ESP an den Lautsprecher gibt), "roh"
+    #   (Rohmikrofon). Leer = am Geraet nichts aendern.
+    mitschnitt: bool = False
+    kanal2_quelle: str = ""
 
 
 _DEFAULT_VOICE_INSTRUCTION = (
@@ -166,6 +175,59 @@ _DEFAULT_ACTUATOR_BEISPIEL_SAETZE = {
     "aktivieren": "Aktiviere {}", "starten": "Starte {}",
 }
 
+# Torfrage VOR der Klassifikation: "will der Sprecher etwas schalten?" — eine
+# eigene, kurze Entscheidung mit der Antwort ja/nein (ein bis zwei Token).
+# Anlass (2026-09-23): der Aktuator schaltete aus Gerede heraus ("…den
+# gesamten Kalender bitte komplett sperren" -> rollostop/starten). Die
+# Klassifikation muss sich auf EIN Ziel festlegen, auch wenn keines gemeint
+# ist; die Torfrage darf einfach nein sagen.
+#
+# Gemessen 2026-09-23 auf 182 Saetzen (32 aus actuator_grammar_test.py, 65
+# echte Aktuator-Turns, 85 echte Brain-Turns), Gemma-4-E2B, zusammen mit der
+# Klassifikation: ohne Tor 172 richtig / 3 falsch geschaltet; mit diesem Tor
+# 163 / 0. Der Preis sind Kommandos, die das Tor uebersieht (16 von 86, viele
+# davon STT-Kauderwelsch) — die gehen an den Brain, also langsam statt falsch.
+# Varianten (Messreihe):
+#   T1  Klassifikations-Prompt auf ja/nein umgeschrieben   161 / 0, 19 uebersehen
+#   T2  eigener Prompt, "verhoerte Woerter zaehlen"       163 / 2  (Kauderwelsch kam durch)
+#   T3  T2 + Beispiele Einzahl-mit-Wert / Mehrzahl         163 / 0, 16 uebersehen  <- dieser
+#   T4  T3 ohne die Verhoert-Zeile                         163 / 0, 17 uebersehen
+# Die Beispiele stammen bewusst NICHT aus den Messsaetzen.
+#
+# Platzhalter wie beim Klassifikations-Prompt: {ziel_liste}, {gruppen_regel}
+# (letztere aus actuator.tor_gruppen_regel). Die Mehrzahl-Regel ist hier eine
+# ANDERE als im Klassifikations-Prompt: "die Rollos zu" macht erst die lokale
+# Mehrzahl-Regel NACH dem Modell zu alle_rollos — die Torfrage muss also ja
+# sagen, sonst kommt der Satz dort nie an (mit dem umgeschriebenen
+# Klassifikations-Prompt sagte sie nein: "Rollos runter" P(ja)=0,000).
+_DEFAULT_ACTUATOR_TOR_PROMPT = """Du bist das Tor vor dem Schalt-Aktuator. Entscheide NUR: Will der Sprecher mit diesem Satz eines der bekannten Ziele schalten? Antworte NUR mit ja oder nein.
+ja: ein Schaltwunsch fuer ein Ziel aus der Liste: ein/aus, auf/zu, hoch/runter, auf einen Wert setzen, Szene aktivieren, Routine starten. Auch wenn einzelne Woerter verhoert klingen, zaehlt die erkennbare Absicht.
+nein: Gespraech, Fragen, Kommentare, Bestaetigungen, Erzaehlungen, Wuensche an etwas, das nicht in der Liste steht. Dass ein Raum oder Geraet im Satz vorkommt, macht ihn noch nicht zum Schaltwunsch.
+
+Beispiele:
+Schalte das Flurlicht ein -> ja
+Stell die Felixheizung auf 22 Grad -> ja
+Mach das Kuechenrollo links zu -> ja
+Die Rollos bitte hoch -> ja
+Rollos wieder rauf -> ja
+Mach mal das Licht im Flur aus -> ja
+Das Rollo bitte runter -> nein
+Rollo auf 30 Prozent -> nein
+Ja, passt so. -> nein
+Im Wohnzimmer ist es heute richtig gemuetlich -> nein
+Das Licht war gestern viel zu hell -> nein
+Wie spaet ist es? -> nein
+
+Bekannte Ziele:
+{ziel_liste}
+
+{gruppen_regel}"""
+
+_DEFAULT_ACTUATOR_TOR_GRUPPEN_REGEL = (
+    '{einzahl_gross} OHNE RAUM: "{einzahl}" in der Einzahl OHNE Raumangabe ist nein. '
+    'Die Mehrzahl "{mehrzahl}" ist ja, auch ohne das Wort "alle".'
+)
+
 
 @dataclass
 class ActuatorConfig:
@@ -198,6 +260,51 @@ class ActuatorConfig:
     # (gemessen, siehe actuator._kontrast_beispiel). Wer den Prompt ersetzt,
     # pflegt diese Liste mit.
     beispiel_typen: list = field(default_factory=lambda: ["rollo"])
+    # Torfrage vor der Klassifikation (siehe _DEFAULT_ACTUATOR_TOR_PROMPT).
+    # Default aus: ohne den Eintrag verhält sich ein Profil wie vorher.
+    tor_enabled: bool = False
+    tor_prompt: str = _DEFAULT_ACTUATOR_TOR_PROMPT
+    tor_gruppen_regel: str = _DEFAULT_ACTUATOR_TOR_GRUPPEN_REGEL
+    # Zweiter Klassifikator: Laya (laya-serve unter laya_url) beantwortet
+    # Tor, Ziel und Aktion in einem Durchlauf. Leer = kein Laya; dann
+    # entscheidet Gemma allein wie vor dem Einbau. Siehe
+    # voice_assistant/services/aktuator_schatten.py und laya_intent.py.
+    laya_url: str = ""
+    # Als Entscheider muss Laya schnell sein (gemessen ~90 ms): nach diesem
+    # Timeout entscheidet Gemma im selben Turn.
+    laya_timeout: float = 2.0
+    laya_schwelle: float = 0.5
+    # Tor ja, Geraet unklar -> Rueckfrage statt Brain (Entscheidung
+    # 2026-10-01, Begruendung in aktuator_schatten.py).
+    laya_rueckfrage: bool = True
+    # Wer entscheidet: "gemma" (Default — ohne den Eintrag wie vorher) oder
+    # "laya". Mit "laya" ist Gemma der Rueckfall, wenn Laya nicht antwortet.
+    klassifikator: str = "gemma"
+    # Die nicht entscheidende Kette im Schatten mitlaufen lassen
+    # (actuator_schatten.log, tools/aktuator_vergleich.py --schatten).
+    # Entscheidet Gemma, laeuft Laya mit, sobald laya_url gesetzt ist.
+    schatten: bool = True
+
+
+@dataclass
+class RewindConfig:
+    """Rückspul-Puffer (voice_assistant/rewind.py): die letzten Minuten Mikro
+    samt Score-Verlauf im RAM, auf die Platte nur bei einem Anlass. Default
+    enabled=False: ohne den `rewind:`-Block wird nichts gepuffert."""
+    enabled: bool = False
+    # Pufferlaenge. Ein manueller Marker kommt Sekunden nach dem verlorenen
+    # Ruf — 120 s decken auch den Griff zum Taster am anderen Ende des Raums.
+    seconds: float = 120.0
+    # Bei jedem Trigger so viel VOR dem Trigger sichern (0 = aus): kommt der
+    # Nutzer nach vergeblichen Versuchen doch durch, stecken sie hier drin.
+    before_trigger_seconds: float = 30.0
+    # Manueller Marker per MQTT, z.B. ein Zigbee-Taster via zigbee2mqtt. Jede
+    # Nachricht mit nicht-leerem "action" sichert den ganzen Puffer; Status-
+    # Meldungen des Geraets (Batterie, Linkqualitaet) haben keins.
+    # Leerer Host oder leeres Topic = kein Marker.
+    marker_mqtt_host: str = ""
+    marker_mqtt_port: int = 1883
+    marker_topic: str = ""
 
 
 @dataclass
@@ -229,6 +336,63 @@ class WatcherConfig:
     # der Overseer-Thread nicht blockiert — lieber spät melden als gar nicht.
     # Bei Lastspitzen/Reasoning braucht GLM-5-2 manchmal >10s.
     llm_timeout: float = 30.0
+
+
+@dataclass
+class BargeInConfig:
+    """Abbruch mitten im Turn ("Stopp Gaston"), optional pro Profil.
+
+    Ohne den Profil-Block `barge_in:` verhaelt sich ein Profil exakt wie vor
+    dem Einbau (enabled=False). Das Fenster ist STATE_WAITING: Bestaetigung
+    ("Ich habe verstanden: ..."), Denk-Phrasen und das Vorlesen der Antwort.
+
+    wakewords: leer = dieselben Bundles wie im `wakewords:`-Block des Profils.
+        Ein eigenes Bundle (z.B. ein nachtrainiertes "stopp_gaston") wird hier
+        eingetragen und ist dann eine reine Config-Aenderung — der Code kennt
+        keinen Bundle-Namen.
+    rms_min: None = wake_rms_min des Profils uebernehmen. Eigener Wert nur mit
+        eigener Messung (tools/bargein_echo_test.py), denn das Fenster liegt
+        NEBEN der eigenen Wiedergabe und hat damit eine andere Grundlast als
+        das Wakeword-Gate im Leerlauf.
+    ack: kurze Quittung nach einem Abbruch. Leer = stumm (nur LED).
+    notify_brain: nach dem Abbruch eine Systemnachricht in dieselbe Session
+        posten, damit der Brain den Abbruch im Verlauf sieht und beim naechsten
+        Turn nicht weiterarbeitet. Kostet einen zusaetzlichen Turn.
+    """
+    enabled: bool = False
+    wakewords: list = field(default_factory=list)
+    rms_min: float | None = None
+    ack: str = "Okay."
+    notify_brain: bool = True
+    # Kurzes Signal im Moment des Abbruchs (fallender Doppelton + rote LED).
+    #
+    # Es quittiert etwas anderes als `ack`: der Beep sagt "ich habe mitten im
+    # Satz aufgehoert und hoere jetzt zu" und kommt SOFORT, ohne auf die STT zu
+    # warten. `ack` bestaetigt hinterher den verstandenen Abbruch. Am
+    # 2026-09-20 fehlte der Beep und der Abbruch war 18 Sekunden lang an
+    # nichts zu erkennen — ausser daran, dass die Stimme aufhoerte.
+    beep: bool = True
+    # Auch waehrend der EIGENEN Ansage lauschen (Bestaetigung, Denk-Phrasen,
+    # Vorlesen) — oder nur in den Luecken dazwischen.
+    #
+    # Default False, und das ist gemessen, nicht vorsichtig geraten
+    # (tools/bargein_echo_test.py digital, 2026-09-20): das gaston-Modell
+    # erkennt Gastons EIGENE Stimme. Der Satz "Ich habe verstanden: Gastau,
+    # Wohnzimmerrollo auf siebzig Prozent" ergab zwei Frames mit Peak 0.975 und
+    # haette den Turn selbst abgebrochen. Der Grund ist strukturell: das Modell
+    # ist auf synthetischen thorsten-Stimmen trainiert, und genau damit spricht
+    # der Assistent (speaches_tts_voice: de_DE-thorsten-medium) — die eigene
+    # Stimme liegt in der Trainingsverteilung. Dazu kommt, dass die
+    # Bestaetigung das Transkript wiederholt, in dem wegen des Pre-Rolls sehr
+    # oft das Wakewort steht.
+    #
+    # Mit False ist Selbst-Abbruch strukturell unmoeglich (es wird nur gehoert,
+    # wenn nichts gesprochen wird) und der Abbruch greift trotzdem beim Denken
+    # und Warten — also im Fall, der wirklich weh tut: der Brain arbeitet
+    # Sekunden bis Minuten. True gehoert erst zusammen mit einem eigenen
+    # Bundle ("stopp_gaston") oder nach einem akustischen Lauf, der zeigt,
+    # dass die Echo-Unterdrueckung das wegnimmt.
+    while_speaking: bool = False
 
 
 @dataclass
@@ -310,6 +474,9 @@ class Profile:
     # Schwelle NUR gegen tools/wake_rms_replay.py (siehe WAKEWORD_PROCESS.md).
     # Messreihe und Begründung 300: Docstring von tools/wake_rms_replay.py.
     wake_rms_min: float = 0.0
+    # Schatten-Aufnahme nach jedem Near-Miss (voice_assistant/nearmiss_shadow.py):
+    # 6 s mitschneiden, STT + Torfrage NUR ins Log, nie ausgefuehrt. Default aus.
+    nearmiss_shadow: bool = False
     # Endpointing: Stille-Dauer (Sekunden) bis die Aufnahme beendet wird.
     # ZEITBASIERT — gilt identisch auf allen Profilen, egal wie lang ein
     # Audio-Chunk je nach Quelle real ist (ALSA-16k=80ms, ALSA-48k-resample≈27ms,
@@ -344,6 +511,12 @@ class Profile:
 
     # Überwacher Stufe 1 — fehlt der Block: kein Watcher-Thread.
     watcher: WatcherConfig = field(default_factory=WatcherConfig)
+
+    # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
+    rewind: RewindConfig = field(default_factory=RewindConfig)
+
+    # Abbruch mitten im Turn ("Stopp Gaston"). Default: aus.
+    barge_in: BargeInConfig = field(default_factory=BargeInConfig)
 
 
 def _load_yaml() -> dict[str, Any]:
@@ -382,6 +555,41 @@ def _detect_profile_name(cfg: dict[str, Any]) -> str:
     sys.exit(1)
 
 
+def _parse_wakeword_entry(
+    entry: dict[str, Any] | None,
+    openclaw_session: str,
+    speaches_tts_voice: str,
+    wakeword_ack: str,
+) -> WakewordConfig | None:
+    """Ein Eintrag aus einem `wakewords:`-artigen Block → WakewordConfig.
+
+    Eigene Funktion, weil der Barge-in-Block (`barge_in.wakewords:`) dasselbe
+    Schema benutzt — ein zweiter Parser wuerde beim naechsten neuen Feld
+    auseinanderlaufen.
+    """
+    entry = entry or {}
+    bundle = str(entry.get("bundle", "")).strip()
+    if not bundle:
+        print("⚠️  wakewords-Eintrag ohne 'bundle' übersprungen")
+        return None
+    threshold_raw = entry.get("threshold")
+    min_hits_raw = entry.get("min_hits")
+    min_peak_raw = entry.get("min_peak")
+    min_peak_short_raw = entry.get("min_peak_short")
+    min_peak_single_raw = entry.get("min_peak_single")
+    return WakewordConfig(
+        bundle=bundle,
+        session=str(entry.get("session") or openclaw_session),
+        ack=str(entry.get("ack") or wakeword_ack),
+        tts_voice=str(entry.get("tts_voice") or speaches_tts_voice),
+        threshold=float(threshold_raw) if threshold_raw is not None else None,
+        min_hits=int(min_hits_raw) if min_hits_raw is not None else None,
+        min_peak=float(min_peak_raw) if min_peak_raw is not None else None,
+        min_peak_short=float(min_peak_short_raw) if min_peak_short_raw is not None else None,
+        min_peak_single=float(min_peak_single_raw) if min_peak_single_raw is not None else None,
+    )
+
+
 def _parse_wakewords(
     raw: dict[str, Any], openclaw_session: str, speaches_tts_voice: str, wakeword_ack: str
 ) -> list[WakewordConfig]:
@@ -404,28 +612,9 @@ def _parse_wakewords(
 
     result: list[WakewordConfig] = []
     for entry in entries_raw:
-        bundle = str((entry or {}).get("bundle", "")).strip()
-        if not bundle:
-            print("⚠️  wakewords-Eintrag ohne 'bundle' übersprungen")
-            continue
-        threshold_raw = entry.get("threshold")
-        min_hits_raw = entry.get("min_hits")
-        min_peak_raw = entry.get("min_peak")
-        min_peak_short_raw = entry.get("min_peak_short")
-        min_peak_single_raw = entry.get("min_peak_single")
-        result.append(
-            WakewordConfig(
-                bundle=bundle,
-                session=str(entry.get("session") or openclaw_session),
-                ack=str(entry.get("ack") or wakeword_ack),
-                tts_voice=str(entry.get("tts_voice") or speaches_tts_voice),
-                threshold=float(threshold_raw) if threshold_raw is not None else None,
-                min_hits=int(min_hits_raw) if min_hits_raw is not None else None,
-                min_peak=float(min_peak_raw) if min_peak_raw is not None else None,
-                min_peak_short=float(min_peak_short_raw) if min_peak_short_raw is not None else None,
-                min_peak_single=float(min_peak_single_raw) if min_peak_single_raw is not None else None,
-            )
-        )
+        wc = _parse_wakeword_entry(entry, openclaw_session, speaches_tts_voice, wakeword_ack)
+        if wc is not None:
+            result.append(wc)
     if not result:
         print("⚠️  wakewords-Block leer/ungültig → Fallback auf 'hey_jarvis'")
         return [
@@ -437,6 +626,48 @@ def _parse_wakewords(
             )
         ]
     return result
+
+
+def _parse_barge_in(
+    raw: dict[str, Any],
+    profile_wakewords: list[WakewordConfig],
+    wake_rms_min: float,
+    openclaw_session: str,
+    speaches_tts_voice: str,
+    wakeword_ack: str,
+) -> BargeInConfig:
+    """Baut den optionalen `barge_in:`-Block. Fehlt er, ist Barge-in aus.
+
+    Die Wakeword-Liste faellt bewusst auf die Profil-Wakewords zurueck: Stufe 1
+    des Abbruchs benutzt dasselbe, bereits gemessene Modell ("Stopp Gaston" —
+    das "Stopp" steckt im Pre-Roll und wird per STT geprueft). Ein eigenes,
+    nachtrainiertes Bundle ist spaeter nur ein Eintrag hier.
+    """
+    raw_bi = raw.get("barge_in") or {}
+    _d = BargeInConfig()
+    if not raw_bi:
+        return _d
+
+    entries_raw = raw_bi.get("wakewords") or []
+    wakewords: list[WakewordConfig] = []
+    for entry in entries_raw:
+        wc = _parse_wakeword_entry(entry, openclaw_session, speaches_tts_voice, wakeword_ack)
+        if wc is not None:
+            wakewords.append(wc)
+    if not wakewords:
+        wakewords = list(profile_wakewords)
+
+    rms_raw = raw_bi.get("rms_min")
+    ack_raw = raw_bi.get("ack")
+    return BargeInConfig(
+        enabled=bool(raw_bi.get("enabled", _d.enabled)),
+        wakewords=wakewords,
+        rms_min=float(rms_raw) if rms_raw is not None else wake_rms_min,
+        ack=_d.ack if ack_raw is None else str(ack_raw),
+        notify_brain=bool(raw_bi.get("notify_brain", _d.notify_brain)),
+        while_speaking=bool(raw_bi.get("while_speaking", _d.while_speaking)),
+        beep=bool(raw_bi.get("beep", _d.beep)),
+    )
 
 
 def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
@@ -468,6 +699,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         encryption_key=str(resp_raw.get("encryption_key", "")),
         use_speaker=bool(resp_raw.get("use_speaker", True)),
         volume=float(resp_raw.get("volume", 0.8)),
+        mitschnitt=bool(resp_raw.get("mitschnitt", False)),
+        kanal2_quelle=str(resp_raw.get("kanal2_quelle", "") or ""),
     )
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---
@@ -498,7 +731,24 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         gruppen_regel=str(actuator_raw.get("gruppen_regel") or _dact.gruppen_regel),
         beispiel_saetze=dict(actuator_raw.get("beispiel_saetze") or _dact.beispiel_saetze),
         beispiel_typen=list(actuator_raw.get("beispiel_typen") or _dact.beispiel_typen),
+        tor_enabled=bool(actuator_raw.get("tor_enabled", _dact.tor_enabled)),
+        tor_prompt=str(actuator_raw.get("tor_prompt") or _dact.tor_prompt),
+        tor_gruppen_regel=str(actuator_raw.get("tor_gruppen_regel") or _dact.tor_gruppen_regel),
+        # schatten_* sind die Namen vom 2026-09-29 (da war Laya nur Schatten)
+        laya_url=str(actuator_raw.get("laya_url") or actuator_raw.get("schatten_url") or _dact.laya_url),
+        laya_timeout=float(actuator_raw.get("laya_timeout", _dact.laya_timeout)),
+        laya_schwelle=float(actuator_raw.get("laya_schwelle",
+                                             actuator_raw.get("schatten_schwelle", _dact.laya_schwelle))),
+        laya_rueckfrage=bool(actuator_raw.get("laya_rueckfrage", _dact.laya_rueckfrage)),
+        klassifikator=str(actuator_raw.get("klassifikator") or _dact.klassifikator),
+        schatten=bool(actuator_raw.get("schatten", _dact.schatten)),
     )
+    if actuator.klassifikator not in ("gemma", "laya"):
+        print(f"⚠️  actuator.klassifikator '{actuator.klassifikator}' unbekannt — Gemma entscheidet")
+        actuator.klassifikator = "gemma"
+    if actuator.klassifikator == "laya" and not actuator.laya_url:
+        print("⚠️  actuator.klassifikator laya, aber laya_url leer — Gemma entscheidet")
+        actuator.klassifikator = "gemma"
 
     # --- Überwacher: separater Block, analog zu actuator ---
     watcher_raw = raw.get("watcher") or {}
@@ -517,6 +767,19 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         llm_timeout=float(watcher_raw.get("llm_timeout", _dw.llm_timeout)),
     )
 
+    rewind_raw = raw.get("rewind") or {}
+    _drw = RewindConfig()
+    rewind = RewindConfig(
+        enabled=bool(rewind_raw.get("enabled", _drw.enabled)),
+        seconds=float(rewind_raw.get("seconds", _drw.seconds)),
+        before_trigger_seconds=float(
+            rewind_raw.get("before_trigger_seconds", _drw.before_trigger_seconds)
+        ),
+        marker_mqtt_host=str(rewind_raw.get("marker_mqtt_host") or _drw.marker_mqtt_host),
+        marker_mqtt_port=int(rewind_raw.get("marker_mqtt_port", _drw.marker_mqtt_port)),
+        marker_topic=str(rewind_raw.get("marker_topic") or _drw.marker_topic),
+    )
+
     locale_raw = raw.get("locale") or {}
     _dloc = LocaleConfig()
     locale = LocaleConfig(
@@ -525,6 +788,21 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
+    )
+
+    wakewords = _parse_wakewords(
+        raw,
+        openclaw_session=str(raw.get("openclaw_session", "")),
+        speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
+        wakeword_ack=locale.wakeword_ack,
+    )
+    barge_in = _parse_barge_in(
+        raw,
+        profile_wakewords=wakewords,
+        wake_rms_min=float(raw.get("wake_rms_min", 0.0)),
+        openclaw_session=str(raw.get("openclaw_session", "")),
+        speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
+        wakeword_ack=locale.wakeword_ack,
     )
 
     return Profile(
@@ -546,6 +824,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         vad_aggressiveness=int(raw.get("vad_aggressiveness", 3)),
         vad_voice_rms_min=float(raw.get("vad_voice_rms_min", 0.0)),
         wake_rms_min=float(raw.get("wake_rms_min", 0.0)),
+        nearmiss_shadow=bool(raw.get("nearmiss_shadow", False)),
         silence_seconds=float(raw.get("silence_seconds", 2.0)),
         silence_chunks_limit=int(raw.get("silence_chunks_limit", 0)),
         command_silence_seconds=float(raw.get("command_silence_seconds", 1.0)),
@@ -553,12 +832,9 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         locale=locale,
         actuator=actuator,
         watcher=watcher,
-        wakewords=_parse_wakewords(
-            raw,
-            openclaw_session=str(raw.get("openclaw_session", "")),
-            speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
-            wakeword_ack=locale.wakeword_ack,
-        ),
+        rewind=rewind,
+        wakewords=wakewords,
+        barge_in=barge_in,
     )
 
 
@@ -618,6 +894,10 @@ MAX_FOLLOWUP_ROUNDS = 3
 # es wieder gleich falsch — sie nervt nur.
 MAX_UNKLAR_ROUNDS = 1
 FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
+# Abbruch-Signal (Barge-in): zwei kurze FALLENDE Toene, damit es sich vom
+# steigenden Follow-up-Beep hoerbar unterscheidet — "ich habe aufgehoert"
+# gegen "ich hoere jetzt zu".
+ABORT_BEEP_PATH = os.path.join(WORKSPACE, "abort_beep.wav")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
 
@@ -633,6 +913,14 @@ WAKE_LOG_PATH = os.path.join(WORKSPACE, "wake_events.log")
 # sollen weder die Gesprächs-Session zumüllen noch im Chat auftauchen.
 # Das ist das Rohmaterial für den späteren Aktuator-Überwacher.
 ACTUATOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_turns.log")
+# Jede Entscheidung der Torfrage (ja UND nein) — Rohmaterial zum Nachtunen.
+# Bewusst NICHT in actuator_turns.log: der Überwacher meldet dort jede Zeile,
+# deren Status nicht "ausgefuehrt" ist, und die Nein-Zeilen sind die Mehrheit.
+ACTUATOR_TOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_tor.log")
+# Schattenbetrieb (actuator.schatten_url): je Satz die echte Entscheidung und
+# die des Schatten-Klassifikators nebeneinander. Auswertung:
+# tools/aktuator_vergleich.py --schatten
+ACTUATOR_SCHATTEN_LOG_PATH = os.path.join(WORKSPACE, "actuator_schatten.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,
@@ -663,6 +951,13 @@ WAKE_REVIEW_PATH = os.path.join(WORKSPACE, "wake_review.jsonl")
 SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
 SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
+
+# Wer zuletzt per Stimme gesprochen hat — geschrieben nach JEDEM Voice-Turn,
+# gelesen von Werkzeugen AUSSERHALB dieses Repos (siehe SPEAKER_STATE.md), die
+# vor einer folgenreichen Aktion wissen müssen, ob gerade ein bekannter Sprecher
+# am Mikrofon war. Bewusst eine Datei und kein Prompt-Hinweis: das Sprachmodell
+# soll daran nicht vorbeireden können.
+CURRENT_SPEAKER_PATH = os.path.join(VOICE_DIR, "current_speaker.json")
 
 # Schwellwert für „lange Pause" (Sekunden): Eine temporäre, besitzergebundene
 # Stimme (per voice_set_voice ohne for_speaker gesetzt) bleibt nur erhalten,

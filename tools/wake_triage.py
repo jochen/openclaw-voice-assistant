@@ -132,6 +132,7 @@ def _lade_wake_log() -> dict[str, dict]:
     sonst verlöre die zweite Zeile die Gate-Werte der ersten.
     """
     out: dict[str, dict] = {}
+    fenster = _ausschluss_fenster()
     if not os.path.exists(WAKE_LOG_PATH):
         return out
     with open(WAKE_LOG_PATH) as f:
@@ -141,7 +142,7 @@ def _lade_wake_log() -> dict[str, dict]:
             except ValueError:
                 continue
             audio = row.get("audio")
-            if not audio:
+            if not audio or _ausgeschlossen(row.get("ts"), fenster):
                 continue
             ziel = out.setdefault(audio, {})
             # result nicht überschreiben: "trigger"/"nearmiss" ist die Art des
@@ -151,9 +152,39 @@ def _lade_wake_log() -> dict[str, dict]:
     return out
 
 
+# Zeitfenster, deren Wake-Ereignisse in KEINER Auswertung vorkommen dürfen —
+# weder als Label noch als Messung noch als Trainingsstoff. Eine JSON-Zeile je
+# Fenster: {"von": ISO, "bis": ISO, "grund": "..."}.
+# Anlass (2026-10-01): beim Anhören der Review-Clips auf gastonllm (2 m vom
+# Mikro, Lautsprecher leise) hat das Mikro die Wiedergabe gehört — 23
+# Near-Misses aus abgespielten Aufnahmen. Für die Selbst-Labels sähe das wie
+# ein echter, wiederholter Ruf aus. Jochen: "nur dass wir die nicht nochmal
+# verwenden".
+WAKE_AUSSCHLUSS_PATH = os.path.join(os.path.dirname(WAKE_LOG_PATH), "wake_ausschluss.jsonl")
+
+
+def _ausschluss_fenster() -> list[tuple[str, str]]:
+    fenster = []
+    try:
+        with open(WAKE_AUSSCHLUSS_PATH, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    d = json.loads(line)
+                    fenster.append((d["von"], d["bis"]))
+    except FileNotFoundError:
+        pass
+    return fenster
+
+
+def _ausgeschlossen(ts: str | None, fenster: list[tuple[str, str]]) -> bool:
+    """ts aus wake_events.log (ISO, Sekunden) liegt in einem Ausschluss-Fenster."""
+    return bool(ts) and any(von <= ts[:19] <= bis for von, bis in fenster)
+
+
 def _lade_wake_events() -> list[dict]:
     """Alle Wake-Log-Zeilen in zeitlicher Reihenfolge (für Nachbarschaftsregeln)."""
     rows: list[dict] = []
+    fenster = _ausschluss_fenster()
     if not os.path.exists(WAKE_LOG_PATH):
         return rows
     with open(WAKE_LOG_PATH) as f:
@@ -162,7 +193,7 @@ def _lade_wake_events() -> list[dict]:
                 row = json.loads(line)
             except ValueError:
                 continue
-            if row.get("ts"):
+            if row.get("ts") and not _ausgeschlossen(row["ts"], fenster):
                 rows.append(row)
     rows.sort(key=lambda r: r["ts"])
     return rows
@@ -478,6 +509,54 @@ def main() -> int:
                 marke = (f"  ⚠️ {echt}× selbst als echter Ruf gelabelt → Verhörer, nicht TV"
                          if echt else "")
                 print(f"    {n:>2}×  {t[:52]!r}{marke}")
+    # --- Gate-Pfad gegen Label: Kriterium 3 der Beobachtungswette v3 ---------
+    #
+    # Die Wette (WAKEWORD_PROCESS.md) verlangt fuer die Kurz-Streak-Pfade
+    # ausdruecklich eine Messung an den LIVE geloggten Score-Verlaeufen und
+    # nicht offline. Der Grund ist methodisch und wurde am 2026-09-20 noch
+    # einmal belegt: der Offline-Scorer (wakeword_studio.scoring) probiert
+    # mehrere Frame-Phasen und findet immer den besten Streak, ein
+    # 1-Frame-Trigger entsteht dort praktisch nie. Live liegt die Phase fest.
+    # Ein Korpus-A/B "mit gegen ohne min_peak_single" ergab deshalb exakt
+    # dieselben Zahlen — die Frage ist offline nicht messbar.
+    #
+    # Diese Tabelle ist die Antwort auf die Wette: sie zeigt, WELCHER Gate-Pfad
+    # die Fehltrigger liefert und was ein Abschalten des 1-Frame-Pfads an
+    # belegten echten Rufen kosten wuerde.
+    tr = [r for r in zeilen if r["art"] == "trigger"]
+    if tr:
+        def _pfad(h) -> str:
+            if h == 1:
+                return "1 Frame"
+            if h == 2:
+                return "2 Frames"
+            return "3+ Frames"
+
+        tab: dict[str, Counter] = {}
+        for r in tr:
+            tab.setdefault(_pfad(r.get("hits")), Counter())[r["klasse"]] += 1
+        print("\n=== TRIGGER NACH GATE-PFAD (Wette v3, Kriterium 3) ===")
+        for pfad in ("1 Frame", "2 Frames", "3+ Frames"):
+            c = tab.get(pfad)
+            if not c:
+                continue
+            print(f"    {pfad:10s} n={sum(c.values()):3d}   "
+                  f"echt={c[ECHT]:3d}  Fehltrigger={c[RAUSCH]:3d}  unklar={c[UNKLAR]:3d}")
+        eins = [r for r in tr if r.get("hits") == 1]
+        if eins:
+            e_echt = sum(1 for r in eins if r["klasse"] == ECHT)
+            e_fp = sum(1 for r in eins if r["klasse"] == RAUSCH)
+            print(f"    → min_peak_single AUS haette in diesem Zeitraum "
+                  f"{e_echt} belegte echte Rufe gekostet und "
+                  f"{e_fp} belegte Fehltrigger verhindert.")
+            if e_fp > e_echt:
+                print("    Der 1-Frame-Pfad liefert hier mehr Fehltrigger als Rufe. Das ist")
+                print("    KEIN Abschalt-Befehl: er wurde am 2026-07-26 eingebaut, weil 4 von")
+                print("    6 verlorenen echten Rufen nur so zurueckkamen. Ob der Handel sich")
+                print("    gedreht hat, entscheidet der Zeitraum — kurze Fenster mit wenigen")
+                print("    Rufen sehen immer so aus. Gegen die Wette lesen, nicht gegen das")
+                print("    Bauchgefuehl.")
+
     if nm:
         c = Counter(r["klasse"] for r in nm)
         echt_peaks = [r["peak"] for r in nm if r["klasse"] == ECHT and r.get("peak")]

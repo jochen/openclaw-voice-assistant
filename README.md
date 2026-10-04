@@ -187,9 +187,47 @@ python -m venv esphome-venv
 esphome-venv/bin/pip install esphome
 ```
 
-**How it works:** The Pi connects to the ESP via ESPHome Native API (port 6053, `aioesphomeapi`). Audio streams continuously via the `voice_assistant` component in API_AUDIO mode. TTS output is sent back as WAV via the ESP's `media_player` announce API — the Pi serves the WAV over HTTP (port 18800) and the ESP fetches and plays it.
+**How it works:** The Pi connects to the ESP via ESPHome Native API (port 6053, `aioesphomeapi`). Audio streams continuously via the `voice_assistant` component in API_AUDIO mode. TTS output is sent back as WAV — the Pi serves the WAV over HTTP (port 18800) and the ESP fetches and plays it.
 
 Wakeword detection (`openwakeword`) runs on the Pi against the audio stream.
+
+**Playback goes through the `media_player` entity, not the voice-assistant
+announce API — and that is deliberate.** The announce API
+(`send_voice_assistant_announcement_*`) ends the ESP's `voice_assistant`
+session: `handle_stop` fires, the audio stream breaks off, and the session has
+to be restarted afterwards. The consequence is easy to miss and hard to debug:
+**the Pi is deaf for the entire duration of every spoken reply.** No wake word,
+no interruption, nothing. Sending the URL to the `media_player` entity instead
+(`media_player_command(media_url=…, announcement=True)`) leaves the session
+untouched, so the microphone streams straight through playback — and unlike an
+announcement, playback can be stopped mid-sentence. No firmware change is
+needed for this; ESPHome's own `on_announce` performs exactly the same
+media-player call internally.
+
+Two things to know if you build on this:
+
+- **An announcement reports itself as `PLAYING`, not `ANNOUNCING`.** Waiting for
+  `MediaPlayerState.ANNOUNCING` to detect playback means waiting for something
+  that never arrives — every sentence then runs into your start timeout. Accept
+  both states (see `RespeakerClient._BUSY_STATES`). This cost us 5 seconds of
+  added latency per sentence before we noticed.
+- **Do not make the state event the *condition* for "playback finished" — make
+  the file length the condition and the state merely an anchor.** ESPHome only
+  reports state *changes*, so if the player stays in a playing state from one
+  sentence to the next, no event arrives at all. Our first attempt waited for
+  that event and ran into its timeout on every such sentence: measured overhangs
+  of **+5.4 s and +5.5 s** between sentences of one spoken answer, which sounds
+  exactly like the assistant stuttering. Using the WAV length as the primary
+  measure (with a measured ~0.6 s fetch/decode assumption when the anchor is
+  missing) brought it to +0.48…+0.54 s.
+- **Give every announcement its own URL.** Ours reused one filename per worker
+  thread, so all sentences of a reply were served under the same address — one
+  more reason for a player not to report a change.
+- **Have the sink report an unusual overhang itself.** When ours went wrong, the
+  log held only two terse warnings; the gaps had to be computed by hand. A line
+  that fires when playback takes more than ~2 s longer than the audio turns the
+  next regression of this kind into something you read instead of something you
+  hear.
 
 ## Wake-word level gate (`wake_rms_min`)
 
@@ -268,6 +306,168 @@ ow-venv/bin/python -m tools.wake_corpus bilanz    # what is secured, and which l
 ow-venv/bin/python -m tools.wake_corpus messen    # score the current bundle against that corpus
 ```
 
+**Does the gate lose calls nobody repeats? (`nearmiss_shadow`, optional)**
+A near-miss followed by a trigger within seconds is a lost call — the user
+said it again. A user who doesn't repeat never shows up that way, and the
+near-miss clip itself ends at the wake word: the STT gets one isolated word
+and guesses. With `nearmiss_shadow: true` the assistant quietly keeps
+recording for 6 s after every near-miss (`*_nearmiss_folge.wav` next to the
+clip) and writes the STT result and the actuator's gate question to
+`nearmiss_shadow.jsonl` — only while no turn is running, without touching the
+Speaches cooldown, and without ever executing anything. **It is a provisional
+estimate, not a label:** every line carries `"status": "vorlaeufig"`
+(provisional), and `wake_triage` does not read the file. Whether STT plus
+"does the speaker want to switch something?" recognises real calls (questions
+meant for the brain slip through) still has to be measured against clips you
+have listened to.
+
+**And calls that never even became a near-miss? (`rewind`, optional)**
+Near-miss and shadow recording only see calls where the model at least
+brushed the threshold. A call nothing reacts to leaves no trace. The rewind
+buffer therefore keeps the last minutes of microphone audio **and every
+score** in RAM and saves them on two occasions: the seconds before every
+trigger (if you get through after failed attempts, they are in there) and the
+whole buffer on a manual marker — for us a Zigbee button via MQTT, pressed a
+few seconds after "it didn't react". Next to each WAV sits a JSON file with
+the score trace, states, level per second and gaps in the microphone stream.
+It shows why the call failed: score near 0 (model), just below the threshold
+(threshold), or a gap (the microphone was deaf — not a model problem). Again:
+provisional, for listening, not a label. **Privacy:** the pre-trigger save
+regularly stores room conversation; agree on it with the people who live
+there.
+
+## Cancelling a turn while it runs (`barge_in`, optional)
+
+A false wake-word trigger is not the expensive part. The expensive part is
+what follows it: the assistant repeats what it thinks it heard, the language
+model starts working, and whatever that model decides to do, it does. Until
+now there was exactly one way out — a stop word **inside the recording**,
+checked against the transcript. Once the recording had ended, the turn ran to
+completion.
+
+That gap got wider the moment the spoken acknowledgement ("Yes?") stopped
+being played for single-sentence commands: without that audible cue, a false
+trigger is often noticed only when the assistant is already answering.
+
+With `barge_in` enabled, the wake word is also listened for **while the
+assistant itself holds the floor**. Saying "stop <wake word>" then aborts the
+running turn:
+
+- playback stops mid-sentence,
+- the heartbeat phrases stop,
+- the HTTP connection to the backend is closed, which **cancels the agent run
+  server-side** (documented behaviour of `/v1/responses`: disconnecting the
+  client cancels the run),
+- nothing is mirrored to the chat, no follow-up round is started,
+- and optionally a short system note goes into the same session, so the model
+  sees the abort in its history instead of treating the next turn as a
+  continuation.
+
+The stop word itself is **not** matched on the wake word event — it is matched
+on the transcript afterwards. The trigger fires on the wake word, and the
+"stop" you said just before it sits in the pre-roll buffer. That is why both
+"stop <wake word>" and "<wake word>, stop" work, and why a barge-in *without* a
+stop word is simply treated as a new request — the classic interruption. That
+request goes to the backend, never to the voice actuator: a barge-in exists to
+cancel, not to switch.
+
+```yaml
+profiles:
+  yourprofile:
+    barge_in:
+      enabled: true
+      # Listen while the assistant itself is speaking? See the warning below.
+      while_speaking: false
+      # Falling two-tone + brief red LED the moment the abort fires.
+      beep: true
+      # Level gate for the abort. Omit it and the profile's wake_rms_min applies.
+      rms_min: 400
+      # Short spoken confirmation after an abort. Empty string = silent.
+      ack: "Okay."
+      # Post a system note about the abort into the same session.
+      notify_brain: true
+      # Optional: a dedicated bundle for the abort. Omit it and the profile's
+      # own wake words are used.
+      wakewords:
+        - bundle: stopp_gaston
+          min_hits: 2
+```
+
+> **Measure whether your assistant recognises its own voice before setting
+> `while_speaking: true`.** This is not a theoretical risk, and the two numbers
+> below are far apart:
+>
+> ```bash
+> ow-venv/bin/python -m tools.bargein_echo_test digital --wiederholungen 5
+> ow-venv/bin/python -m tools.bargein_echo_test akustisch --wiederholungen 3
+> ```
+>
+> | run | self-triggers | highest score |
+> |---|---|---|
+> | `digital` — pure TTS signal, no room, no echo cancellation | **5 of 40** | **0.97** |
+> | `akustisch` — real speaker → echo cancellation → real mic | **0 of 24** | **0.07** |
+>
+> Digitally the finding is structural: a wake-word model trained on synthetic
+> voices recognises the *synthetic voice your assistant speaks with* — that
+> voice sits inside its training distribution. It hit all three gate paths and
+> four different sentences, including a thinking phrase with no wake word in
+> it at all. So it is not merely the confirmation repeating the transcript.
+>
+> Acoustically, the same material dropped to 0.07 on our hardware: echo
+> cancellation takes away not just level but the wake-word character of the
+> signal. That is why **the default is `while_speaking: false`** while our own
+> installation runs `true` — the good number depends entirely on having echo
+> cancellation in the audio path (for the ReSpeaker: only with
+> `use_speaker: true`, where the XVF3800 has the loudspeaker reference). Route
+> playback through a plain ALSA speaker instead and the digital number is the
+> one that applies.
+>
+> With `while_speaking: false`, self-abortion is structurally impossible — it
+> only listens while nothing is being said — and the abort still covers the
+> thinking and waiting phase, the one that lasts seconds to minutes. Re-measure
+> after changing voice, volume, model or audio hardware.
+
+**Make the abort perceptible.** The only signal that an abort landed is
+otherwise the voice stopping mid-sentence, and that is not enough: in our first
+live test the following recording ran for 18 seconds with no further cue. Two
+things fix that, and they acknowledge different facts:
+
+- `beep` plays a short **falling two-tone** the moment the abort fires, plus a
+  brief red LED. It says "I stopped mid-sentence and I am listening now", and it
+  arrives immediately — no waiting for speech recognition, which takes about a
+  second.
+- `ack` is spoken afterwards and only when a stop word was actually found in
+  the transcript. It says "I understood that as an abort".
+
+Deliberately a beep and not speech for the first one: the moment the user is
+waiting for an answer to "did that land?" is exactly the second your TTS needs.
+Make it clearly different from whatever sound you use for "I'm listening" —
+ours is a single *rising* tone, the abort is a *falling* pair.
+
+**Keep the recording after an abort short.** A barge-in is said in one breath —
+a stop word, or a brief new request; nobody pauses to think there. With our
+normal dialog endpointing (2 s trailing silence, 30 s ceiling) the recording
+after the abort stayed open for 18.2 seconds and picked up a *bystander's*
+question, which was then answered as a new request. Command endpointing (1 s,
+8 s) is the right setting for this state.
+
+**If you build something like this: re-check the abort flag after acquiring your
+audio lock.** Our first live abort still spoke one sentence, because that
+sentence had already passed the abort check and was then blocked on the playback
+lock held by the confirmation still being read out. When the confirmation broke
+off correctly, it released the lock — and the waiting sentence went ahead with a
+stale check. The abort had not prevented the answer, only delayed it. One
+sentence is enough to make the whole feature feel broken.
+
+**What an abort cannot do:** a switching command handled by the voice actuator
+is already executed about half a second after the recording ends. No spoken
+"stop" beats that. Stopping the speech does not un-switch the light. Barge-in
+protects you from the language model, not from a lamp.
+
+Every abort and every near-miss is logged to `wake_events.log`
+(`result: "bargein"` / `"bargein_nearmiss"`) with its own audio clip, so the
+gate can be swept offline like the wake word itself.
+
 ## Voice actuator (optional)
 
 Switching commands like "turn on the kitchen light" normally take the same road
@@ -283,6 +483,52 @@ STT text → small LLM forms ONE JSON intent → POST /intent to your home
 If the sentence is not a switching command, everything continues to the backend
 as before. Same if the small model is unavailable — the actuator is a shortcut,
 never a bottleneck.
+
+**Only a direct call reaches the actuator.** A sentence spoken after the wake
+word or in answer to the actuator's own clarifying question may switch things.
+A barge-in may not — it exists to cancel, not to switch. Neither may a
+follow-up round after a backend reply —
+the microphone is open without a wake word, the person is talking to the
+backend, and the small model readily reads a misheard sentence as a command
+("block the whole calendar" came out of speech recognition as gibberish and
+was executed as "start the blind stop"). Those sentences go to the backend,
+which can still switch through the MCP path below.
+
+**Optional gate question (`actuator.tor_enabled`).** The classifier has to
+commit to one target even when none is meant. With the gate on, the same small
+model first answers only "does the speaker want to switch something? yes/no";
+anything but yes goes to the backend. On our 182 test sentences (including
+real turns) this took wrong switches from 3 to 0, at the cost of 16 of 86
+commands taking the slow path through the backend. The model's probability
+for "yes" is logged but does not decide — for a small LLM it is not
+calibrated. The prompt is German and installation-specific
+(`actuator.tor_prompt`); measure before you rely on it in your language.
+
+**Optional second classifier: Laya (`actuator.laya_url`, `actuator.klassifikator`).**
+[Laya](https://github.com/NandhaKishorM/laya) is an encoder with a decision
+head (no text) that answers gate, target and action in one pass via
+`laya-serve`; a simple parser reads the value from the sentence. Its result
+goes through the same check (`verdict()`) as the small LLM's.
+`klassifikator` sets who decides (`gemma`, the default, or `laya`); the other
+one judges in the shadow, never switches, and is logged next to it in
+`actuator_schatten.log` — so a candidate is measured on real sentences before
+it is allowed to decide. If Laya decides and does not answer (service
+stopped, timeout `laya_timeout`), the LLM decides in the same turn. With
+`laya_rueckfrage` (on by default) the assistant asks back when Laya sees an
+intent to switch but no device — instead of handing the sentence to a backend
+that would have to guess. Laya is not usable without fine-tuning: it is
+trained on sentences generated from your own capabilities
+(`tools/tor_trainset.py`, `tools/laya_aktuator_train.py`, separate venv with
+torch; procedure and pitfalls in `LAYA_TRAINING.md`). A checkpoint belongs to
+exactly one target list; when targets change, retrain. The generator's
+templates are German.
+
+**Keep the model's output short.** The classifier answers in compact JSON,
+enforced by a GBNF grammar. With a JSON schema alone the model was free to
+indent — 52 tokens instead of 29, twice the latency, no extra information.
+Generating tokens is where the time goes, so on slow hardware (we run the
+classifier on an integrated GPU) this decides whether the shortcut is still
+short.
 
 **The assistant only contains the speech side.** You provide the executing side
 yourself: two HTTP endpoints, `GET /capabilities` (what may be switched) and
@@ -318,6 +564,19 @@ model the same guarded interface, with two tools:
 
 There is deliberately **no** free-text tool: the whole point is that a device
 name absent from `haus_ziele()` does not exist — rather than being guessed at.
+
+One rule belongs in the large model's tool instructions, because it will not
+arrive on its own: **if an entry from `namen` appears verbatim in the
+sentence, that is the target** — do not reinterpret it by word meaning as a
+larger group. A large model reads meaning, not names. With an everyday group
+"all shutters" (deliberately excluding the children's rooms) next to a group
+"shutters in the whole house", it picks the complete set for "all shutters" —
+literally, "all" does mean all. The confirmation prompt of the expensive
+target does not catch this: it gets confirmed, and more moves than intended.
+Seen in this installation five times in a row. The actuator's small model does
+not have the problem; it matches names. And mind the examples in the
+instructions themselves: a phrase like "confirmation for expensive targets,
+e.g. all shutters" teaches exactly the wrong equation.
 
 Requests carry their own `quelle`, so the executing side applies its gate just
 as it does for the actuator, and reserving further `quelle` values for other
@@ -464,7 +723,15 @@ This does not imply a duty to ask back — an assistant that confirms every swit
 
 ### Speaker awareness & safety
 
-Each 🎤 message is prefixed with `[Sprecher: …]` (the recognised speaker, or `unbekannt`). Goal: impactful or hard-to-undo actions should only happen when it's clear a trusted person wants them. For an `unbekannt` speaker, be freely helpful with harmless things (info, status, simple queries); for anything with loss or damage potential, get confirmation from a known speaker first.
+Each 🎤 message is prefixed with `[Sprecher: …]`. It carries one of four things: the recognised name, `unbekannt` (recognition ran and matched nobody), `Erkennung ausgefallen` (recognition did not run at all), or `Erkennung nicht eingerichtet`. Goal: impactful or hard-to-undo actions should only happen when it's clear a trusted person wants them. For anything but a recognised name, be freely helpful with harmless things (info, status, simple queries); for anything with loss or damage potential, get confirmation from a known speaker first.
+
+**Treat an outage as less, not more, permission.** `Erkennung ausgefallen` means nothing was measured — it is weaker evidence than `unbekannt`, not a technicality to wave through.
+
+**Continuation has a limit.** Treating a follow-up without a fixed speaker as a continuation of the person recognised a moment ago is fine for harmless things. It does not extend to impactful actions: powering machines off, deleting, reconfiguring, flashing, acting in someone's name. Those need a speaker who is established *for that input* — not one who was established earlier. That distinction is not academic; leaving it out is what allowed the 2026-09-18 incident.
+
+If the tool refuses, that is the rule working. Ask for confirmation by a known voice or via chat instead of looking for another route around it.
+
+This prompt directive is guidance, not enforcement. The enforcement lives in the tool that performs the action, via [`SPEAKER_STATE.md`](SPEAKER_STATE.md).
 
 ### Mood signal (acoustic)
 
@@ -493,11 +760,29 @@ Each recording runs through Speaches diarization in parallel to STT. The dominan
 ```
 ~/.openclaw/workspace/voice/
   last_recording.wav             current recording (overwritten per trigger)
+  current_speaker.json           who spoke last — read by gating tools
   speakers/
     jochen.wav                   active reference (sent to Speaches)
   originals/
     jochen-2026-05-09T22-15.wav  timestamped backup, never overwritten
 ```
+
+### Speaker state file — turning the label into a barrier
+
+The recognised speaker used to exist **only** inside the prompt. That makes it a
+hint to a language model, not a rule: whether an impactful action is skipped for
+an unrecognised speaker was decided by prose alone. On 2026-09-18 that failed in
+the field — diarization was down, every turn therefore read `unbekannt`, and the
+assistant powered machines off anyway, reasoning that the request had just been
+made by someone known.
+
+So the assistant now writes `voice/current_speaker.json` after **every** turn,
+including failed ones, and a tool that is about to do something consequential
+reads it and decides for itself. The full contract — the four statuses, the
+freshness window, a minimum implementation and an acceptance check — is in
+[`SPEAKER_STATE.md`](SPEAKER_STATE.md). Note what it is not: with shell access as
+the same user this is defence against a model *talking itself into* an action,
+not a security boundary.
 
 ### Enrolment HTTP server
 
@@ -538,6 +823,7 @@ These tools call the assistant's loopback HTTP servers (enrolment `:18791`, spea
 ### Limitations
 
 - Speaches diarization needs **at least 16 kHz mono audio with 2–10 s of real speech** (silence does not contribute). Very short follow-up answers (≤ 2 s) often classify as "unknown".
+- A failing diarization service is reported as `ausgefallen`, never as `unbekannt`. Collapsing the two is what made the 2026-09-18 incident invisible in the log: an outage looked exactly like a stranger at the microphone.
 - Recordings longer than ~10 s would OOM the GPU (Wespeaker resnet34 buffer allocation), so the diarization client truncates input + references to 8 s before the request. The original full recording is still preserved in `originals/` and `last_recording.wav`.
 - The first-time enrolment uses the same recording the user spoke their request in (Variant 1). Quality scales with recording length and noise level.
 
@@ -598,7 +884,7 @@ not in someone's head. Several of these tools appear in their respective
 sections above (actuator, wakeword, endpointing); this lists them all, ordered
 by how soon you can use them.
 
-Two lessons shaped this discipline, both learned the hard way:
+Four lessons shaped this discipline, all learned the hard way:
 
 - A measurement that existed only in a scratchpad was, one day later, neither
   reproducible nor valid. Numbers that aren't committed alongside the tool are
@@ -606,6 +892,19 @@ Two lessons shaped this discipline, both learned the hard way:
 - A tool once printed its conclusion as fixed text instead of computing it —
   asserting an effect for four days that its own numbers contradicted. A tool
   must *calculate* its verdict from the current data, not state it.
+- **A tool needs to know when it has measured nothing.** One of them declared a
+  run invalid below a *guessed* microphone level. Measured, the signal it was
+  supposed to detect sat right at that guessed threshold — so the tool rejected
+  valid runs and would have hidden a real finding. If a tool has a validity
+  criterion, that criterion has to be derived from something observable (did
+  playback happen at all? what is this room's baseline level?), not from a
+  number that felt about right.
+- **Where a generative component is involved, one run is a sample of one.** Our
+  TTS renders the same sentence differently every time (three renderings of one
+  sentence: 137294 / 130638 / 133710 bytes). A self-trigger therefore showed up
+  in different sentences on different runs, and a single pass over eight
+  sentences found nothing on its first try. Repetitions are the normal case
+  there, not a refinement.
 
 Most of these tools need **a few days of operation** before they yield
 anything, because they build on the trigger archive and `wake_events.log`.
@@ -629,6 +928,15 @@ archived wake/record/near-miss WAVs).
   ```bash
   ow-venv/bin/python -m tools.wake_rms_replay --nur-studio
   ```
+- `bargein_echo_test` — measures whether the assistant's **own voice** sets off
+  the abort detector (see the barge-in section above). `digital` needs no
+  hardware and gives the lower bound; `akustisch` plays through the real
+  speaker while the real microphone listens, and that is the number that
+  decides whether `while_speaking: true` is safe.
+  ```bash
+  ow-venv/bin/python -m tools.bargein_echo_test digital
+  ow-venv/bin/python -m tools.bargein_echo_test akustisch
+  ```
 
 **After a few days of operation (once the archive exists):**
 
@@ -638,6 +946,13 @@ archived wake/record/near-miss WAVs).
   ```bash
   ow-venv/bin/python -m tools.wake_triage --seit 3 --auch-trigger
   ```
+  With `--auch-trigger` it also breaks the triggers down **by gate path**
+  (1 frame / 2 frames / 3+ frames) against those labels, and says what turning
+  the one-frame path off would have cost in proven real calls. That table is the
+  only honest way to judge the short-streak thresholds: offline scorers try
+  several frame phases and always find the best streak, so they cannot see this
+  at all. Ours showed a path that used to buy 12 real calls and, after a
+  retraining, bought none while still letting four false triggers through.
 - `endpoint_replay` — replays the endpointing logic over the archived
   recordings and shows where a different silence/ceiling setting would have
   cut a recording — proving via STT whether spoken material was lost.
@@ -654,12 +969,21 @@ archived wake/record/near-miss WAVs).
 - `wake_corpus` — lifts labelled clips out of the self-pruning archive into a
   permanent corpus, reports **erosion** (labels whose audio is already gone),
   and scores the running bundle against that corpus — the before-figure any
-  retraining has to beat. Needs labelled clips.
+  retraining has to beat. `--split` takes the training package's manifest and
+  separates FRESH (clips the model never saw) from TRAIN (self-measurement);
+  without it the number is a mixture of both and claims more than it shows. Needs
+  labelled clips.
   ```bash
   ow-venv/bin/python -m tools.wake_corpus bilanz
   ow-venv/bin/python -m tools.wake_corpus sichern
   ow-venv/bin/python -m tools.wake_corpus messen
+  ow-venv/bin/python -m tools.wake_corpus messen --split /path/paket_manifest.json
   ```
+  The tool's docstring also carries the recipe for A/B-ing two models on the same
+  clips (the predecessor comes out of git history) — and the warning that this
+  tool **cannot** evaluate the short-streak gate paths at all: its scorer tries
+  several frame phases and always finds the best streak, so a one-frame trigger
+  practically never occurs offline while live the phase is fixed.
 - `actuator_watch` — reads `actuator_turns.log` and spots discrepancies
   (intent vs. executed, status problems). Needs `actuator_turns.log`.
   ```bash
@@ -674,6 +998,20 @@ archived wake/record/near-miss WAVs).
   after every capability change. Needs the capabilities endpoint.
   ```bash
   ow-venv/bin/python -m tools.actuator_grammar_test
+  ```
+- `actuator_tor_test` — measures only the gate question against a labelled
+  set of real sentences (JSONL, `schalten: true/false/null` = the speaker's
+  intent), including a calibration table for P(yes). You build the set from
+  your own logs; it lives under `testsets/` (gitignored — it contains your
+  household's everyday life). Format in the tool's docstring.
+  ```bash
+  ow-venv/bin/python -m tools.actuator_tor_test
+  ```
+- `aktuator_vergleich` — puts both classifier chains (LLM and Laya) side by
+  side: on the labelled set (correct / missed / WRONG per
+  chain) or on the shadow log (agreement, disagreements to judge).
+  ```bash
+  ow-venv/bin/python -m tools.aktuator_vergleich --schatten
   ```
 
 **With some manual work:**

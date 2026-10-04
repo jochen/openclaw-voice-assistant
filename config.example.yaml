@@ -34,6 +34,9 @@ profiles:
   #     refresh_poll_sec: 600
   #     llm_timeout: 5.0
   #     intent_timeout: 1.5
+  #     # Torfrage vor der Klassifikation ("will der Sprecher schalten?").
+  #     # Default aus. Prompt: tor_prompt (deutsch, siehe config.py).
+  #     tor_enabled: false
   #
   #     # Der Prompt ist die einzige sprachabhaengige Stelle des Projekts. Der
   #     # Default ist deutsch und nennt Beispiel-Geraete DIESER Installation.
@@ -136,6 +139,25 @@ profiles:
     #     - "Fast fertig."
     #     - "Noch einen Augenblick."
 
+    # Nach jedem Near-Miss 6 s still weiter mitschneiden; STT + Torfrage des
+    # Aktuators nur nach nearmiss_shadow.jsonl ("vorlaeufig", kein Label, nie
+    # ausgefuehrt). Zeigt Rufe, die das Gate verliert und niemand wiederholt.
+    # nearmiss_shadow: false
+
+    # Rückspul-Puffer — optional. Hält die letzten Minuten Mikro samt jedem
+    # Wakeword-Score im RAM; auf die Platte nur bei einem Anlass: die
+    # Sekunden VOR jedem Trigger (vergebliche Versuche davor) und der ganze
+    # Puffer auf einen manuellen Marker (MQTT, z.B. Zigbee-Taster über
+    # zigbee2mqtt: jede Nachricht mit nicht-leerem "action"). Achtung: der
+    # Trigger-Vorlauf speichert regelmäßig Raumgespräch.
+    # rewind:
+    #   enabled: false
+    #   seconds: 120
+    #   before_trigger_seconds: 30      # 0 = nur Marker
+    #   marker_mqtt_host: ""            # leer = kein Marker
+    #   marker_mqtt_port: 1883
+    #   marker_topic: "zigbee2mqtt/DEIN_TASTER"
+
     # Wakewords — optional. Fehlt der Block komplett: ein Eintrag 'hey_jarvis'
     # mit den Profil-Defaults oben (Rückwärtskompatibilität). Mehrere Einträge
     # erlauben parallel aktive Wakewords, die je auf eine eigene OpenClaw-
@@ -152,6 +174,38 @@ profiles:
     #   - bundle: hey_jarvis                    # eingebautes openwakeword-Modell
     #     session: "agent:zweiter:telegram:group:ANDERE_CHAT_ID"
 
+    # Abbruch mitten im Turn ("Stopp Gaston") — optional, standardmäßig AUS.
+    # Ohne den Block verhält sich ein Profil exakt wie vorher: abgebrochen
+    # werden kann nur innerhalb der laufenden Aufnahme (Stopp-Wort im
+    # Transkript). Mit dem Block wird das Wakewort auch gehört, während der
+    # Assistent selbst dran ist — dann bricht "Stopp <Wakewort>" die Wiedergabe
+    # ab, beendet die Verbindung zum Brain (was den Agent-Run serverseitig
+    # abbricht) und unterdrückt Spiegel und Follow-up. Details: README.
+    # barge_in:
+    #   enabled: true
+    #   # Auch hören, während der Assistent SELBST spricht. Default false, und
+    #   # das ist gemessen: ein Wakeword-Modell, das auf synthetischen Stimmen
+    #   # trainiert wurde, erkennt die eigene TTS-Stimme wieder (bei uns Peak
+    #   # 0,975 auf die eigene Bestätigung). Erst messen, dann einschalten:
+    #   #   ow-venv/bin/python -m tools.bargein_echo_test digital
+    #   #   ow-venv/bin/python -m tools.bargein_echo_test akustisch
+    #   while_speaking: false
+    #   rms_min: 400            # optional, Default: wake_rms_min des Profils
+    #   # Fallender Doppelton + kurz rote LED im MOMENT des Abbruchs. Kommt
+    #   # sofort, ohne auf die STT zu warten — ohne ihn ist ein Abbruch an
+    #   # nichts zu erkennen ausser daran, dass die Stimme aufhoert.
+    #   beep: true
+    #   # Quittiert hinterher den VERSTANDENEN Abbruch (nur wenn im Transkript
+    #   # ein Stopp-Wort stand); "" = stumm.
+    #   ack: "Okay."
+    #   notify_brain: true      # Systemnachricht über den Abbruch in die Session
+    #   # Optional ein EIGENES Bundle für den Abbruch (empfohlen, sobald eines
+    #   # nachtrainiert ist): die Zwei-Wort-Phrase fällt in der eigenen Ansage
+    #   # praktisch nicht. Ohne Eintrag gelten die Wakewords des Profils.
+    #   wakewords:
+    #     - bundle: stopp_gaston
+    #       min_hits: 2
+
   # ---------------------------------------------------------------------
   # Beispiel "respeaker" - Mic + LED-Ring + Speaker am ReSpeaker
   # ---------------------------------------------------------------------
@@ -164,6 +218,11 @@ profiles:
       encryption_key: ""                          # Native-API-Key falls gesetzt
       use_speaker: true                           # TTS über ReSpeaker-Speaker
                                                   # (false → Fallback auf local_audio.playback_device)
+      # Zweiter Audiokanal (Firmware ab ESPHome 2026.9 mit Select
+      # "XVF-Ausgang links"), beide Default aus:
+      # mitschnitt: true            # zweiten Kanal bei jeder Wiedergabe mitschneiden
+      #                             # → voice/wiedergabe/, Auswertung: tools/wiedergabe_pruefen.py
+      # kanal2_quelle: referenz     # asr | referenz | roh — setzt den XVF-Ausgang links beim Verbinden
 
     local_audio:
       # wird nur gebraucht, wenn use_speaker=false (Fallback)

@@ -11,7 +11,9 @@ TTS läuft vollständig unabhängig via announce (keine Session-State-Abhängigk
 from __future__ import annotations
 
 import asyncio
+import collections
 import http.server
+import json
 import logging
 import os
 import queue
@@ -27,11 +29,19 @@ from scipy.signal import resample_poly
 
 import aioesphomeapi
 
-from voice_assistant.config import CHUNK_SIZE, RespeakerAudio
+from voice_assistant.config import CHUNK_SIZE, VOICE_DIR, RespeakerAudio
 
 log = logging.getLogger(__name__)
 
 _SAMPLES_PER_CHUNK = CHUNK_SIZE // 2  # 640 int16-Samples = 40 ms @ 16 kHz
+
+# Optionen des Selects "XVF-Ausgang links" in esphome/respeaker.yaml — die
+# Texte muessen dort exakt so stehen.
+_KANAL2_OPTIONEN = {
+    "asr": "ASR-Strahl (8,0)",
+    "referenz": "Wiedergabe-Referenz (5,0)",
+    "roh": "Rohmikrofon 0 (1,0)",
+}
 
 _clients: dict[tuple[str, int], RespeakerClient] = {}
 _clients_lock = threading.Lock()
@@ -66,18 +76,38 @@ class RespeakerClient:
 
     def __init__(self, cfg: RespeakerAudio) -> None:
         self._cfg = cfg
-        self._audio_q: queue.Queue[bytes] = queue.Queue(maxsize=500)
+        # (Kanal 1, Kanal 2) je ESPHome-Audionachricht. Kanal 2 ist b"", wenn
+        # die Firmware nur einen Kanal schickt; (b"", b"") ist das Ende-Signal.
+        self._audio_q: queue.Queue[tuple[bytes, bytes]] = queue.Queue(maxsize=500)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._api: aioesphomeapi.APIClient | None = None
         self._button_key: int | None = None
         self._player_key: int | None = None
         self._beam_key: int | None = None
+        self._kanal2_key: int | None = None
+        # Mitschnitt des zweiten Kanals (data2): None = aus, sonst Liste der
+        # Chunks seit mitschnitt_start(). Gefuellt im asyncio-Thread, gelesen
+        # im Wiedergabe-Thread — daher der Lock.
+        self._mitschnitt: list[bytes] | None = None
+        self._mitschnitt_lock = threading.Lock()
+        self._data2_gemeldet = False
         self.led_phase_key: int | None = None   # von RespeakerRing gelesen
         self.boot_step_key: int | None = None   # von RespeakerRing.set_boot_step gelesen
         self.beam_angle: float = 0.0            # aktueller Beam-Winkel in Grad (0–360)
         self._last_led_phase: int = 1           # 1 = LED_IDLE — nach Reconnect wiederherstellen
         self._buf = b""
+        self._buf2 = b""
+        # Kanal 2 deckungsgleich zu jedem Chunk, den read_chunk geliefert hat
+        # (gleiche Verarbeitung). Daraus schreibt assistant.py neben jede
+        # *_rec.wav eine *_rec_kanal2.wav — Grundlage fuer den STT-Vergleich
+        # Kanal 0 (ASR-Strahl) gegen Kanal 1 (tools/stt_vergleich.py --kanaele).
+        self._kanal2_ring: collections.deque[np.ndarray] = collections.deque(maxlen=2000)
         self._in_session = False
+        # Zustand des Media-Players (fuer die Wiedergabe-Verfolgung, siehe
+        # RespeakerSink.play_wav). Condition statt Event, weil auf einen
+        # WECHSEL gewartet wird und nicht auf ein einmaliges Signal.
+        self._player_cv = threading.Condition()
+        self._player_state = None
         self._thread = threading.Thread(
             target=self._run_loop, daemon=True, name="respeaker-api"
         )
@@ -95,10 +125,16 @@ class RespeakerClient:
         self._api = None
         self._button_key = None
         self._player_key = None
+        self._kanal2_key = None
+        self._data2_gemeldet = False
         self.led_phase_key = None
         self.boot_step_key = None
         self._in_session = False
         self._buf = b""
+        self._buf2 = b""
+        with self._player_cv:
+            self._player_state = None
+            self._player_cv.notify_all()
         while not self._audio_q.empty():
             try:
                 self._audio_q.get_nowait()
@@ -156,6 +192,22 @@ class RespeakerClient:
             if hasattr(e, "name") and "Voice Direction" in e.name:
                 self._beam_key = e.key
                 log.info("Beam sensor key=%d", e.key)
+            if hasattr(e, "name") and "XVF-Ausgang links" in e.name:
+                self._kanal2_key = e.key
+                log.info("XVF-Ausgang-links select key=%d", e.key)
+
+        quelle = self._cfg.kanal2_quelle
+        if quelle:
+            option = _KANAL2_OPTIONEN.get(quelle)
+            if option is None:
+                log.warning("kanal2_quelle '%s' unbekannt (erlaubt: %s)",
+                            quelle, ", ".join(_KANAL2_OPTIONEN))
+            elif self._kanal2_key is None:
+                log.warning("kanal2_quelle gesetzt, aber die Firmware hat kein "
+                            "Select 'XVF-Ausgang links' (vor ESPHome 2026.9?)")
+            else:
+                self._api.select_command(self._kanal2_key, option)
+                log.info("XVF-Ausgang links → %s", option)
 
         if self._player_key is not None:
             self._api.media_player_command(self._player_key, volume=self._cfg.volume)
@@ -172,15 +224,23 @@ class RespeakerClient:
 
         async def handle_stop(abort: bool) -> None:
             self._in_session = False
-            self._audio_q.put(b"")  # EOS
+            self._audio_q.put((b"", b""))  # EOS
 
         async def handle_audio(data: bytes, data2: bytes | None = None) -> None:
-            # data2 kam mit einer neueren aioesphomeapi-Version dazu (optionales
-            # Zusatzfeld) - fuer unsere Single-Channel-Pipeline ohne Belang.
+            # data ist Kanal 1 (Wakeword + STT, wie bisher). data2 ist der
+            # zweite Kanal (XVF-Ausgang links), den die Firmware ab ESPHome
+            # 2026.9 mitschickt — er geht nur in einen laufenden Mitschnitt.
             try:
-                self._audio_q.put_nowait(data)
+                self._audio_q.put_nowait((data, data2 or b""))
             except queue.Full:
                 pass
+            if data2:
+                if not self._data2_gemeldet:
+                    self._data2_gemeldet = True
+                    log.info("Zweiter Audiokanal kommt an (%d Bytes je Paket)", len(data2))
+                with self._mitschnitt_lock:
+                    if self._mitschnitt is not None:
+                        self._mitschnitt.append(data2)
 
         self._api.subscribe_voice_assistant(
             handle_start=handle_start,
@@ -189,11 +249,17 @@ class RespeakerClient:
         )
 
         def on_state(state: object) -> None:
-            if self._beam_key is not None and getattr(state, "key", None) == self._beam_key:
+            key = getattr(state, "key", None)
+            if self._beam_key is not None and key == self._beam_key:
                 new_angle = float(getattr(state, "state", 0.0))
                 if new_angle != self.beam_angle:
                     log.debug("Beam: LED %d → LED %d (%d°)", int(self.beam_angle), int(new_angle), int(new_angle) * 30)
                 self.beam_angle = new_angle
+            elif self._player_key is not None and key == self._player_key:
+                with self._player_cv:
+                    self._player_state = getattr(state, "state", None)
+                    self._player_cv.notify_all()
+                log.debug("Media-Player: state=%s", self._player_state)
 
         self._api.subscribe_states(on_state)
 
@@ -222,25 +288,157 @@ class RespeakerClient:
     # Sync API — State-Machine-Thread
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Wiedergabe über den Media-Player (NICHT über die Announce-API)
+    # ------------------------------------------------------------------
+    #
+    # Die Announce-API (send_voice_assistant_announcement_*) beendet die
+    # voice_assistant-Session des ESP: handle_stop feuert, der Audio-Strom
+    # reisst ab, und danach muss der Start-Button neu gedrueckt werden. Genau
+    # deshalb war der Pi waehrend JEDER Ansage taub — kein Wakeword, kein
+    # Barge-in, nichts. Der Media-Player laesst die VA-Session unberuehrt, der
+    # Mikrofon-Strom laeuft durch die Wiedergabe hindurch (das Echo nimmt der
+    # XVF3800 per AEC weg, er hat die Referenz auf dem I2S-Ausgang).
+    #
+    # Zweiter Gewinn: eine Announce-Wiedergabe war nicht abbrechbar, ein
+    # Media-Player-STOP ist es.
+
+    def _player_command(self, **kwargs) -> bool:
+        """Media-Player-Befehl aus einem fremden Thread absetzen.
+
+        Ueber call_soon_threadsafe und nicht direkt wie die LED-Befehle in
+        services/leds.py: der asyncio-Transport ist nicht threadsicher, und
+        ein verschluckter Wiedergabe-Befehl laesst einen Turn haengen (eine
+        verschluckte LED-Farbe nicht).
+        """
+        loop, api, key = self._loop, self._api, self._player_key
+        if loop is None or api is None or key is None:
+            return False
+        try:
+            loop.call_soon_threadsafe(
+                lambda: api.media_player_command(key, **kwargs)
+            )
+            return True
+        except Exception as exc:
+            log.warning("media_player_command failed: %s", exc)
+            return False
+
+    def play_url(self, url: str) -> bool:
+        """Spielt eine URL als Ansage. True, wenn der Befehl abgesetzt wurde.
+
+        Das ist genau der Aufruf, den ESPHomes voice_assistant-Komponente in
+        ``on_announce`` selbst macht (media_player mit media_url +
+        announcement) — wir umgehen also nur ihre State-Machine, nicht ihren
+        Wiedergabe-Weg. EIN Unterschied bleibt und ist der erste Verdaechtige,
+        falls im Betrieb etwas klemmt: ESPHome setzt dort zusaetzlich
+        ``command=ENQUEUE``. Hier bewusst nicht — "jetzt spielen" ist die
+        Semantik, die wir brauchen, und eine Warteschlange koennte nach einem
+        Abbruch (STOP) einen Rest-Eintrag behalten. Laut ESPHomes eigenem
+        Kommentar spielt auch ein ENQUEUE bei leerer Liste sofort, die beiden
+        Wege fallen im Normalfall also zusammen.
+        """
+        if self._player_key is None:
+            log.warning("play_url: keine API-Verbindung / kein Media-Player")
+            return False
+        with self._player_cv:
+            self._player_state = None
+        return self._player_command(media_url=url, announcement=True)
+
+    def stop_playback(self) -> None:
+        self._player_command(command=aioesphomeapi.MediaPlayerCommand.STOP)
+
+    # Zustaende, die "der Player gibt gerade Ton aus" bedeuten.
+    #
+    # Gemessen am 2026-09-20 gegen die echte Hardware: eine Ansage ueber
+    # media_player_command(media_url=…, announcement=True) laeuft als
+    # **PLAYING** (2 → 1), NICHT als ANNOUNCING (4). Die erste Fassung wartete
+    # nur auf ANNOUNCING, lief deshalb jedes Mal in die Start-Zeitschranke und
+    # kostete 5 s pro Satz. Beide Zustaende zu akzeptieren ist zugleich robust
+    # gegen ESPHome-Versionen, die es anders melden.
+    _BUSY_STATES = (
+        aioesphomeapi.MediaPlayerState.PLAYING,
+        aioesphomeapi.MediaPlayerState.ANNOUNCING,
+    )
+
+    def wait_player(self, busy: bool, timeout: float) -> bool:
+        """Wartet, bis der Player Ton ausgibt (busy=True) bzw. fertig ist.
+
+        False = Zeit abgelaufen, ohne dass der Zustand eintrat. Der Aufrufer
+        faellt dann auf die Laenge der WAV-Datei zurueck; ein ausbleibendes
+        Zustands-Event darf einen Turn nicht haengen lassen.
+        """
+        deadline = time.monotonic() + timeout
+        with self._player_cv:
+            while True:
+                if (self._player_state in self._BUSY_STATES) == busy:
+                    return True
+                rest = deadline - time.monotonic()
+                if rest <= 0:
+                    return False
+                self._player_cv.wait(rest)
+
+    def in_session(self) -> bool:
+        return self._in_session
+
+    def mitschnitt_start(self) -> None:
+        with self._mitschnitt_lock:
+            self._mitschnitt = []
+
+    def mitschnitt_stop(self) -> bytes:
+        """Beendet den Mitschnitt; 16-kHz-mono-int16-PCM (leer ohne data2)."""
+        with self._mitschnitt_lock:
+            teile, self._mitschnitt = self._mitschnitt or [], None
+        return b"".join(teile)
+
     def read_chunk(self) -> np.ndarray:
-        """Gibt genau _SAMPLES_PER_CHUNK int16-Samples (16 kHz mono) zurück."""
+        """Gibt genau _SAMPLES_PER_CHUNK int16-Samples (16 kHz mono) zurück.
+
+        Kanal 2 laeuft im Gleichschritt mit: zu JEDEM gelieferten Chunk (auch
+        den Null-Chunks bei Ausfall/EOS) kommt genau ein Eintrag in den Ring,
+        sonst verrutscht die Zuordnung in kanal2_letzte().
+        """
         target = _SAMPLES_PER_CHUNK * 2  # Bytes
         while len(self._buf) < target:
             try:
-                data = self._audio_q.get(timeout=0.15)
+                data, data2 = self._audio_q.get(timeout=0.15)
             except queue.Empty:
-                self._buf = b""
-                return np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16)
+                return self._leer()
             if data == b"":  # EOS
-                self._buf = b""
-                return np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16)
+                return self._leer()
             self._buf += data
+            self._buf2 += data2
 
         chunk, self._buf = self._buf[:target], self._buf[target:]
-        samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
+        chunk2, self._buf2 = self._buf2[:target], self._buf2[target:]
+        if len(chunk2) < target:          # Firmware ohne zweiten Kanal / Luecke
+            chunk2 = b""
+            self._buf2 = b""
+        # Kanal 2 OHNE die x4: der ASR-Strahl ist durch die AGC des XVF3800
+        # schon laut, x4 schnitt ihn am 2026-10-03 ab (Spitzen 32768) und
+        # verfaelschte den STT-Vergleich gegen ihn. Die STT normalisiert ohnehin.
+        self._kanal2_ring.append(self._aufbereiten(chunk2, 1.0) if chunk2
+                                 else np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16))
+        return self._aufbereiten(chunk)
+
+    @staticmethod
+    def _aufbereiten(roh: bytes, verstaerkung: float = 4.0) -> np.ndarray:
+        samples = np.frombuffer(roh, dtype=np.int16).astype(np.float32)
         samples -= samples.mean()
-        samples = np.clip(samples * 4, -32768, 32767).astype(np.int16)
-        return samples
+        return np.clip(samples * verstaerkung, -32768, 32767).astype(np.int16)
+
+    def _leer(self) -> np.ndarray:
+        self._buf = b""
+        self._buf2 = b""
+        null = np.zeros(_SAMPLES_PER_CHUNK, dtype=np.int16)
+        self._kanal2_ring.append(null)
+        return null
+
+    def kanal2_letzte(self, n: int) -> list[np.ndarray]:
+        """Kanal 2 zu den letzten n gelieferten Chunks; leer, wenn die Firmware
+        keinen zweiten Kanal schickt."""
+        if not self._data2_gemeldet or n <= 0:
+            return []
+        return list(self._kanal2_ring)[-n:]
 
     def flush(self) -> None:
         """Queue leeren."""
@@ -250,6 +448,7 @@ class RespeakerClient:
             except queue.Empty:
                 break
         self._buf = b""
+        self._buf2 = b""
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +503,9 @@ class RespeakerSource:
     def flush(self) -> None:
         self._client.flush()
 
+    def kanal2_letzte(self, n: int) -> list[np.ndarray]:
+        return self._client.kanal2_letzte(n)
+
     def close(self) -> None:
         pass
 
@@ -316,12 +518,79 @@ class RespeakerSink:
     """TTS via ESPHome announce API: Pi → HTTP → ESP media_player → aic3104."""
 
     _HTTP_PORT = 18800
+    # Zeit, in der der Player den Beginn des Abspielens melden DARF. Laeuft sie
+    # ab, wird trotzdem weitergemacht — der Zustand ist hier nur ein Anker, um
+    # den Startzeitpunkt genauer zu kennen, keine Bedingung (siehe play_wav).
+    _START_ANKER_TIMEOUT = 2.0
+    # Annahme fuer Datei-Holen + Decoder-Start, wenn der Anker ausbleibt.
+    # Gemessen 2026-09-20 ueber mehrere Ansagen: 0,2-0,6 s.
+    _FETCH_ANNAHME = 0.6
+    # Nachfrist am Ende: so lange wird dem Player noch zugehoert, ob er das
+    # Abspielen beendet meldet. Kurz, weil die Dateilaenge die Hauptgroesse ist.
+    _END_NACHFRIST = 1.0
+    # Ab diesem Ueberhang ueber die Dateilaenge wird gewarnt. Im gesunden
+    # Betrieb liegt er bei 0,5 s (TTS-Synthese des naechsten Satzes + Datei
+    # holen), gemessen 2026-09-20 ueber vier aufeinanderfolgende Saetze.
+    _UEBERHANG_WARNUNG = 2.0
+    # Mitschnitt des zweiten Kanals (respeaker.mitschnitt): so lange wird nach
+    # dem Ende noch mitgeschnitten (Nachhall, verspaeteter Ton), und so lange
+    # bleiben die Dateien liegen.
+    _MITSCHNITT_NACHLAUF = 0.3
+    _MITSCHNITT_DIR = os.path.join(VOICE_DIR, "wiedergabe")
+    _MITSCHNITT_MAX_TAGE = 7
 
     def __init__(self, cfg: RespeakerAudio) -> None:
+        self._cfg = cfg
         self._client = get_client(cfg)
         self._serve_dir = tempfile.mkdtemp(prefix="respeaker_tts_")
         self._pi_ip = _get_local_ip()
+        self._lock = threading.Lock()
+        self._stopped = False
+        # Laufende Nummer je Ansage. Vorher hiess die Datei
+        # f"{pid}_{thread_id}.wav" und war damit fuer JEDEN Satz einer Antwort
+        # dieselbe URL — der Player bekam zweimal hintereinander exakt
+        # dieselbe Adresse. Eine eindeutige URL nimmt jede Frage nach
+        # Zwischenspeichern und Entdoppeln aus dem Weg.
+        self._folge = 0
         self._start_http_server()
+        if cfg.mitschnitt:
+            self._mitschnitt_aufraeumen()
+            log.info("Wiedergabe-Mitschnitt an → %s", self._MITSCHNITT_DIR)
+
+    def _mitschnitt_aufraeumen(self) -> None:
+        grenze = time.time() - self._MITSCHNITT_MAX_TAGE * 86400
+        try:
+            for name in os.listdir(self._MITSCHNITT_DIR):
+                pfad = os.path.join(self._MITSCHNITT_DIR, name)
+                if os.path.getmtime(pfad) < grenze:
+                    os.unlink(pfad)
+        except FileNotFoundError:
+            pass
+
+    def _mitschnitt_sichern(self, gesendet: str, pcm: bytes, meta: dict) -> None:
+        """Gesendete Datei, Mitschnitt und Zeiten nebeneinander ablegen.
+
+        Ausgewertet von tools/wiedergabe_pruefen.py. Ein leerer Mitschnitt
+        (Firmware schickt keinen zweiten Kanal) wird trotzdem vermerkt —
+        sonst saehe ein stummer Fehler aus wie "nichts aufgezeichnet".
+        """
+        os.makedirs(self._MITSCHNITT_DIR, exist_ok=True)
+        basis = os.path.join(
+            self._MITSCHNITT_DIR,
+            time.strftime("%Y%m%d_%H%M%S") + f"_{meta['folge']:04d}",
+        )
+        shutil.copyfile(gesendet, basis + "_gesendet.wav")
+        with wave.open(basis + "_kanal2.wav", "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(pcm)
+        meta = {**meta, "kanal2_quelle": self._cfg.kanal2_quelle or "unveraendert",
+                "kanal2_sekunden": round(len(pcm) / 32000, 2)}
+        with open(basis + ".json", "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False)
+        if not pcm:
+            log.warning("Mitschnitt leer — kommt der zweite Kanal an? (%s)", basis)
 
     def _start_http_server(self) -> None:
         handler = _make_http_handler(self._serve_dir)
@@ -363,34 +632,134 @@ class RespeakerSink:
             wf.setframerate(48000)
             wf.writeframes(stereo.tobytes())
 
+    @staticmethod
+    def _wav_seconds(path: str) -> float:
+        """Laenge der Datei in Sekunden (0.0, wenn nicht lesbar).
+
+        Grundlage der Zeitschranken unten: ohne sie muesste ein ausbleibendes
+        Zustands-Event des Players mit einer festen Wartezeit abgefangen
+        werden, die entweder Turns haengen laesst oder lange Antworten
+        abschneidet.
+
+        **Nur auf die von _to_48k_stereo geschriebene Datei anwenden, nie direkt
+        auf eine Speaches-Ausgabe.** Die rechnet hier ueber ``getnframes()``,
+        und Speaches setzt das auf den Streaming-Platzhalter 2147483647 (bei
+        22050 Hz = 97391 Sekunden). Hier ist es sicher, weil ``dest`` von uns
+        selbst mit korrektem Header geschrieben wurde — siehe
+        SpeachesTts.synth() fuer die Falle im Ganzen.
+        """
+        try:
+            with wave.open(path, "rb") as wf:
+                rate = wf.getframerate()
+                return wf.getnframes() / rate if rate else 0.0
+        except Exception:
+            return 0.0
+
     def play_wav(self, path: str) -> None:
         client = self._client
         if client._loop is None or client._api is None:
             log.warning("RespeakerSink: no API client available")
             return
 
-        filename = f"{os.getpid()}_{threading.get_ident()}.wav"
+        with self._lock:
+            if self._stopped:
+                return
+
+        with self._lock:
+            self._folge += 1
+            folge = self._folge
+        filename = f"{os.getpid()}_{threading.get_ident()}_{folge}.wav"
         dest = os.path.join(self._serve_dir, filename)
         self._to_48k_stereo(path, dest)
         url = f"http://{self._pi_ip}:{self._HTTP_PORT}/{filename}"
-        log.info("Announce → %s", url)
+        dauer = self._wav_seconds(dest)
+        log.info("Play → %s (%.1fs)", url, dauer)
 
-        fut = asyncio.run_coroutine_threadsafe(
-            client._api.send_voice_assistant_announcement_await_response(
-                media_id=url, timeout=60.0
-            ),
-            client._loop,
-        )
+        t_start = time.monotonic()
+        gestartet = None
+        ueberhang = None
+        if self._cfg.mitschnitt:
+            client.mitschnitt_start()
         try:
-            result = fut.result(timeout=65.0)
-            log.info("Announce completed: success=%s", result.success)
+            if not client.play_url(url):
+                return
+            # Die LAENGE DER DATEI ist die verlaessliche Groesse, nicht der
+            # Zustand des Players.
+            #
+            # Die erste Fassung hatte das umgekehrt und wartete auf
+            # Zustandswechsel. Das ging schief, weil ESPHome nur AENDERUNGEN
+            # meldet: bleibt der Player von einem Satz zum naechsten
+            # durchgehend im Abspiel-Zustand, kommt gar kein Event — und dann
+            # lief jeder Satz in eine 5-Sekunden-Zeitschranke. Live gemessen am
+            # 2026-09-20 in einer vorgelesenen Antwort: Luecken von +5,4 s und
+            # +5,5 s zwischen den Saetzen ("kein Ende-Zustand", "kein
+            # Abspiel-Zustand"), die Ausgabe klang abgehackt.
+            #
+            # Jetzt dient der Zustand nur noch als ANKER fuer den Startpunkt;
+            # bleibt er aus, wird die gemessene Hol-/Decoder-Zeit angenommen.
+            gestartet = client.wait_player(
+                busy=True, timeout=self._START_ANKER_TIMEOUT
+            )
+            self._sleep_unless_stopped(
+                dauer if gestartet else dauer + self._FETCH_ANNAHME
+            )
+            # Nachfrist: laeuft der Player noch (laengere Datei als gedacht,
+            # langsamer Decoder), kurz zuhoeren statt sofort den naechsten Satz
+            # darueber zu legen.
+            client.wait_player(busy=False, timeout=self._END_NACHFRIST)
+            # Ueberhang mitschreiben, sobald er auffaellt. Die abgehackte
+            # Ausgabe vom 2026-09-20 war im Log nur an zwei Warnungen zu
+            # erkennen; die Luecken selbst (+5,4 s) musste man ausrechnen. Eine
+            # Regression im Zusammenspiel mit dem ESP soll sich kuenftig selbst
+            # melden, statt nur hoerbar zu sein.
+            ueberhang = time.monotonic() - t_start - dauer
+            if ueberhang > self._UEBERHANG_WARNUNG:
+                log.warning(
+                    "Wiedergabe: %.1fs Ueberhang auf %.1fs Audio "
+                    "(Anker %s) — Ausgabe klingt abgehackt",
+                    ueberhang, dauer, "ja" if gestartet else "NEIN",
+                )
         except Exception as exc:
-            log.error("Announce failed: %s", exc)
+            log.error("Wiedergabe fehlgeschlagen: %s", exc)
         finally:
+            if self._cfg.mitschnitt:
+                try:
+                    time.sleep(self._MITSCHNITT_NACHLAUF)
+                    self._mitschnitt_sichern(dest, client.mitschnitt_stop(), {
+                        "folge": folge, "url": url, "dauer_s": round(dauer, 3),
+                        "anker": gestartet,
+                        "ueberhang_s": None if ueberhang is None else round(ueberhang, 3),
+                        "abgebrochen": self._stopped,
+                    })
+                except Exception as exc:
+                    log.warning("Mitschnitt nicht gesichert: %s", exc)
             try:
                 os.unlink(dest)
             except OSError:
                 pass
 
-        # Neue Mic-Session nach TTS starten
-        client.press_start_button()
+        # Der Media-Player laesst die voice_assistant-Session in Ruhe, ein
+        # Button-Druck ist also im Normalfall nicht mehr noetig. Ist die
+        # Session trotzdem weg (Reconnect, ESP-Neustart mitten in der Ansage),
+        # wird sie hier geholt — sonst bliebe der Pi stumm-taub.
+        if not client.in_session():
+            log.info("Keine Mic-Session nach der Wiedergabe → Start-Button")
+            client.press_start_button()
+
+    def _sleep_unless_stopped(self, sekunden: float) -> None:
+        ende = time.monotonic() + sekunden
+        while time.monotonic() < ende:
+            with self._lock:
+                if self._stopped:
+                    return
+            time.sleep(0.05)
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stopped = True
+        self._client.stop_playback()
+
+    def resume(self) -> None:
+        """Abbruch-Marke loeschen — der naechste Turn darf wieder sprechen."""
+        with self._lock:
+            self._stopped = False

@@ -26,3 +26,7 @@ models/piper/
 # Wakeword-Bundles (manifest.yaml + .tflite) werden committed — nur die
 # echten Referenz-Aufnahmen (Familienstimmen) bleiben lokal.
 models/wakewords/*/samples/
+# Gelabelte Test-Sets aus echten Turns (Namen, Termine, Alltag dieses
+# Haushalts) — eigenes privates Git, nie auf GitHub. Die Werkzeuge, die sie
+# lesen, liegen in tools/ und sagen, welches Format sie erwarten.
+testsets/

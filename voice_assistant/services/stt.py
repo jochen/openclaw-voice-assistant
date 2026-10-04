@@ -65,31 +65,8 @@ class SpeachesStt:
         self.model = model
 
     def transcribe(self, wav_bytes: bytes) -> str | None:
-        boundary = "----GastonSTTBoundary"
-        body = (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="model"\r\n\r\n'
-            f"{self.model}\r\n"
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="language"\r\n\r\n'
-            f"de\r\n"
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="response_format"\r\n\r\n'
-            f"verbose_json\r\n"
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
-            f"Content-Type: audio/wav\r\n\r\n"
-        ).encode() + wav_bytes + f"\r\n--{boundary}--\r\n".encode()
-
-        req = urllib.request.Request(
-            f"{self.base}/v1/audio/transcriptions",
-            data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=SPEACHES_TIMEOUT) as resp:
-                result = json.loads(resp.read())
+            result = self.transcribe_raw(wav_bytes)
 
             # Halluzinations-Filter: no_speech_prob über alle Segmente mitteln
             segments = result.get("segments", [])
@@ -119,6 +96,38 @@ class SpeachesStt:
             print(f"⚠️  Speaches STT error: {e}")
             self.state.mark_stt_failed()
             return None
+
+    def transcribe_raw(self, wav_bytes: bytes) -> dict:
+        """Nur die Anfrage: verbose_json roh, Fehler als Exception.
+
+        Ohne Halluzinations-Filter und OHNE Wirkung auf SpeachesState — für
+        Nebenmessungen (Schatten-Aufnahme nach Near-Miss), deren Ausfall den
+        echten Turn nicht in den 60-s-Cooldown schicken darf.
+        """
+        boundary = "----GastonSTTBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="model"\r\n\r\n'
+            f"{self.model}\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="language"\r\n\r\n'
+            f"de\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="response_format"\r\n\r\n'
+            f"verbose_json\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
+            f"Content-Type: audio/wav\r\n\r\n"
+        ).encode() + wav_bytes + f"\r\n--{boundary}--\r\n".encode()
+
+        req = urllib.request.Request(
+            f"{self.base}/v1/audio/transcriptions",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=SPEACHES_TIMEOUT) as resp:
+            return json.loads(resp.read())
 
 
 class LocalWhisperStt:

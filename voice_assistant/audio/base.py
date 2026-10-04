@@ -26,4 +26,16 @@ class AudioSource(Protocol):
 
 
 class AudioSink(Protocol):
-    def play_wav(self, path: str) -> None: ...
+    def play_wav(self, path: str) -> None:
+        """Spielt die Datei ab und kehrt zurueck, wenn sie durchgelaufen ist
+        ODER stop() sie abgebrochen hat."""
+        ...
+
+    def stop(self) -> None:
+        """Laufende Wiedergabe sofort abbrechen (Barge-in).
+
+        Wird aus einem FREMDEN Thread gerufen — der Hauptschleife, waehrend
+        play_wav in einem Worker blockiert. Muss ohne laufende Wiedergabe
+        wirkungslos sein und darf nie werfen.
+        """
+        ...

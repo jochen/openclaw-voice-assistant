@@ -1,4 +1,14 @@
-# Gaston-Wakeword — trainiert 2026-07-05 auf ai-stack (Wakeword-Studio M2, Runde 2)
+# Gaston-Wakeword — trainiert 2026-10-02 auf ai-stack (Runde 4: 30k synthetisch
+# + 131 echte Rufe + 43 per Ohr belegte Fehltrigger, je x10; Positive vom
+# Paket selbst auf 1,8 s geschnitten, Marker-Rufe je Wakewort-Vorkommen).
+# Schranke VOR dem Training festgelegt (WAKEWORD_PROCESS.md, "Nachtraining
+# Runde 4"), alle vier erfuellt — frische Val-Tage gegen v3: echte Rufe 41/48
+# (v3 37; gepaart 8 Gewinne / 4 Verluste), harte Fehltrigger 17/36 (v3 21),
+# Studio 14/20 (v3 12), FP/h generisch 0,09 (3-Frame @0,35).
+# Vorgaenger v3 (Runde 3, 2026-09-16) liegt in der Git-Historie dieser Dateien.
+# ACHTUNG: die Gate-Parameter unten (min_peak_short/min_peak_single) sind an
+# den Score-Verteilungen des VORGAENGERS geeicht und beim Deploy bewusst
+# unveraendert gelassen (auch bei v4) — ob sie passen, klaert die Betriebsbeobachtung.
 name: gaston
 display: "Gaston"
 model: gaston.tflite
@@ -31,7 +41,13 @@ min_peak_short: 0.9
 # Schwelle zu retten (dort liegt Rauschen gleichauf) — Modellproblem.
 # Restrisiko: die FP-Analyse 08.-13.07. fand 2-Frame-Fehltrigger mit Peaks bis
 # 0.92; solche kommen hier durch. Rate unbekannt, Stichprobe war ein Tag.
-min_peak_single: 0.75
+# AUS seit 2026-09-25 (vorher 0.75). Mit v3 hat sich der Handel gedreht:
+# seit dem Deploy 2026-09-16 brachte der Pfad 0 belegte echte Rufe und 12
+# Fehltrigger (wake_triage --seit 10 --auch-trigger), allein am 25.09. 5 von
+# 10 Triggern. v3 erreicht echte Rufe mit richtigen Streaks. Vorzeitig vor dem
+# Ende der v3-Wette entschieden (Jochen) — die Gegenwette steht in
+# WAKEWORD_PROCESS.md, "Wette 1-Frame-Pfad aus". Zurueck: 0.75.
+min_peak_single: 0.0
 spellings:
   - "ɡastˈɔ̃ (Phonem-Eingabe, de-Stimmen ohne Nasal → effektiv 'Gastó', 60%)"
   - "Gastong (40%)"
