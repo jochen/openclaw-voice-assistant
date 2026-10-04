@@ -33,9 +33,11 @@ Messreihe (glm-5-2 über ai.noris.de; gilt nur für ihre Weltmodell-Version):
     ACHTUNG: der V2-Prompt wurde an genau diesen 15 abgestimmt (eine
     Runde: die Hörfehler-Regel). Aussagekräftig ist deshalb vor allem:
     ungelabelt V1 meldet 5 (1 berechtigt, 3 Fehlalarme, 1 fraglich),
-               V2 meldet 7 (5 berechtigt, 1 Fehlalarm "Das Tor schaltet das
-               Tischlicht ein", 1 fraglich "Zwiebel-Rolo") — von Hand
-               beurteilt, gastonllm-Claude mit Jochen.
+               V2 meldet 7 (5 berechtigt, 2 Fehlalarme: "Das Tor schaltet das
+               Tischlicht ein" und "Zwiebel-Rolo" — war das Rosazimmer, also
+               richtig geschaltet) — von Hand beurteilt, gastonllm-Claude
+               mit Jochen. "Rollos überall" → alle_rollos zu melden ist
+               erwünscht (Jochen: "ruhig melden").
     Temperatur 0 ist nicht deterministisch: dieselben Sätze kippen
     zwischen Läufen. Einzelne Zahlen nicht überbewerten.
 """
