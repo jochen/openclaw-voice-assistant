@@ -668,6 +668,14 @@ def _log_endpoint(meta: dict) -> None:
         print(f"⚠️  endpoint-log: {exc}")
 
 
+def _argus_weltmodell(wt):
+    """Weltmodell-Quelle für Argus aus dem watcher-Block, oder None."""
+    if not wt.haus_mcp_url:
+        return None
+    from voice_assistant.services.haus_mcp import HausMcp, Weltmodell
+    return Weltmodell(HausMcp(wt.haus_mcp_url, wt.haus_mcp_token, client_name="argus"))
+
+
 def _wake_level_rms(wake_ring: deque) -> float:
     """RMS des lautesten 300-ms-Fensters im wake_ring zum Trigger-Zeitpunkt.
 
@@ -1009,8 +1017,11 @@ def run() -> None:
                 llm_model=wt.llm_model,
                 llm_api_key=wt.llm_api_key,
                 llm_timeout=wt.llm_timeout,
+                weltmodell=_argus_weltmodell(wt),
             )
             llm_info = f", Modell {wt.llm_model}" if wt.llm_model else ""
+            if wt.haus_mcp_url:
+                llm_info += ", mit Weltmodell"
             print(f"👁️  Überwacher aktiv{llm_info}, meldet an Chat {wt.chat_id}, "
                   f"still {wt.quiet_start:02d}–{wt.quiet_end:02d} Uhr")
         except Exception as e:
@@ -1959,6 +1970,7 @@ def run() -> None:
                                 "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
                                 "grund": (resp or {}).get("grund"),
                                 "gesprochen": (resp or {}).get("gesprochen"),
+                                "unklar_round": unklar_round,
                             }
                             # Ein ausgefuehrtes Schaltkommando ist der stärkste
                             # freie Beleg, dass der Trigger ein echter Ruf war —
@@ -1981,7 +1993,9 @@ def run() -> None:
                                     "speaker_status": "ausstehend",
                                 }
 
+                            unklar_runde = unklar_round  # Wert dieses Turns, nicht des Nachtrag-Zeitpunkts
                             def _aktuator_nachtrag(v, akt_log=akt_log, handshake=handshake,
+                                                   unklar_runde=unklar_runde,
                                                    request_id=request_id, text=text,
                                                    intent=intent, resp=resp):
                                 _log_actuator_turn({**akt_log, "speaker": v.name,
@@ -2000,6 +2014,7 @@ def run() -> None:
                                         "status": (resp or {}).get("status", "keine_antwort"),
                                         "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
                                         "gesprochen": (resp or {}).get("gesprochen"),
+                                        "unklar_round": unklar_runde,
                                     })
                             _sprecher_nachtragen(turn_spk_q, turn_mood_q, current_wakeword.bundle,
                                                  turn_epoch, _aktuator_nachtrag)

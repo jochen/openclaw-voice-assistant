@@ -650,6 +650,20 @@ Intent? Das LLM erkennt subtilere Muster die eine Regex-Heuristik verfehlt
 SETZEN-Aktion, nicht die Aktion „auf" = ganz öffnen). Siehe
 `voice_assistant/services/watcher.py`.
 
+**Hauswissen (optional, `haus_mcp_url`).** Ein Überwacher, der das Haus nicht
+kennt, erfindet es: unserer hat einen Raum „gefunden“, den es nicht gibt, und
+verhörte Wörter mit ausgedachten Bedeutungen erklärt. Bietet die
+Haussteuerungs-Seite einen MCP-Server mit dem Werkzeug `haus_weltmodell`
+(Personen, Räume und wie die Familie sie nennt, welches Ziel wo ist, was
+hauseigene Ziele bedeuten), holt der Überwacher dieses Weltmodell und legt es
+vollständig in seinen Prompt — geholt vom Code, nicht vom Modell, denn ein
+Modell merkt nicht, dass ihm Wissen fehlt. Vor jeder Prüfung fragt er nur die
+Version ab und lädt bei Änderung neu. Der Überwacher bekommt einen eigenen
+Token, damit die Gegenseite unterscheiden kann, wer fragt. Ohne
+`haus_mcp_url` verhält er sich wie bisher. Prompt-Änderungen misst
+`tools/argus_replay.py` (alter gegen neuen Prompt über die protokollierten
+Turns; die Labels früherer Befunde liegen in einem privaten Test-Set).
+
 Zusätzlich eine deterministische strukturelle Prüfung ohne LLM:
 
 - **EXEC_DIFFERS** — die Haussteuerung hat ein anderes Ziel/eine andere
@@ -688,6 +702,8 @@ meldet (nicht den Familien-Voice-Chat):
       llm_model: "<modell>"
       llm_api_key: "<api-key>"
       llm_timeout: 30
+      haus_mcp_url: "http://<haussteuerung>/mcp"   # optional, Weltmodell
+      haus_mcp_token: "<eigener-token>"            # nicht der Token des Backends
 ```
 
 Nur `LLM_MISMATCH` und `EXEC_DIFFERS` werden nach Telegram geschickt;

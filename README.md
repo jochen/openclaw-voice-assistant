@@ -636,6 +636,19 @@ The LLM recognises subtler patterns that a regex heuristic would miss —
 negations, restrictions, prepositions vs. actions („auf 10%" is a SET action,
 not the OPEN action). See `voice_assistant/services/watcher.py`.
 
+**House knowledge (optional, `haus_mcp_url`).** An overseer that does not
+know the house invents it: ours "found" a room that does not exist and
+explained misheard words with made-up meanings. If the home-automation side
+offers an MCP server with a `haus_weltmodell` tool (people, rooms and what the
+family calls them, which target is where, what house-specific targets mean),
+the overseer fetches that world model and puts the whole of it into its
+prompt — fetched by code, not by the model, because a model does not notice
+that knowledge is missing. Before every check it asks only for the version
+and reloads on change. Give the overseer its own token so the other side can
+tell who is asking. Without `haus_mcp_url` the overseer behaves as before.
+Measure prompt changes with `tools/argus_replay.py` (old vs. new prompt over
+the logged turns; labels for past findings live in a private test set).
+
 Additionally, a deterministic structural check runs without an LLM:
 
 - **EXEC_DIFFERS** — the home automation executed a different target/action
@@ -672,6 +685,8 @@ Background worker inside the assistant, reporting to a separate Telegram chat
       llm_model: "<model>"
       llm_api_key: "<api-key>"
       llm_timeout: 30
+      haus_mcp_url: "http://<home-automation>/mcp"   # optional, world model
+      haus_mcp_token: "<own-token>"                  # not the backend's token
 ```
 
 Only `LLM_MISMATCH` and `EXEC_DIFFERS` are sent to Telegram; during quiet
