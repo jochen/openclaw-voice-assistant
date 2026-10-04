@@ -255,6 +255,22 @@ Telegram (zu laut). Bei LLM-Fehler: Meldung an Telegram
 Aktiviert per Profil-Block `watcher:` (Default `enabled: false`).
 LLM-Felder: `llm_url`, `llm_model`, `llm_api_key`, `llm_timeout`.
 
+**Argus mit Weltmodell (seit 2026-10-04, `haus_mcp_url`/`haus_mcp_token`).**
+Argus ist dieser Überwacher (so heißt seine Telegram-Gruppe). Er kannte das
+Haus nicht und erfand es („Mansardenzimmer“). Jetzt holt der Code vor jeder
+Prüfung die Version des Weltmodells vom Haus-MCP der Gegenstelle
+(`services/haus_mcp.py`, Werkzeug `haus_weltmodell`) und lädt bei Änderung
+das ganze Modell in den Prompt V2 — der Code, nicht das Modell, weil ein
+Modell nicht merkt, dass ihm Wissen fehlt. V2 begründet vor dem Urteil
+(`gedanke` vor `ok`, gegen den Selbstwiderspruch vom 2026-08-01) und meldet,
+wenn ein Ziel nur geraten war. Ohne `haus_mcp_url` läuft V1 wie bisher.
+Argus hat einen **eigenen Token** (Jochen: damit Node-RED unterscheiden kann);
+einen nur-lesenden gibt es dort technisch nicht. Ist das Weltmodell nicht
+abrufbar, urteilt er mit dem letzten bekannten und vermerkt es im Befund.
+**Prompt-Änderungen nur gegen `tools/argus_replay.py`** — Messreihe im
+Docstring, Labels in `testsets/argus_befunde_labels.jsonl`. Hintergrund und
+Entscheidungen: MemPalace `noderedpi4-home-pi/weltmodell`.
+
 ## Sprecher-Zustand und die Schranke (`current_speaker.json`)
 
 Der erkannte Sprecher war bis zum 2026-09-19 **ausschliesslich ein Label im

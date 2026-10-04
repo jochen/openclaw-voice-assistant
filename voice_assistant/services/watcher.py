@@ -53,8 +53,9 @@ WATCH_PATH = os.path.join(WORKSPACE, "actuator_watch.jsonl")
 # aber still (siehe Modul-Doku).
 _ALERT_ARTEN = {"LLM_MISMATCH", "EXEC_DIFFERS"}
 
-# System-Prompt für die semantische Prüfung. Kurz, geschlossen, deutsch.
-_LLM_SYSTEM_PROMPT = """Du bist der Aufseher eines Sprach-Aktuators. Du bekommst das gesprochene Transkript und den Intent den der Aktuator daraus gebildet hat. Prüfe OB SIE ZUSAMMENPASSEN.
+# System-Prompt bis 2026-10-04 (V1): ohne Hauswissen, Urteil vor Begründung.
+# Bleibt als Nulllinie für tools/argus_replay.py stehen — nicht mehr live.
+_PROMPT_V1 = """Du bist der Aufseher eines Sprach-Aktuators. Du bekommst das gesprochene Transkript und den Intent den der Aktuator daraus gebildet hat. Prüfe OB SIE ZUSAMMENPASSEN.
 
 Das erste Wort im Transkript ist fast immer das verhörte Wakewort und gehört NICHT zum Befehl. Die Aufnahme beginnt seit dem Pre-Roll vor dem Wakewort, die STT nimmt es also mit und versteht es selten richtig: "Gastau", "Gastro", "Gastronom", "Gestern", "Das da" usf. Streiche es, bevor du den Rest beurteilst — es ist kein Hinweis auf ein falsches Ziel.
 
@@ -89,6 +90,77 @@ Antworte NUR als JSON:
 
 Wenn du unsicher bist, antworte ok:true (lieber nichts melden als falsch alarmieren)."""
 
+# System-Prompt V2 (2026-10-04): Mandat + Hauswissen. Zwei Lehren aus den 16
+# Befunden bis dahin (MemPalace noderedpi4-home-pi/weltmodell):
+#   - Argus kannte das Haus nicht und ERFAND Räume/Wörter ("Mansardenzimmer",
+#     "Scholle", "Callsender" als Rollladen). Deshalb steht das Weltmodell der
+#     Gegenstelle im Prompt — der Code holt es, nicht das Modell (ein Modell
+#     merkt nicht, dass ihm Wissen fehlt).
+#   - Urteil und Begründung widersprachen sich (2026-08-01: "kein Widerspruch",
+#     aber ok:false). Deshalb steht "gedanke" VOR "ok": erst begründen, dann
+#     urteilen.
+# Das Weltmodell kommt ans ENDE des System-Prompts, der Turn in die
+# User-Nachricht: der lange, stabile Teil ist so ein gleichbleibender Präfix.
+_PROMPT_V2 = """Du bist Argus, der Aufseher eines Sprach-Aktuators in einem Wohnhaus. Der Aktuator hört einen gesprochenen Satz, bildet daraus einen Schaltbefehl (Intent) und führt ihn aus, ohne dass ein Mensch dazwischen steht. Du prüfst danach, ob der Befehl zu dem passt, was gesagt wurde. Du greifst nie ein und schaltest nichts — du meldest einem Menschen, wenn etwas Falsches geschaltet wurde. Jede Meldung kostet seine Aufmerksamkeit: melde, was wirklich nicht passt, und nur das.
+
+Dein Wissen über dieses Haus ist das WELTMODELL unten: Personen, Räume und wie die Familie sie nennt, welches Ziel wo ist, was die hauseigenen Ziele bedeuten. Räume, Personen, Gerätenamen und Begriffe kennst du nur von dort. Was dort nicht steht, gibt es in diesem Haus nicht — erfinde keine Räume, Wörter oder Bedeutungen.
+
+Die Spracherkennung verhört sich oft. Ein Hörfehler erklärt ein Wort aber nur, wenn es deutlich nach einem BESTIMMTEN Namen aus dem Weltmodell klingt — und dann ist dieser Name gemeint, nicht irgendein Ziel, das zur Aktion passen würde. Prüfe deshalb: Trägt der Satz das geschaltete Ziel? Klingt das Wort nach dem geschalteten Ziel, ist es in Ordnung. Klingt es nach einem anderen Namen, oder nach gar keinem, dann hat der Aktuator auf Vermutung geschaltet — das meldest du, denn genau das soll ein Mensch erfahren.
+
+Der Satz kommt aus einer Spracherkennung. Das erste Wort ist fast immer das verhörte Wakewort ("Gastau", "Gastro", "Gastronom", "Das da" …) und gehört nicht zum Befehl. Gesprochene Sprache ist knapp und umgangssprachlich; lies sie so, wie ein Mensch im Haus sie verstehen würde. "auf 40 %" ist ein Setzen auf einen Wert, kein ganz Öffnen.
+
+Du bekommst außerdem, was tatsächlich geschah (Status, Ausgeführt). Wurde nichts ausgeführt (abgelehnt, Rückfrage, keine Antwort), ist auch nichts Falsches geschaltet worden.
+
+Antworte NUR als JSON, in dieser Reihenfolge — erst denken, dann urteilen:
+{"gedanke": "...", "ok": true}
+{"gedanke": "...", "ok": false, "grund": "...", "korrektur": "..."}
+
+  gedanke    — 1 bis 3 Sätze: was wurde gesagt, was meint es in diesem Haus (Weltmodell), was wurde geschaltet. Ein Mensch liest das, um dein Urteil nachzuprüfen.
+  ok         — true, wenn der Befehl zum Satz passt oder du es nicht sicher sagen kannst. false nur, wenn dein Gedanke einen echten Widerspruch zeigt.
+  grund      — ein kurzer Satz: was passt nicht.
+  korrektur  — was du tun würdest, um es zu beheben (rückgängig + Gemeintes), oder "keine". Wird nur angezeigt, nie ausgeführt.
+"""
+
+_KEIN_WELTMODELL = (
+    "(Das Weltmodell ist gerade nicht verfügbar. Urteile vorsichtig: ohne "
+    "Hauswissen ist ein unbekannter Name eher ein Hörfehler als ein Fehler.)"
+)
+
+
+def system_prompt(weltmodell_text: str | None) -> str:
+    """V2-Prompt samt Weltmodell (oder Hinweis, dass es fehlt)."""
+    welt = weltmodell_text.strip() if weltmodell_text else _KEIN_WELTMODELL
+    return f"{_PROMPT_V2}\nWELTMODELL:\n{welt}\n"
+
+
+def user_nachricht(turn: dict, mit_kontext: bool = True) -> str:
+    """Der zu prüfende Turn. mit_kontext=False ist das V1-Format."""
+    zeilen = [
+        f'Transkript: "{turn.get("transcript", "")}"',
+        f'Intent: {json.dumps(turn.get("intent") or {}, ensure_ascii=False)}',
+    ]
+    if mit_kontext:
+        zeilen.append(f'Status: {turn.get("status") or "?"}')
+        zeilen.append("Ausgeführt: " + json.dumps(turn.get("ausgefuehrt"), ensure_ascii=False))
+        if turn.get("unklar_round"):
+            zeilen.append("Kontext: Der Satz ist die Antwort auf eine Rückfrage des "
+                          "Aktuators (\"Sag noch einmal, was ich schalten soll\").")
+        else:
+            zeilen.append("Kontext: Erstansprache per Wakewort.")
+    return "\n".join(zeilen)
+
+
+def antwort_lesen(content: str) -> dict:
+    """JSON-Urteil aus der Modellantwort (auch mit Text drumherum)."""
+    a, b = content.find("{"), content.rfind("}")
+    if a != -1 and b > a:
+        try:
+            return json.loads(content[a:b + 1])
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r'\{[^{}]*"ok"[^{}]*\}', content)
+    return json.loads(m.group() if m else content)
+
 
 def _in_stillen_stunden(now: datetime, quiet_start: int, quiet_end: int) -> bool:
     """True wenn die aktuelle Stunde in den Stille-Zeit liegt."""
@@ -98,8 +170,40 @@ def _in_stillen_stunden(now: datetime, quiet_start: int, quiet_end: int) -> bool
     return h >= quiet_start or h < quiet_end
 
 
+def llm_urteil(system: str, user: str, llm_url: str, llm_model: str,
+               api_key: str, timeout: float) -> dict:
+    """Ein Aufruf, das rohe JSON-Urteil zurück (auch bei ok:true — das
+    Replay-Werkzeug braucht den Gedanken auch dann). Wirft bei Netzfehlern,
+    ValueError bei leerer oder unlesbarer Antwort."""
+    body = json.dumps({
+        "model": llm_model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0,
+        "max_tokens": 500,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(llm_url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        out = json.loads(r.read().decode())
+    msg = out["choices"][0]["message"]
+    content = (msg.get("content") or "").strip() or (msg.get("reasoning") or "").strip()
+    if not content:
+        raise ValueError("LLM antwortete ohne content (leer).")
+    try:
+        return antwort_lesen(content)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ValueError(f"LLM-Antwort nicht lesbar: {content[:120]}") from e
+
+
 def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
-                timeout: float) -> dict | None:
+                timeout: float, system: str | None = None,
+                user: str | None = None) -> dict | None:
     """Semantische Prüfung via LLM. Gibt einen Befund-Dict zurück oder None
     wenn alles ok. Bei Fehler wird ein Befund mit art=LLM_ERROR zurückgegeben.
 
@@ -111,41 +215,15 @@ def _llm_pruefe(turn: dict, llm_url: str, llm_model: str, api_key: str,
     if not transcript or not intent.get("ist_kommando"):
         return None
 
-    user_msg = (
-        f'Transkript: "{transcript}"\n'
-        f'Intent: {json.dumps(intent, ensure_ascii=False)}'
-    )
-    body = json.dumps({
-        "model": llm_model,
-        "messages": [
-            {"role": "system", "content": _LLM_SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        "temperature": 0,
-        "max_tokens": 500,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }).encode("utf-8")
-
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    user_msg = user if user is not None else user_nachricht(turn, mit_kontext=False)
+    sys_msg = system if system is not None else _PROMPT_V1
 
     def _attempt() -> dict | None:
         """Ein LLM-Versuch. Wirft bei Timeout/Netzwerkfehler."""
-        req = urllib.request.Request(llm_url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            out = json.loads(r.read().decode())
-        msg = out["choices"][0]["message"]
-        content = (msg.get("content") or "").strip()
-        if not content:
-            content = (msg.get("reasoning") or "").strip()
-        if not content:
-            return {"art": "LLM_ERROR", "detail": "LLM antwortete ohne content (leer)."}
-        json_match = re.search(r'\{[^{}]*"ok"[^{}]*\}', content)
-        if json_match:
-            result = json.loads(json_match.group())
-        else:
-            result = json.loads(content)
+        try:
+            result = llm_urteil(sys_msg, user_msg, llm_url, llm_model, api_key, timeout)
+        except ValueError as e:
+            return {"art": "LLM_ERROR", "detail": str(e)}
         if result.get("ok"):
             return None
         return {
@@ -221,7 +299,12 @@ class Overseer:
         llm_model: str = "",
         llm_api_key: str = "",
         llm_timeout: float = 10.0,
+        weltmodell=None,
     ) -> None:
+        # weltmodell: services.haus_mcp.Weltmodell oder None. Mit → Prompt V2
+        # (Mandat + Hauswissen + Kontext), ohne → V1 wie bis 2026-10-04.
+        self.weltmodell = weltmodell
+        self._welt_fehler: str | None = None
         self.chat_id = chat_id
         self.bot_token = bot_token
         self.quiet_start = quiet_start
@@ -249,15 +332,30 @@ class Overseer:
 
         # 1. Semantische Prüfung via LLM
         if self.llm_url and self.llm_model:
+            system = user = None
+            welt_info: dict = {}
+            if self.weltmodell is not None:
+                version, text, fehler = self.weltmodell.aktuell()
+                if fehler != self._welt_fehler:
+                    # Zustandswechsel einmal melden, nicht bei jedem Turn.
+                    print(f"👁️  Argus: Weltmodell {'nicht abrufbar: ' + fehler if fehler else 'wieder da'}"
+                          f"{f' (nutze Version {version})' if fehler and text else ''}")
+                    self._welt_fehler = fehler
+                system = system_prompt(text or None)
+                user = user_nachricht(turn)
+                welt_info = {"weltmodell": version}
+                if fehler:
+                    welt_info["weltmodell_fehler"] = fehler
             llm_befund = _llm_pruefe(
                 turn, self.llm_url, self.llm_model,
                 self.llm_api_key, self.llm_timeout,
+                system=system, user=user,
             )
             if llm_befund is not None:
                 if llm_befund.get("art") == "LLM_ERROR":
                     llm_error = llm_befund
                 else:
-                    befunde.append({**turn, **llm_befund})
+                    befunde.append({**turn, **llm_befund, **welt_info})
 
         # 2. Strukturelle Prüfung (deterministisch)
         exec_befund = _pruefe_exec_differs(turn)

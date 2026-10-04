@@ -336,6 +336,12 @@ class WatcherConfig:
     # der Overseer-Thread nicht blockiert — lieber spät melden als gar nicht.
     # Bei Lastspitzen/Reasoning braucht GLM-5-2 manchmal >10s.
     llm_timeout: float = 30.0
+    # Haus-MCP der Gegenstelle (Streamable HTTP), aus dem Argus das Weltmodell
+    # holt (Werkzeug haus_weltmodell). Leer = ohne Weltmodell, Prompt wie bis
+    # 2026-10-04. Eigener Token je Client — NICHT der des Brains, damit die
+    # Gegenstelle unterscheiden kann, wer fragt.
+    haus_mcp_url: str = ""
+    haus_mcp_token: str = ""
 
 
 @dataclass
@@ -765,6 +771,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         llm_model=str(watcher_raw.get("llm_model", _dw.llm_model)),
         llm_api_key=str(watcher_raw.get("llm_api_key", _dw.llm_api_key)),
         llm_timeout=float(watcher_raw.get("llm_timeout", _dw.llm_timeout)),
+        haus_mcp_url=str(watcher_raw.get("haus_mcp_url", _dw.haus_mcp_url)),
+        haus_mcp_token=str(watcher_raw.get("haus_mcp_token", _dw.haus_mcp_token)),
     )
 
     rewind_raw = raw.get("rewind") or {}
