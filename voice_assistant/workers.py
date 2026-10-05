@@ -5,6 +5,9 @@ from __future__ import annotations
 import queue
 import threading
 
+import numpy as np
+
+from voice_assistant.config import RATE_OW
 from voice_assistant.services import openclaw, telegram
 from voice_assistant.services.diarization import (
     STATUS_NICHT_EINGERICHTET,
@@ -25,6 +28,11 @@ from voice_assistant.state import (
     turn_control,
     turn_stopped,
 )
+
+
+# Stimmungsanalyse bekommt höchstens so viel vom Anfang der Aufnahme
+# (siehe _mood_worker).
+_MOOD_MAX_SEC = 10.0
 
 
 class Workers:
@@ -130,7 +138,13 @@ class Workers:
         return t
 
     def _mood_worker(self, audio_chunks: list, out_q: queue.Queue) -> None:
-        wav_bytes = chunks_to_wav_bytes(audio_chunks)
+        # Nur die ersten _MOOD_MAX_SEC: seit ser auf der CPU rechnet (2026-10-05)
+        # waechst die Zeit linear mit der Laenge — 31,6 s Aufnahme 5,3 s, auf
+        # 10 s gekuerzt 1,6 s, unter DIARIZATION_JOIN_TIMEOUT. Vorn spricht der
+        # Rufende Gaston an; lange Aufnahmen sind meist Hintergrund, der die
+        # Aufnahme bis zum Deckel offen hielt. 90 % der Aufnahmen sind kuerzer.
+        audio = np.concatenate(audio_chunks)[: int(_MOOD_MAX_SEC * RATE_OW)]
+        wav_bytes = chunks_to_wav_bytes([audio])
         run_mood(self.mood_analyzer, wav_bytes, out_q)
 
     def start_confirmation(self, recognized_text: str, turn: int | None = None) -> threading.Thread:
