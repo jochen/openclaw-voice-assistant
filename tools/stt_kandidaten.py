@@ -16,6 +16,7 @@ denselben Labels wie jeder andere Lauf.
     venv-nemo/bin/python stt_kandidaten.py nemo nvidia/parakeet-tdt-0.6b-v3 clips/ out/
     venv-qwen/bin/python stt_kandidaten.py qwen Qwen/Qwen3-ASR-1.7B clips/ out/
     venv-vox/bin/python stt_kandidaten.py vox mistralai/Voxtral-Mini-3B-2507 clips/ out/
+    python3 stt_kandidaten.py llamacpp http://host:8080 clips/ out/ --name qwen-q8   # llama-server
 
 Die Whisper-Basislinie gehört NICHT hierher, sondern über Speaches
 (`stt_vergleich.py --speaches-lauf`): ein faster-whisper in anderer Fassung
@@ -126,7 +127,33 @@ def _vox(modell: str, prompt: str | None):
     return run
 
 
-_ENGINES = {"fw": _fw, "nemo": _nemo, "qwen": _qwen, "vox": _vox}
+def _llamacpp(url: str, prompt: str | None):
+    """Qwen3-ASR (oder ein anderes Audio-Modell) hinter einem llama-server,
+    z. B. `llama-server -hf ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0`. `modell` ist
+    hier die URL des Servers; läuft als Client, braucht nur die stdlib."""
+    import base64
+    import urllib.request
+
+    def run(pfad: str) -> dict:
+        b = base64.b64encode(open(pfad, "rb").read()).decode()
+        msgs = ([{"role": "system", "content": prompt}] if prompt else []) + [
+            {"role": "user", "content": [{"type": "input_audio",
+                                          "input_audio": {"data": b, "format": "wav"}}]}]
+        req = urllib.request.Request(
+            url.rstrip("/") + "/v1/chat/completions",
+            data=json.dumps({"messages": msgs, "temperature": 0, "max_tokens": 300}).encode(),
+            headers={"Content-Type": "application/json"})
+        r = json.load(urllib.request.urlopen(req, timeout=120))
+        text = r["choices"][0]["message"]["content"] or ""
+        # Qwen3-ASR antwortet "language German<asr_text>…"
+        text = text.split("<asr_text>", 1)[-1]
+        t = r.get("timings") or {}
+        return {"text": text.strip(),
+                "server_ms": int((t.get("prompt_ms") or 0) + (t.get("predicted_ms") or 0))}
+    return run
+
+
+_ENGINES = {"fw": _fw, "nemo": _nemo, "qwen": _qwen, "vox": _vox, "llamacpp": _llamacpp}
 
 
 def main() -> int:
