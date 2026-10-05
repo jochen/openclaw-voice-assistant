@@ -53,7 +53,11 @@ def write_current_speaker(
     try:
         with open(path, encoding="utf-8") as f:
             vorher = json.load(f).get("turn_epoch")
-        if vorher is not None and float(vorher) > turn_epoch:
+        # Gleich gerundet vergleichen wie gespeichert (3 Stellen): sonst hielte
+        # ein in derselben Millisekunde AUFgerundeter Vorgaenger den neueren
+        # Turn fuer aelter und verwuerfe ihn (test_ausfall_wird_auch_geschrieben
+        # schlug deshalb gelegentlich fehl, 2026-10-05).
+        if vorher is not None and round(float(vorher), 3) > round(turn_epoch, 3):
             return
     except (OSError, ValueError, TypeError, AttributeError):
         pass
