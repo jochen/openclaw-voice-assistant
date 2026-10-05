@@ -403,3 +403,36 @@ Das eine FALSCH von v3: „Gastau, Lohnsimmerrolle auf 50 Prozent.“ →
 bei Einigkeit schalten, sonst nachfragen — auf diesem Set 0 FALSCH für 6
 Rückfragen mehr. Kostet einen zweiten Container (+1,4 GB VRAM) und etwas
 Latenz.
+
+**Nachtraining für einen STT-Wechsel geprüft (2026-10-05).** Frage: holt
+Laya die Lücke von Parakeet (12 statt 7 verpasst) auf, wenn es dessen
+Verhörer kennt? Vier Checkpoints für capabilities `70866bd6`, trainiert auf
+dem Fablab-Server (2× RTX 5060 Ti, ~13 min je Lauf, Speaches daheim
+unberührt): `ref` = heutiges Rezept, `pk` = zusätzlich „rollus“, „rolls“
+für „Rollos“ (belegt in Parakeet-Transkripten), je Seed 20260928 (a) und 7
+(b). Gemessen über 169 Aufnahmen mit 96 Labels (`tools/stt_vergleich.py
+--transkripte … --laya-url`), richtig / verpasst / FALSCH / FALSCH?:
+
+| Transkripte von | v3 (live) | ref-a | ref-b | pk-a | pk-b |
+|---|---|---|---|---|---|
+| medium (Speaches) | 88/7/1/0 | 87/8/1/0 | 90/6/0/0 | 87/6/3/0 | 90/4/2/0 |
+| Parakeet (NeMo) | 83/12/0/1 | 83/12/0/1 | 84/10/0/2 | 82/10/1/3 | 84/10/1/1 |
+| Parakeet (ONNX, Speaches) | 83/11/1/1 | 80/13/1/2 | 83/11/0/2 | 80/11/2/3 | 82/12/1/1 |
+| Qwen3-ASR-1.7B + Kontext | 92/3/0/1 | 88/6/1/1 | 91/3/0/2 | 89/3/2/2 | 90/3/1/2 |
+| Voxtral-Mini-3B | 90/5/0/1 | 88/7/0/1 | 91/4/0/1 | 89/5/0/2 | 91/4/0/1 |
+
+- **Die Verhörer-Ergänzung bringt nichts.** Laya erkennt „alle Rollus zu“
+  schon mit v3 richtig als `alle_rollos/zu` — die Rückfrage kommt von
+  **Regel A** (Gruppenwort exakt im Satz, `Actuator.verdict`). Dasselbe gilt
+  für medium mit „alle Wolos“. pk liegt im Rauschen der Seeds, eher mit mehr
+  FALSCH; die Ergänzung ist deshalb nicht übernommen. Wer Verhörer von
+  Gruppenwörtern durchlassen will, muss an Regel A (eine Tabelle belegter
+  Formen statt Ähnlichkeit) — das ist eine Sicherheitsentscheidung, offen.
+- **Seed-Streuung auf diesen 96 Labels:** ref-a gegen ref-b 3 Sätze auf
+  medium. Unterschiede dieser Größe zwischen Checkpoints sind nicht deutbar.
+- **Neu bei capabilities `70866bd6`:** „Badewasser“/„Brauwasser“ →
+  `regenwasser_weiche` (ref-a, pk-a); v3 kennt das Ziel nicht und fällt
+  dort nicht hinein. „Kükenarbeitsplanlicht“ → `kuechenlicht` (pk-a, pk-b).
+- **v3 ist veraltet** (Falle 11: trainiert für `e93fcc67`). ref-a/ref-b
+  liegen als `~/laya-modelle/aktuator-v4-kandidat-{a,b}` bereit, sind aber
+  nicht gegen das Test-Set geprüft und nicht geschaltet.

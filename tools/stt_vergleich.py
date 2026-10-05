@@ -206,7 +206,13 @@ Messreihe
                 halb (alle 11 Fernseh-Clips "unbekannt", aber auch 72 von 158
                 echten Turns). Die fehlende Anrede trennt: 0/11 gegen 60/69.
                 Damit fällt die Hürde für Parakeet und Qwen; offen bleibt
-                ihr Abstand am Aktuator (Laya kennt ihre Verhörer nicht).
+                ihr Abstand am Aktuator.
+
+                Nachtraining mit Parakeet-Verhörern (LAYA_TRAINING.md, Stand
+                2026-10-05) schließt den Abstand NICHT: "alle Rollus/Rolls"
+                erkennt Laya schon richtig, die Rückfrage kommt von Regel A
+                (Gruppenwort exakt im Satz). Der Rest sind Raumnamen-
+                Verhörer ("Zischlicht", "Kirchenlicht", "Wohnzimmerholder").
 """
 
 from __future__ import annotations
@@ -214,6 +220,7 @@ from __future__ import annotations
 import argparse
 import collections
 import contextlib
+import dataclasses
 import glob
 import io
 import json
@@ -345,7 +352,8 @@ def _verworfen(e: dict) -> bool:
     return not e.get("text") or (e.get("nsp") or 0.0) >= 0.5
 
 
-def transkripte_auswerten(dateien: list[str], ohne_aktuator: bool, json_ziel: str | None) -> int:
+def transkripte_auswerten(dateien: list[str], ohne_aktuator: bool, json_ziel: str | None,
+                          laya_url: str | None = None) -> int:
     """Läufe aus tools/stt_kandidaten.py gegen Live-Transkript, Labels und
     die Laya-Kette — dieselbe Bewertung wie der Speaches-Vergleich."""
     laeufe = {}
@@ -359,7 +367,10 @@ def transkripte_auswerten(dateien: list[str], ohne_aktuator: bool, json_ziel: st
     lab = labels()
     akt = None
     if not ohne_aktuator:
-        akt = Actuator(load_profile().actuator)
+        cfg = load_profile().actuator
+        if laya_url:                    # Kandidaten-Checkpoint statt des laufenden
+            cfg = dataclasses.replace(cfg, laya_url=laya_url)
+        akt = Actuator(cfg)
         if not akt.refresh():
             print("capabilities-refresh fehlgeschlagen — ohne Aktuator weiter")
             akt = None
@@ -458,6 +469,8 @@ def main() -> int:
                                            "Profils (z. B. ein Test-Container auf dem GPU-Rechner)")
     ap.add_argument("--prompt-datei", help="mit --speaches-lauf: Anfangs-Prompt für Whisper "
                                            "(z. B. die Gerätenamen; Datei außerhalb des Repos)")
+    ap.add_argument("--laya-url", help="mit --transkripte: anderer Laya-Endpunkt als der des "
+                                       "Profils (Kandidaten-Checkpoint)")
     ap.add_argument("--modelle", nargs=2, default=_DEFAULT, metavar=("A", "B"))
     ap.add_argument("--ordner", default=TRIGGER_AUDIO_DIR)
     ap.add_argument("--json", help="Ergebnis je Clip hierhin schreiben")
@@ -474,7 +487,8 @@ def main() -> int:
         return speaches_lauf(args.modelle[0], args.speaches_lauf, args.ordner, prompt,
                              args.speaches_url)
     if args.transkripte:
-        return transkripte_auswerten(args.transkripte, args.ohne_aktuator, args.json)
+        return transkripte_auswerten(args.transkripte, args.ohne_aktuator, args.json,
+                                     args.laya_url)
 
     profil = load_profile()
     base = profil.speaches_base
