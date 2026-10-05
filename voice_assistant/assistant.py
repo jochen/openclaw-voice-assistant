@@ -46,7 +46,7 @@ from voice_assistant.config import (
     WakewordConfig,
     load_profile,
 )
-from voice_assistant.services import aktuator_schatten
+from voice_assistant.services import aktuator_schatten, telegram
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.actuator import (
     Actuator,
@@ -1037,7 +1037,16 @@ def run() -> None:
                 n_ziele = len(actuator.digest or {})
                 print(f"🔌 Aktuator aktiv — {n_ziele} Ziele, Version {actuator.version}")
                 if profile.actuator.laya_url:
-                    aktuator_schatten.aufwaermen(actuator)
+                    # Passt der Checkpoint nicht zu den capabilities, geht das
+                    # an die Argus-Gruppe — dort landet, was am Aktuator schief ist.
+                    wt = profile.watcher
+                    melden = None
+                    if wt.chat_id:
+                        bot_tok = wt.bot_token or profile.telegram_bot_token
+                        melden = lambda text: telegram.send(bot_tok, wt.chat_id, text)  # noqa: E731
+                    aktuator_schatten.aufwaermen(actuator, melden)
+                    actuator.nach_refresh.append(
+                        lambda: aktuator_schatten.pruefe_checkpoint(actuator, melden))
             else:
                 print("⚠️  Aktuator aktiviert, aber initialer refresh() fehlgeschlagen — startet ohne Ziel-Vokabular, Poll/MQTT versuchen es weiter")
         except Exception as e:

@@ -532,8 +532,16 @@ zu geben, das raten müsste. Ohne Feinabstimmung taugt Laya dafür nicht:
 trainiert wird auf Sätze, die aus den eigenen capabilities erzeugt werden
 (`tools/tor_trainset.py`, `tools/laya_aktuator_train.py`, eigener venv mit
 torch; Ablauf und Fallen in `LAYA_TRAINING.md`). Ein Checkpoint gehört zu
-genau einer Zielliste; ändern sich die Ziele, wird neu trainiert. Die
-Vorlagen des Generators sind deutsch.
+genau einer Zielliste; ändern sich die Ziele, wird neu trainiert. Vergisst
+man das, schlägt nichts fehl — Laya antwortet nur schlechter. Deshalb meldet
+der `laya-serve`-Wrapper in `/health` die capabilities-Version des
+Checkpoints, der Assistent vergleicht sie nach jedem Refresh mit der
+Live-Version und meldet eine Abweichung (Telegram, Chat des Überwachers), und
+`tools/laya_nachtraining.py` (systemd-Timer, nachts) trainiert bei Abweichung
+neu: zwei Seeds, gegen das Test-Set neben dem laufenden Checkpoint gemessen,
+umgeschaltet nur, wenn er nicht mehr Falschschaltungen hat und der Rauchtest
+nach dem Umschalten die Zahlen reproduziert. Die Vorlagen des Generators
+sind deutsch.
 
 **Die Ausgabe des Modells kurz halten.** Die Klassifikation antwortet in
 kompaktem JSON, erzwungen per GBNF-Grammatik. Mit einem JSON-Schema allein

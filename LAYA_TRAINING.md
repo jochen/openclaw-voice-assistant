@@ -18,7 +18,7 @@ abgefangen ist, steht das dabei.
 
 | Auslöser | Warum | Heute erkannt? |
 |---|---|---|
-| capabilities-Version ändert sich (Ziel neu, umbenannt, entfernt, `namen` ergänzt) | Die ziel-Frage entsteht aus dem Digest. Ein Checkpoint kennt nur die Optionen, auf die er trainiert wurde; eine neue Option hat er nie gesehen | **Nein.** Der Checkpoint trägt seine Version (`rl_agent_config.json` → `capabilities`), das Schatten-Log die Live-Version. Verglichen wird nirgends |
+| capabilities-Version ändert sich (Ziel neu, umbenannt, entfernt, `namen` ergänzt) | Die ziel-Frage entsteht aus dem Digest. Ein Checkpoint kennt nur die Optionen, auf die er trainiert wurde; eine neue Option hat er nie gesehen | **Ja, seit 2026-10-06.** `/health` des Containers trägt `checkpoint.capabilities`; der Assistent meldet eine Abweichung, `tools/laya_nachtraining.py` trainiert nachts neu (siehe Falle 11) |
 | Neue gelabelte echte Turns (Test-Set wächst) | Lücken der Vorlagen schließen (siehe „Synthetische Lücken“) | Nein |
 | Neue Laya-Version | Basismodell, Sequenzbau oder Temperaturbehandlung können sich ändern | Nein, gepinnt auf 0.3.21 |
 
@@ -207,6 +207,21 @@ Modell etwas geändert hätte. Im Journal steht davon nichts.
   `refresh()` `capabilities` des Checkpoints (über `/health` oder eine
   eigene Abfrage) mit der Live-Version. Weichen sie ab, meldet er das und
   startet den Trainingslauf, bzw. stößt ihn an.
+- **Gebaut 2026-10-06:**
+  - `laya/serve.py` (openclaw-voice-stack) hängt `checkpoint` {name,
+    capabilities, seed} an `/health`.
+  - `aktuator_schatten.pruefe_checkpoint` vergleicht nach dem Aufwärmen und
+    nach jedem `refresh()` aus MQTT/Poll (`Actuator.nach_refresh`). Eine
+    Abweichung steht im Journal und geht einmal je (Checkpoint, Live-Version)
+    an die Argus-Gruppe. Tests: `CheckpointAbgleichTest`.
+  - `tools/laya_nachtraining.py` + `systemd/laya-nachtraining.{service,timer}`,
+    jede Nacht 3:00, endet sofort, wenn die Versionen passen. Ablauf und
+    Schranken im Docstring; Entscheidungen Jochen 2026-10-06: hier trainieren
+    (laya und Qwen aus, Gemma und Parakeet springen ein), automatisch
+    umschalten mit Schranken. Installationsspezifisches in
+    `~/.config/openclaw/laya-nachtraining.env`. Ergebnisse je Lauf:
+    `~/.openclaw/workspace/laya_nachtraining.jsonl`, Bericht leise in die
+    Argus-Gruppe.
 
 ### 12. Das Training hat Speaches den Speicher weggenommen
 
@@ -464,3 +479,12 @@ heißt jetzt `~/laya-modelle/aktuator-v4`, ref-a `aktuator-v4a`. Test-Set
   kroch mit ~1 MB/s. Fürs Training gilt das nicht (Falle 12).
 - Rauchtest nach dem Umschalten: Test-Set gegen den Live-Port, 350/18/3
   (altes Label) reproduziert, keine Ausfälle.
+
+**Abgleich und Nachtraining gebaut (2026-10-06, Falle 11).** Live-Container
+neu erzeugt (Image mit `checkpoint` in `/health`), Assistent neu gestartet:
+„Checkpoint aktuator-v4 passt zu capabilities 70866bd6“. Weil die Versionen
+passen, täte der Timer nichts — der Trainingsweg wäre bis zur nächsten
+capabilities-Änderung ungeprüft. Deshalb einmalig `laya-nachtraining-probe`
+am 2026-10-06 03:05 mit `--erzwingen` (transienter Timer, kein Repo-Stand).
+Die Unit läuft mit `HF_HUB_OFFLINE=1`: sonst zöge `snapshot_download` nachts
+still eine neue Basis-Revision (Falle 2); im Cache liegt `55cf4c4e`.

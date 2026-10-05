@@ -6,12 +6,16 @@ import json
 import urllib.request
 
 
-def send(bot_token: str, chat_id: str, text: str, prefix: str = "") -> None:
+def send(bot_token: str, chat_id: str, text: str, prefix: str = "",
+         leise: bool = False) -> None:
+    """leise: ohne Benachrichtigungston (Telegram disable_notification) —
+    fuer Berichte, die nachts entstehen und morgens gelesen werden."""
     if not bot_token or not chat_id:
         return
-    payload = json.dumps(
-        {"chat_id": chat_id, "text": f"{prefix}{text}" if prefix else text}
-    ).encode("utf-8")
+    body = {"chat_id": chat_id, "text": f"{prefix}{text}" if prefix else text}
+    if leise:
+        body["disable_notification"] = True
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
         data=payload,

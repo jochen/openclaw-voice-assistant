@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -201,11 +202,64 @@ def _log_ausfall(actuator, text, wakeword, echt: Entscheidung) -> None:
         print(f"⚠️  Schatten-Log: {exc}")
 
 
-def aufwaermen(actuator) -> None:
+def laya_checkpoint(url: str, timeout: float = 5.0) -> dict | None:
+    """`checkpoint` aus /health des Laya-Containers ({name, capabilities, seed}),
+    oder None, wenn der Container ihn nicht liefert oder nicht antwortet."""
+    try:
+        with urllib.request.urlopen(url.rstrip("/") + "/health", timeout=timeout) as r:
+            return json.loads(r.read().decode()).get("checkpoint")
+    except Exception:
+        return None
+
+
+def pruefe_checkpoint(actuator, melden=None) -> str:
+    """Passt der Laya-Checkpoint zur Live-Version der capabilities?
+
+    Ein Checkpoint kennt nur die Ziele, auf die er trainiert wurde. Aendern
+    sie sich, antwortet Laya weiter, nur schlechter — so am 2026-10-01
+    (v1 bei e93fcc67) und bis 2026-10-06 (v3 bei 70866bd6), beide Male ohne
+    jede Meldung. Der Assistent merkt die neue Version (MQTT/Poll), Gemma
+    ist damit sofort aktuell; der Checkpoint nicht.
+
+    Gerufen nach dem Aufwaermen und nach jedem refresh(). Eine Abweichung
+    steht im Journal und geht einmal je (Checkpoint, Live-Version) an
+    `melden` (Telegram, Argus-Gruppe) — nicht bei jedem Refresh erneut.
+    Rueckgabe fuer Tests: "passt", "abweichung", "unbekannt".
+    """
+    cfg = actuator.cfg
+    if not cfg.laya_url:
+        return "unbekannt"
+    ck = laya_checkpoint(cfg.laya_url)
+    live = actuator.version
+    if not ck or not ck.get("capabilities") or not live:
+        print(f"⚠️  Aktuator-Laya: Checkpoint-Version nicht abfragbar ({cfg.laya_url}/health)"
+              " — Abgleich mit den capabilities entfaellt")
+        return "unbekannt"
+    if ck["capabilities"] == live:
+        actuator._laya_ckpt_gemeldet = None
+        print(f"👥 Aktuator-Laya: Checkpoint {ck.get('name')} passt zu capabilities {live}")
+        return "passt"
+    text = (f"⚠️ Laya-Checkpoint {ck.get('name')} ist für capabilities {ck['capabilities']} "
+            f"trainiert, live ist {live}. Laya kennt die geänderten Ziele nicht und "
+            f"antwortet schlechter, ohne Fehler. Das Nachtraining (laya-nachtraining.timer, "
+            f"3:00) trainiert neu.")
+    print(f"⚠️  Aktuator-Laya: {text}")
+    paar = (ck.get("name"), ck["capabilities"], live)
+    if melden and getattr(actuator, "_laya_ckpt_gemeldet", None) != paar:
+        actuator._laya_ckpt_gemeldet = paar
+        try:
+            melden(text)
+        except Exception as exc:
+            print(f"⚠️  Aktuator-Laya: Meldung fehlgeschlagen: {exc}")
+    return "abweichung"
+
+
+def aufwaermen(actuator, melden=None) -> None:
     """Beim Start einmal Laya fragen, im Hintergrund. Die erste Anfrage nach
     einem Container-Start kostet >1 s (torch baut einen Triton-Kernel) —
     als Entscheider waere das ein Laya-Timeout und damit ein Gemma-Rueckfall
-    im ersten echten Turn. Meldet zugleich, ob Laya ueberhaupt antwortet."""
+    im ersten echten Turn. Meldet zugleich, ob Laya ueberhaupt antwortet, und gleicht danach die
+    Checkpoint-Version mit den capabilities ab (pruefe_checkpoint)."""
     rolle = "entscheidet" if actuator.cfg.klassifikator == "laya" else "Schatten, nur Log"
 
     def lauf():
@@ -218,4 +272,5 @@ def aufwaermen(actuator) -> None:
                      else " — jeder Turn wird als Laya-Ausfall geloggt"))
         else:
             print(f"👥 Aktuator-Laya aktiv ({rolle}): {actuator.cfg.laya_url} ({u.ms:.0f} ms)")
+            pruefe_checkpoint(actuator, melden)
     threading.Thread(target=lauf, daemon=True, name="aktuator-laya-warm").start()

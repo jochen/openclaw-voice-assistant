@@ -1,0 +1,10 @@
+[Unit]
+Description=Laya-Nachtraining jede Nacht um 3:00 (nur bei Versionsabweichung)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Kein Nachholen tagsueber: das Training stoppt laya und die STT-Stufe Qwen.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -170,7 +170,12 @@ Jochen 2026-10-01), `setzen` ohne Zahl → Rückfrage. Tests
 Checkpoint nach `~/laya-modelle/`, gehört zu genau einer capabilities-Version)
 → Container `laya` in `openclaw-voice-stack` (`LAYA_CKPT`). Messen:
 `tools/aktuator_vergleich.py` (Test-Set oder `--schatten`). Stand und Zahlen:
-`LAYA_TRAINING.md`, Abschnitt „Stand". `schatten_url` (der Name vom
+`LAYA_TRAINING.md`, Abschnitt „Stand". **Checkpoint-Version gegen
+Live-Version (seit 2026-10-06):** `/health` des Containers trägt
+`checkpoint.capabilities`, `aktuator_schatten.pruefe_checkpoint` meldet eine
+Abweichung (Journal + Argus-Gruppe), `tools/laya_nachtraining.py`
+(`laya-nachtraining.timer`, 3:00) trainiert dann neu und schaltet nur hinter
+Schranken um. `schatten_url` (der Name vom
 2026-09-29) wird als alter Name von `laya_url` weiter gelesen.
 **Wer das Training anfasst oder automatisiert, liest `LAYA_TRAINING.md`** —
 Ablauf, die Fallen der ersten Läufe (OOM, Training verdrängt Speaches, torch-CPU-Fassung, HTTP 500

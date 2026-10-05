@@ -520,7 +520,14 @@ that would have to guess. Laya is not usable without fine-tuning: it is
 trained on sentences generated from your own capabilities
 (`tools/tor_trainset.py`, `tools/laya_aktuator_train.py`, separate venv with
 torch; procedure and pitfalls in `LAYA_TRAINING.md`). A checkpoint belongs to
-exactly one target list; when targets change, retrain. The generator's
+exactly one target list; when targets change, retrain. Nothing fails when you
+forget — Laya just answers worse. So the `laya-serve` wrapper reports the
+checkpoint's capabilities version in `/health`, the assistant compares it with
+the live version after every refresh and reports a mismatch (Telegram, the
+watcher's chat), and `tools/laya_nachtraining.py` (systemd timer, nightly)
+retrains on a mismatch: two seeds, measured against the test set next to the
+running checkpoint, switched only if it has no more wrong actions and the
+smoke test after the switch reproduces the numbers. The generator's
 templates are German.
 
 **Keep the model's output short.** The classifier answers in compact JSON,
