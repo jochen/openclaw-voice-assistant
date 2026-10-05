@@ -434,5 +434,30 @@ für „Rollos“ (belegt in Parakeet-Transkripten), je Seed 20260928 (a) und 7
   `regenwasser_weiche` (ref-a, pk-a); v3 kennt das Ziel nicht und fällt
   dort nicht hinein. „Kükenarbeitsplanlicht“ → `kuechenlicht` (pk-a, pk-b).
 - **v3 ist veraltet** (Falle 11: trainiert für `e93fcc67`). ref-a/ref-b
-  liegen als `~/laya-modelle/aktuator-v4-kandidat-{a,b}` bereit, sind aber
-  nicht gegen das Test-Set geprüft und nicht geschaltet.
+  lagen als `~/laya-modelle/aktuator-v4-kandidat-{a,b}` bereit.
+
+**aktuator-v4 live seit 2026-10-06 00:10** (Jochen: Kandidat b). ref-b
+heißt jetzt `~/laya-modelle/aktuator-v4`, ref-a `aktuator-v4a`. Test-Set
+(371 Sätze, mit Rückfrage-Regel, capabilities `70866bd6`):
+
+| | richtig / verpasst / FALSCH |
+|---|---|
+| v3 (kennt `70866bd6` nicht) | 340 / 28 / 3 |
+| v4a (Seed 20260928) | 346 / 21 / 4 |
+| **v4** (Seed 7) | **350 / 18 / 3** |
+
+- FALSCH v4: „Rollos bitte wieder überall auf“ → `alle_rollos` statt
+  `rollos_ganzes_haus` (v4a ebenso), „Wohnzimmer Rollo etwas nach unten“ →
+  **auf** (falsche Richtung), „Zwiebel-Rolo auf 50 Prozent“ → Rosazimmer
+  (geraten). v3s „Lohnsimmerrolle“ → Rosazimmer ist bei v4 weg.
+- „Braubwasser“/„Badewasser“ → `regenwasser_weiche` (v3, v4a) bleibt
+  FALSCH: Jochen meinte damals ein Gerät, das es in Node-RED nicht gab, nicht
+  die Regenwasser-Weiche. Labels unverändert.
+- **Gemessen auf der eigenen GPU:** `laya` gestoppt (Gemma entscheidet in
+  der Zeit), Kandidat als zweiter Container auf Port **8097** — nicht 8096,
+  sonst entscheidet der Assistent live mit dem Kandidaten. 30 s je Lauf.
+  Dieselbe Messung auf der CPU lief über 20 min ohne Ergebnis (die
+  ziel-Sequenz trägt alle 70 Optionen); das Kopieren zum Fablab-Server
+  kroch mit ~1 MB/s. Fürs Training gilt das nicht (Falle 12).
+- Rauchtest nach dem Umschalten: Test-Set gegen den Live-Port, 350/18/3
+  reproduziert, keine Ausfälle.
