@@ -1426,6 +1426,7 @@ def run() -> None:
                             turn_speech_chunks = 0
                             turn_loud_chunks = 0
                             nur_wakewort_runde = False
+                            bargein_round = 0   # frischer Ruf, kein Barge-in (s. "keine Sprache" unten)
                             turn_rms = []
                             turn_frames_speech = 0
                             turn_frames_total = 0
@@ -1561,6 +1562,7 @@ def run() -> None:
                         turn_speech_chunks = 0
                         turn_loud_chunks = 0
                         nur_wakewort_runde = False
+                        bargein_round = 0   # frischer Ruf, kein Barge-in (s. "keine Sprache" unten)
                         turn_rms = []
                         turn_frames_speech = 0
                         turn_frames_total = 0
@@ -1716,6 +1718,10 @@ def run() -> None:
                         _flush_endpoint(ausgang="keine_sprache")
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
+                        # Sonst bliebe ein Barge-in ohne Sprache markiert, und der
+                        # NAECHSTE normale Ruf liefe als Barge-in — Aktuator
+                        # gesperrt (2026-10-05 16:59: "Tischlicht aus" -> Brain).
+                        bargein_round = 0
                         state = STATE_LISTENING
 
             # --- PROCESSING (STT running) ---
