@@ -93,6 +93,7 @@ def query(
     speaker: str | None = None,
     speaker_label: str | None = None,
     mood: dict | None = None,
+    hinweis: str | None = None,
     on_done=None,
     wrap: bool = True,
 ) -> str | None:
@@ -107,6 +108,8 @@ def query(
         Verhalten (Name oder "unbekannt").
     mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
+    hinweis: fertiger Hinweis-Block zur Aufnahme (z. B. locale.anrede_hinweis),
+        steht zwischen Transkript und Voice-Instruction.
     on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
     wrap: False = text unverändert senden (Systemnachrichten statt Mikrofon-Transkription).
     """
@@ -120,6 +123,8 @@ def query(
             f"Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. Beziehe das in dein "
             f"Verständnis und dein Vorgehen ein, ohne es zu überinterpretieren oder explizit zu benennen.]"
         )
+    if hinweis:
+        voice_input = f"{voice_input}\n\n{hinweis}"
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
     payload = json.dumps(
@@ -197,6 +202,7 @@ def query_stream(
     speaker: str | None = None,
     speaker_label: str | None = None,
     mood: dict | None = None,
+    hinweis: str | None = None,
     on_sentence: Callable[[str], None] | None = None,
     on_first_text: Callable[[], None] | None = None,
     control=None,  # state.TurnControl | None
@@ -209,6 +215,8 @@ def query_stream(
     speaker_label: Anzeigeform inkl. "Erkennung ausgefallen" (siehe query()).
     mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
+    hinweis: fertiger Hinweis-Block zur Aufnahme (z. B. locale.anrede_hinweis),
+        steht zwischen Transkript und Voice-Instruction.
     on_sentence: wird für jeden abgeschlossenen Satz aufgerufen (kann parallel sprechen).
     on_first_text: wird einmalig beim ersten Delta aufgerufen (z.B. ThinkingWorker stoppen).
     control/turn: Abbruch-Schranke des Turns (state.TurnControl). Die offene
@@ -233,6 +241,8 @@ def query_stream(
             f"Dominanz/dominance={d:.2f}. Skala 0–1, ~0.5 ist neutral. Beziehe das in dein "
             f"Verständnis und dein Vorgehen ein, ohne es zu überinterpretieren oder explizit zu benennen.]"
         )
+    if hinweis:
+        voice_input = f"{voice_input}\n\n{hinweis}"
     if voice_instruction:
         voice_input = f"{voice_input}\n\n{voice_instruction}"
 

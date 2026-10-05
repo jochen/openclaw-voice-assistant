@@ -150,6 +150,7 @@ class Workers:
         mood: dict | None = None,
         session: str | None = None,
         turn: int | None = None,
+        hinweis: str | None = None,
     ) -> threading.Thread:
         """session: Routing-Ziel des getriggerten Wakewords (x-openclaw-session-key).
         None → Fallback auf self.openclaw_session (Profil-Default).
@@ -160,7 +161,7 @@ class Workers:
             speaker = verdict_from_speaker(speaker)
         t = threading.Thread(
             target=self._openclaw_turn,
-            args=(user_text, speaker, mood, session, turn),
+            args=(user_text, speaker, mood, session, turn, hinweis),
             daemon=True,
         )
         t.start()
@@ -170,10 +171,10 @@ class Workers:
     def _openclaw_turn(
         self, user_text: str, speaker: SpeakerVerdict | None = None,
         mood: dict | None = None, session: str | None = None,
-        turn: int | None = None,
+        turn: int | None = None, hinweis: str | None = None,
     ) -> None:
         try:
-            self._run_openclaw_turn(user_text, speaker, mood, session, turn)
+            self._run_openclaw_turn(user_text, speaker, mood, session, turn, hinweis)
         finally:
             # Hat die Hauptschleife den Turn per Overall-Timeout schon verlassen,
             # setzt niemand mehr die LED nach dem (verspäteten) Sprechen zurück —
@@ -215,7 +216,7 @@ class Workers:
     def _run_openclaw_turn(
         self, user_text: str, speaker: SpeakerVerdict | None = None,
         mood: dict | None = None, session: str | None = None,
-        turn: int | None = None,
+        turn: int | None = None, hinweis: str | None = None,
     ) -> None:
         # Wakeword-Routing: session_key kommt vom getriggerten Wakeword
         # (assistant.py); None (z.B. altes Aufruf-Schema) fällt auf den
@@ -270,6 +271,7 @@ class Workers:
                 speaker=verdict.name,
                 speaker_label=speaker_label,
                 mood=mood,
+                hinweis=hinweis,
                 on_sentence=guarded_feed,
                 on_first_text=self.thinking.stop,
                 control=turn_control,
@@ -339,6 +341,7 @@ class Workers:
                 speaker=verdict.name,
                 speaker_label=speaker_label,
                 mood=mood,
+                hinweis=hinweis,
                 on_done=self.thinking.stop,
             )
 

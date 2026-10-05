@@ -320,6 +320,21 @@ Netz). Der Test haelt genau die Bruchlinie fest, an der es schiefging: jeder
 Fehlerweg muss `ausgefallen` ergeben, jeder gemessene Nicht-Treffer
 `unbekannt`. Verschmelzen die beiden wieder, ist das Loch lautlos zurueck.
 
+### Hinweis bei fehlender Anrede (`anrede_hinweis`, seit 2026-10-05)
+
+Fehltrigger durch Fernseher oder Gespräche im Raum werden **nicht verworfen**,
+sondern gehen mit einem Hinweis an den Brain (Jochen: „beim Schalten müsste
+das ein extrem dummer Zufall sein, das geht eh zum Brain"). `anrede.py` prüft
+im Erst-Turn, ob das Wakewort (oder ein Verhörer, aus dem Bundle-Namen)
+unter den ersten vier Wörtern steht. Fehlt es und ist der Sprecher nicht
+`bekannt`, hängt `locale.anrede_hinweis` hinter das Transkript; der Brain
+entscheidet am Inhalt, notfalls `NO_REPLY`. Gemessen: 0 von 11 Fernseh-Clips
+mit Anrede, 60 von 69 Aktuator-Kommandos mit. Die Regel ist bewusst eng
+(Anlaut + Länge), weil „hast", „ganz", „Jackson" sonst als Anrede zählen.
+Wirkung im Betrieb: `anrede_hinweis: true` in `wake_events.log` (outcome).
+Die Regel steht auch in der ausgerollten `AGENTS.md` und in beiden READMEs.
+Tests: `tests/test_anrede.py`.
+
 ## Abbruch mitten im Turn (`barge_in`, optional pro Profil)
 
 Bis zum 2026-09-20 gab es genau ein Zeitfenster für einen Abbruch: das

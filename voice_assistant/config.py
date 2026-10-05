@@ -91,12 +91,28 @@ _DEFAULT_VOICE_INSTRUCTION = (
 )
 
 
+# Hinter das Transkript gehängt, wenn anrede.anrede_im_text() nein sagt und der
+# Sprecher nicht bekannt ist — nur im Erst-Turn nach dem Wakewort. Ein Beleg,
+# keine Anweisung zum Schweigen: echte Befehle mit verhörtem Wakewort ("Das Tor,
+# schalt das Tischlicht aus") tragen denselben Hinweis, und der Inhalt zeigt,
+# dass sie gemeint sind.
+_DEFAULT_ANREDE_HINWEIS = (
+    "[Hinweis zur Aufnahme: Das Wakewort kommt in dieser Transkription nicht vor, "
+    "und der Sprecher ist nicht bekannt. Bisher war das fast immer eine "
+    "Fehlauslösung — Fernseher, Radio, Hörspiel oder ein Gespräch im Raum, das "
+    "nicht dir galt. Ist der Text erkennbar an dich gerichtet (eine Frage oder ein "
+    "Auftrag an den Assistenten), antworte normal. Sonst antworte ausschließlich "
+    "mit NO_REPLY.]"
+)
+
+
 @dataclass
 class LocaleConfig:
     wakeword_ack: str = "Ja?"
     confirmation_prefix: str = "Ich habe verstanden: "
     no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten."
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
+    anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     thinking_phrases: list = field(default_factory=lambda: [
         "Einen Moment bitte.",
         "Ich schaue kurz nach.",
@@ -453,6 +469,10 @@ class Profile:
     # Streaming-Antwort (/v1/responses mit stream=true): Sätze werden gesprochen,
     # sobald sie generiert sind. Bei Fehler automatischer Fallback auf non-streaming.
     openclaw_stream: bool = True
+    # Hinweis an den Brain, wenn im Erst-Turn das Wakewort im Transkript fehlt
+    # und der Sprecher nicht bekannt ist (voice_assistant/anrede.py). Der Text
+    # steht in locale.anrede_hinweis. Default aus.
+    anrede_hinweis: bool = False
 
     # Telegram
     telegram_bot_token: str = ""
@@ -795,6 +815,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         confirmation_prefix=str(locale_raw.get("confirmation_prefix", _dloc.confirmation_prefix)),
         no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
+        anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
 
@@ -826,6 +847,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         openclaw_token=str(raw.get("openclaw_token", "")),
         openclaw_session=str(raw.get("openclaw_session", "")),
         openclaw_stream=bool(raw.get("openclaw_stream", True)),
+        anrede_hinweis=bool(raw.get("anrede_hinweis", False)),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),

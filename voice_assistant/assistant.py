@@ -56,6 +56,7 @@ from voice_assistant.services.actuator import (
 )
 from voice_assistant.services.diarization import (
     STATUS_AUSGEFALLEN,
+    STATUS_BEKANNT,
     SpeachesDiarizer,
     SpeakerVerdict,
 )
@@ -96,6 +97,7 @@ from voice_assistant.state import (
 )
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
 from voice_assistant.wakeword.respeaker import RespeakerWakeword
+from voice_assistant.anrede import anrede_im_text
 from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
 from voice_assistant.nearmiss_shadow import NearMissShadow
 from voice_assistant.rewind import RewindBuffer
@@ -1915,6 +1917,11 @@ def run() -> None:
                         intent = None
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         aktuator_gesperrt = followup_round > 0 or bool(war_bargein)
+                        # Erst-Turn: diese Aufnahme beginnt mit dem Wakewort im
+                        # Pre-Roll (auch ein Barge-in). Nach "Ja?", in Follow-ups
+                        # und nach einer Rückfrage fehlt es zu Recht. Hier
+                        # festgehalten, weil die Zähler unten zurückgesetzt werden.
+                        erst_turn = followup_round == 0 and not unklar_round and not nur_wakewort_runde
                         # Klassifikation: entscheidet Gemma (Torfrage + classify)
                         # oder Laya (mit Gemma als Rueckfall), siehe
                         # actuator.klassifikator und services/aktuator_schatten.py.
@@ -2175,7 +2182,18 @@ def run() -> None:
                                 mood_label = ""
                             _flush_endpoint(text, speaker=spk_label, ausgang="brain")
                             print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
-                            _log_outcome("brain", transcript=text)
+                            # Fehltrigger-Hinweis (voice_assistant/anrede.py): kein
+                            # Filter, nur ein Beleg für den Brain, der am Inhalt
+                            # entscheidet, ob er gemeint ist.
+                            hinweis = None
+                            if (profile.anrede_hinweis and erst_turn
+                                    and spk_verdict.status != STATUS_BEKANNT
+                                    and not anrede_im_text(text, current_wakeword.bundle)):
+                                hinweis = profile.locale.anrede_hinweis
+                                print(f"[{now:.1f}s] 🗯️  Wakewort fehlt im Transkript, Sprecher "
+                                      f"{spk_label} → Hinweis an den Brain")
+                            _log_outcome("brain", transcript=text,
+                                         **({"anrede_hinweis": True} if hinweis else {}))
                             # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
                             # last_speaker nur bei positiver ID überschreiben — ein
                             # nicht zuordenbarer Kurz-Follow-up (spk=None) soll den
@@ -2192,6 +2210,7 @@ def run() -> None:
                             workers.start_openclaw_turn(
                                 text, speaker=spk_verdict, mood=mood,
                                 session=current_wakeword.session, turn=turn_nr,
+                                hinweis=hinweis,
                             )
                             state = STATE_WAITING
                             state_start = now

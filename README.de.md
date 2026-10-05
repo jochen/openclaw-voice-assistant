@@ -769,6 +769,10 @@ Diese Prompt-Direktive ist Anleitung, keine Durchsetzung. Durchgesetzt wird es i
 
 Manche 🎤-Nachrichten tragen eine Zeile mit `arousal` / `valence` / `dominance` (0–1, ~0.5 neutral), gemessen aus der Stimme — dem *Tonfall*, nicht dem Inhalt. Lass es dein Bild der Person und dein Vorgehen natürlich mitprägen, wie ein Mensch den Tonfall mitbekommt. Es ist grob; im Kontext deuten, nicht überinterpretieren, normalerweise nicht explizit benennen.
 
+### Hinweis zur Aufnahme (Fehlauslösung)
+
+Manche 🎤-Nachrichten tragen einen Block **[Hinweis zur Aufnahme …]**: das Wakewort fehlt in der Transkription, und der Sprecher ist nicht bekannt. Das ist ein Beleg, keine Anweisung zum Schweigen — meist war es eine Fehlauslösung (Fernseher, Radio, ein Gespräch im Raum), manchmal ein echter Ruf mit verhörtem Wakewort. Entscheide am Inhalt: Ist der Text erkennbar an dich gerichtet, antworte normal; sonst antworte ausschließlich mit `NO_REPLY` — dann bleibt der Kanal stumm.
+
 ### Stimme & Sprechtempo
 
 Du kannst deine Stimme und dein Tempo frei wählen und wechseln (`voice_list_voices`, `voice_set_voice`, `voice_set_speed`); gib den Namen eines Sprechers als `for_speaker` mit, um eine bevorzugte Stimme pro Person zu merken.
@@ -777,6 +781,8 @@ Du kannst deine Stimme und dein Tempo frei wählen und wechseln (`voice_list_voi
 Die ausgerollte `AGENTS.md` enthält die vollständige Fassung (inkl. Voice→Chat-Fortsetzung).
 
 Ist der [Voice-Aktuator](#voice-aktuator-optional) aktiv, gehört ein weiterer Punkt dazu: saubere Schaltbefehle erledigt er selbst, sie erreichen den Brain nie. Ein schaltender Satz, der trotzdem dort ankommt, wurde von der abgesicherten Stelle **nicht** als Kommando erkannt oder sie war nicht verfügbar — ein Grund für mehr Vorsicht, nicht für mehr Ehrgeiz. Geschaltet wird deshalb über [dieselbe abgesicherte Stelle](#derselbe-weg-für-den-brain-mcp) und nicht über die rohe Hausautomations-API: später in der Kette zu stehen gibt dem Brain keinen mächtigeren Weg, sondern denselben.
+
+Der Block **Hinweis zur Aufnahme** entsteht im Code, nicht im Modell: mit `anrede_hinweis: true` im Profil (Default aus) prüft `voice_assistant/anrede.py` im ersten Turn nach dem Wakewort, ob das Wakewort (oder ein Verhörer davon, aus dem Bundle-Namen abgeleitet) unter den ersten vier Wörtern steht. Fehlt es und ist der Sprecher nicht bekannt, wird `locale.anrede_hinweis` hinter das Transkript gehängt — in Follow-ups und nach „Ja?“ fehlt das Wakewort zu Recht, dort nie. Gemessen über 169 archivierte Aufnahmen: in keiner der 11 Fehlauslösungen durch Fernseher oder Gespräche im Raum stand eine Anrede, dagegen in 60 von 69 ausgeführten Schaltbefehlen. Bewusst kein Filter: ein Fehltrigger landet ohnehin beim Brain, und der urteilt am Inhalt besser als jede Regel.
 
 ## Sprechererkennung & Enrolment
 

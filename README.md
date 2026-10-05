@@ -752,6 +752,10 @@ This prompt directive is guidance, not enforcement. The enforcement lives in the
 
 Some 🎤 messages carry a line with `arousal` / `valence` / `dominance` values (0–1, ~0.5 neutral) measured from the voice — the *tone*, not the content. Let it inform your picture of the person and how you act, naturally, like a human picking up on someone's tone. It's rough; interpret in context, don't over-read, and don't usually name it out loud.
 
+### Recording hint (false trigger)
+
+Some 🎤 messages carry a **[recording hint …]** block: the wake word is missing from the transcript and the speaker is not known. That is evidence, not an order to stay silent — usually it was a false trigger (TV, radio, a conversation in the room), sometimes a real call with a misheard wake word. Decide on the content: if the text is clearly addressed to you, answer normally; otherwise reply with exactly `NO_REPLY` — the channel then stays silent.
+
 ### Voice & speaking rate
 
 You can freely choose and switch your own voice and speaking rate (`voice_list_voices`, `voice_set_voice`, `voice_set_speed`); pass a speaker's name as `for_speaker` to remember a preferred voice per person.
@@ -760,6 +764,8 @@ You can freely choose and switch your own voice and speaking rate (`voice_list_v
 The deployed `AGENTS.md` holds the full version (incl. voice → chat continuation handling).
 
 With the [voice actuator](#voice-actuator-optional) enabled, one more point belongs here: clean switching commands are handled by the actuator itself and never reach the brain. A switching sentence that arrives there anyway was **not** recognised as a command by the guarded path, or that path was unavailable — a reason for more caution, not more ambition. Switching therefore goes through [that same guarded path](#the-same-path-for-the-brain-mcp) rather than the raw home automation API: standing later in the chain gives the brain no more powerful route, only the same one.
+
+The **recording hint** block is produced by code, not by the model: with `anrede_hinweis: true` in the profile (default off), `voice_assistant/anrede.py` checks, in the first turn after the wake word, whether the wake word (or a mishearing of it, derived from the bundle name) is among the first four words. If it is missing and the speaker is not known, `locale.anrede_hinweis` is appended to the transcript — never in follow-ups or after the acknowledgement, where the wake word is rightly absent. Measured over 169 archived recordings: none of the 11 false triggers from TV or room conversation contained the wake word, while 60 of 69 executed switch commands did. Deliberately not a filter: a false trigger reaches the brain anyway, and it judges the content better than any rule. The default hint text is German; replace `locale.anrede_hinweis` for other languages.
 
 ## Speaker Recognition & Enrolment
 
