@@ -188,9 +188,12 @@ def _pruefe_aktions_mismatch(turn: dict) -> dict | None:
 
 
 def _pruefe_status_problem(turn: dict) -> dict | None:
-    """Status nicht „ausgefuehrt"."""
+    """Status nicht „ausgefuehrt" (oder „bereits")."""
     status = turn.get("status", "")
-    if status == "ausgefuehrt":
+    # "bereits" (seit 2026-10-05, ACTUATOR_INTERFACE.md): Ziel war schon im
+    # verlangten Zustand, Node-RED hat trotzdem gesendet und es angesagt —
+    # kein Problem der Gegenstelle. Ob es ein Verhörer war, prüft Argus mit "vorher".
+    if status in ("ausgefuehrt", "bereits"):
         return None
     return {
         "art": "STATUS_PROBLEM",
