@@ -443,13 +443,16 @@ heißt jetzt `~/laya-modelle/aktuator-v4`, ref-a `aktuator-v4a`. Test-Set
 | | richtig / verpasst / FALSCH |
 |---|---|
 | v3 (kennt `70866bd6` nicht) | 340 / 28 / 3 |
-| v4a (Seed 20260928) | 346 / 21 / 4 |
-| **v4** (Seed 7) | **350 / 18 / 3** |
+| v4a (Seed 20260928) | 347 / 21 / 3 |
+| **v4** (Seed 7) | **351 / 18 / 2** |
 
-- FALSCH v4: „Rollos bitte wieder überall auf“ → `alle_rollos` statt
-  `rollos_ganzes_haus` (v4a ebenso), „Wohnzimmer Rollo etwas nach unten“ →
-  **auf** (falsche Richtung), „Zwiebel-Rolo auf 50 Prozent“ → Rosazimmer
-  (geraten). v3s „Lohnsimmerrolle“ → Rosazimmer ist bei v4 weg.
+- Label korrigiert (Jochen 2026-10-06, testsets `541961c`): „Mach die
+  Rollos bitte wieder überall auf“ ist `alle_rollos`, nicht
+  `rollos_ganzes_haus` — „im ganzen Haus“ fehlt im Satz. Das Label vom
+  2026-10-01 sagte das Gegenteil; v4 und v4a hatten recht.
+- FALSCH v4: „Wohnzimmer Rollo etwas nach unten“ → **auf** (falsche
+  Richtung), „Zwiebel-Rolo auf 50 Prozent“ → Rosazimmer (geraten). v3s
+  „Lohnsimmerrolle“ → Rosazimmer ist bei v4 weg.
 - „Braubwasser“/„Badewasser“ → `regenwasser_weiche` (v3, v4a) bleibt
   FALSCH: Jochen meinte damals ein Gerät, das es in Node-RED nicht gab, nicht
   die Regenwasser-Weiche. Labels unverändert.
@@ -460,4 +463,4 @@ heißt jetzt `~/laya-modelle/aktuator-v4`, ref-a `aktuator-v4a`. Test-Set
   ziel-Sequenz trägt alle 70 Optionen); das Kopieren zum Fablab-Server
   kroch mit ~1 MB/s. Fürs Training gilt das nicht (Falle 12).
 - Rauchtest nach dem Umschalten: Test-Set gegen den Live-Port, 350/18/3
-  reproduziert, keine Ausfälle.
+  (altes Label) reproduziert, keine Ausfälle.
