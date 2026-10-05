@@ -63,6 +63,11 @@ class SpeachesStt:
         self.state = state
         self.base = base
         self.model = model
+        # Speaches bedient Parakeet (onnx-asr) nur mit "text"/"json" und lehnt
+        # verbose_json ab. Ohne Segmente gibt es kein no_speech_prob — der
+        # Halluzinations-Filter unten greift dann nie, das ist bekannt
+        # (Messreihe in tools/stt_vergleich.py).
+        self.response_format = "json" if "parakeet" in model.lower() else "verbose_json"
 
     def transcribe(self, wav_bytes: bytes) -> str | None:
         try:
@@ -98,7 +103,7 @@ class SpeachesStt:
             return None
 
     def transcribe_raw(self, wav_bytes: bytes, prompt: str | None = None) -> dict:
-        """Nur die Anfrage: verbose_json roh, Fehler als Exception.
+        """Nur die Anfrage: verbose_json (bzw. json, s. __init__) roh, Fehler als Exception.
 
         Ohne Halluzinations-Filter und OHNE Wirkung auf SpeachesState — für
         Nebenmessungen (Schatten-Aufnahme nach Near-Miss), deren Ausfall den
@@ -114,7 +119,7 @@ class SpeachesStt:
             f"de\r\n"
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="response_format"\r\n\r\n'
-            f"verbose_json\r\n"
+            f"{self.response_format}\r\n"
             f"--{boundary}\r\n"
             + (f'Content-Disposition: form-data; name="prompt"\r\n\r\n'
                f"{prompt}\r\n"

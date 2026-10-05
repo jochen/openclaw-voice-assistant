@@ -174,11 +174,39 @@ Messreihe
                 Ansprache ("Gaston, ... auf die Essensliste") — medium
                 verliert sie über no_speech_prob. Der Fernseh-Filter hängt
                 also an einer Whisper-Eigenheit, die selbst Fehler macht.
+                Nachtrag, gleicher Tag: Speaches 0.9.0-rc.3 bedient Parakeet
+                schon (onnx-asr, istupakov/parakeet-tdt-0.6b-v3-onnx; nur
+                response_format json, kein prompt). Gemessen in einem
+                Speaches-Container auf der 5060 Ti, medium daneben:
+
+                              = live verw. Text auf  Server-Latenz med/p90/max  richtig verp. FALSCH
+                medium            124   15   0/14        157 / 249 / 731         88     7     1
+                parakeet-onnx      20    7   9/14         66 /  94 / 223         83    11     1
+
+                Die ONNX-Fassung entspricht NeMo (83/12/0); ihr FALSCH ist
+                "Kirchenlicht" -> kleineszimmerlicht (bei NeMo dasselbe Wort,
+                dort "aus?" -> Brain). Medium im GLEICHEN Image trifft auf
+                der 5060 Ti nur 124/155 Live-Transkripte wortgleich — schon
+                die GPU-Generation verschiebt den Wortlaut, am Aktuator
+                ändert es nichts. Server-Latenz aus dem Speaches-Log; die
+                Rundreise ins Fablab (~1,3 s) ist Leitung, nicht Modell.
+
                 Ergebnis: medium bleibt, solange das Verwerfen an
                 no_speech_prob hängt. Ein Wechsel zu Qwen3-ASR-1.7B (+Kontext)
                 setzt ein eigenes Verwerfungs-Kriterium voraus (VAD-Anteil,
                 Pegel, Sprecher — ungemessen), und 0 FALSCH gegen 1 bei
                 96 Labels ist noch keine Signifikanz.
+
+                Revidiert (Jochen, 2026-10-05): Verwerfen ist kein Kriterium.
+                Ein Fehltrigger schaltet nichts, er geht zum Brain — und der
+                bekommt jetzt einen Hinweis, wenn das Wakewort im Transkript
+                fehlt (voice_assistant/anrede.py). Gemessen: VAD-Anteil und
+                Pegel trennen Fernsehton NICHT von echten Turns (Fernsehen
+                rms_median 140-374, echte 24-699), der Sprecher-Status nur
+                halb (alle 11 Fernseh-Clips "unbekannt", aber auch 72 von 158
+                echten Turns). Die fehlende Anrede trennt: 0/11 gegen 60/69.
+                Damit fällt die Hürde für Parakeet und Qwen; offen bleibt
+                ihr Abstand am Aktuator (Laya kennt ihre Verhörer nicht).
 """
 
 from __future__ import annotations
@@ -282,7 +310,8 @@ def export_wavs(ziel: str, ordner: str) -> int:
     return 0
 
 
-def speaches_lauf(modell: str, ziel: str, ordner: str, prompt: str | None = None) -> int:
+def speaches_lauf(modell: str, ziel: str, ordner: str, prompt: str | None = None,
+                  base: str | None = None) -> int:
     """Ein Modell über das Speaches des Profils, im Format von
     tools/stt_kandidaten.py — die Basislinie, die den Betrieb nachstellt.
     Ein faster-whisper auf einem anderen Rechner tut das NICHT (gemessen
@@ -290,11 +319,12 @@ def speaches_lauf(modell: str, ziel: str, ordner: str, prompt: str | None = None
     wortgleich mit live — faster-whisper 1.2.1/ctranslate2 4.8.2 dort,
     1.1.1/4.5.0 in Speaches 0.9.0-rc.3). `prompt` geht als initial_prompt an
     Whisper."""
-    stt = SpeachesStt(SpeachesState(), load_profile().speaches_base, modell)
+    stt = SpeachesStt(SpeachesState(), base or load_profile().speaches_base, modell)
     clips = sorted(glob.glob(os.path.join(ordner, "*_rec.wav")))
     transkribiere(stt, lies_wav(clips[0]))
     with open(ziel, "w", encoding="utf-8") as f:
-        f.write(json.dumps({"name": _kurz(modell) + (" +prompt" if prompt else "") + " (Speaches)",
+        wo = " (Speaches extern)" if base else " (Speaches)"
+        f.write(json.dumps({"name": _kurz(modell) + (" +prompt" if prompt else "") + wo,
                             "engine": "speaches", "modell": modell, "prompt": bool(prompt)}) + "\n")
         for i, pfad in enumerate(clips):
             t0 = time.monotonic()
@@ -424,6 +454,8 @@ def main() -> int:
     ap.add_argument("--speaches-lauf", metavar="JSONL",
                     help="Modell A über Speaches laufen lassen und im Format von "
                          "tools/stt_kandidaten.py ablegen (Basislinie für --transkripte)")
+    ap.add_argument("--speaches-url", help="mit --speaches-lauf: anderes Speaches als das des "
+                                           "Profils (z. B. ein Test-Container auf dem GPU-Rechner)")
     ap.add_argument("--prompt-datei", help="mit --speaches-lauf: Anfangs-Prompt für Whisper "
                                            "(z. B. die Gerätenamen; Datei außerhalb des Repos)")
     ap.add_argument("--modelle", nargs=2, default=_DEFAULT, metavar=("A", "B"))
@@ -439,7 +471,8 @@ def main() -> int:
         return export_wavs(args.export_wavs, args.ordner)
     if args.speaches_lauf:
         prompt = open(args.prompt_datei, encoding="utf-8").read().strip() if args.prompt_datei else None
-        return speaches_lauf(args.modelle[0], args.speaches_lauf, args.ordner, prompt)
+        return speaches_lauf(args.modelle[0], args.speaches_lauf, args.ordner, prompt,
+                             args.speaches_url)
     if args.transkripte:
         return transkripte_auswerten(args.transkripte, args.ohne_aktuator, args.json)
 
