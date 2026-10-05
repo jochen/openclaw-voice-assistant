@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
+import re
 import queue
 import urllib.error
 import urllib.request
@@ -183,6 +185,77 @@ class OnnxAsrStt:
             return None
 
 
+def _norm_leck(s: str) -> str:
+    return re.sub(r"[^\wäöüß]+", " ", (s or "").lower()).strip()
+
+
+def ist_kontext_leck(text: str, kontext: str | None) -> bool:
+    """Hat das Modell statt des Gesagten den Kontext abgeschrieben?
+
+    Qwen3-ASR gibt in ~2 % der Aufnahmen die Geräteliste als Transkript aus
+    (gemessen 3 von 169, darunter zweimal ein echtes "Tischlicht an"). Der
+    Text beginnt dann wortgleich wie der Kontext — 40 Zeichen davon sagt kein
+    Mensch, und ein echter Satz, der mit dem Wakewort anfängt, weicht nach
+    wenigen Wörtern ab.
+    """
+    if not kontext or not text:
+        return False
+    k = _norm_leck(kontext)[:40]
+    return len(k) >= 20 and _norm_leck(text).startswith(k)
+
+
+class LlamaCppAsrStt:
+    """STT über einen llama-server mit Audio-Modell (Qwen3-ASR), seit 2026-10-05.
+
+    `kontext` liefert bei jedem Aufruf den Text, der dem Modell als
+    Systemnachricht mitgegeben wird — hier die Gerätenamen aus /capabilities,
+    damit es "Wohnzimmerrollo" schreibt statt "Lohnsimmerrolle". Gemessen
+    (tools/stt_vergleich.py): mit Kontext 93/2/0 am Aktuator, ohne 87/7/1.
+    Schreibt das Modell den Kontext ab (ist_kontext_leck), wird dieselbe
+    Aufnahme ohne Kontext erneut erkannt: 94/1/0.
+
+    Zahlen kommen als Wörter ("fünfzig Prozent"); der Werteleser des
+    Aktuators liest sie. Kein no_speech_prob — siehe OnnxAsrStt.
+    """
+
+    def __init__(self, url: str, kontext=None, timeout: float = 15.0) -> None:
+        self.url = url.rstrip("/")
+        self.kontext = kontext              # () -> str | None
+        self.timeout = timeout
+        self.state = SpeachesState()        # nur für stt_ok()/Cooldown-Semantik
+
+    def _anfrage(self, wav_bytes: bytes, kontext: str | None) -> str:
+        msgs = ([{"role": "system", "content": kontext}] if kontext else []) + [
+            {"role": "user", "content": [{
+                "type": "input_audio",
+                "input_audio": {"data": base64.b64encode(wav_bytes).decode(), "format": "wav"}}]}]
+        req = urllib.request.Request(
+            f"{self.url}/v1/chat/completions",
+            data=json.dumps({"messages": msgs, "temperature": 0, "max_tokens": 400}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            text = json.loads(resp.read())["choices"][0]["message"]["content"] or ""
+        # Qwen3-ASR antwortet "language German<asr_text>…"
+        return text.split("<asr_text>", 1)[-1].strip()
+
+    def transcribe(self, wav_bytes: bytes) -> str | None:
+        try:
+            kontext = self.kontext() if self.kontext else None
+            text = self._anfrage(wav_bytes, kontext)
+            if ist_kontext_leck(text, kontext):
+                print("⚠️  Qwen hat den Kontext abgeschrieben → noch einmal ohne")
+                text = self._anfrage(wav_bytes, None)
+            self.state.mark_stt_ok()
+            if text:
+                print(f"🗣  [qwen3-asr] Erkannt: '{text}'")
+            return text or None
+        except Exception as e:
+            print(f"⚠️  llama.cpp STT error: {e}")
+            self.state.mark_stt_failed()
+            return None
+
+
 class LocalWhisperStt:
     """Fallback-STT mit faster-whisper (CPU)."""
 
@@ -211,21 +284,27 @@ class LocalWhisperStt:
 
 
 class SttPipeline:
-    """Kapselt [onnx-asr →] Speaches → Whisper-Fallback in einem Aufruf."""
+    """Kapselt [llama.cpp →] [onnx-asr →] Speaches → Whisper-Fallback in einem Aufruf."""
 
     def __init__(self, speaches_stt: SpeachesStt, local_stt: LocalWhisperStt,
-                 onnx_stt: OnnxAsrStt | None = None) -> None:
+                 onnx_stt: OnnxAsrStt | None = None,
+                 llamacpp_stt: LlamaCppAsrStt | None = None) -> None:
         self.speaches = speaches_stt
         self.local = local_stt
         self.onnx = onnx_stt
+        self.llamacpp = llamacpp_stt
 
     def run(self, audio_chunks: list[np.ndarray], out: queue.Queue) -> None:
-        if self.onnx is not None and self.onnx.state.stt_ok():
-            text = self.onnx.transcribe(chunks_to_wav_bytes(audio_chunks, normalize=True))
-            if text is not None or self.onnx.state.stt_ok():
+        wav = None
+        for name, engine in (("llama.cpp", self.llamacpp), ("onnx-asr", self.onnx)):
+            if engine is None or not engine.state.stt_ok():
+                continue
+            wav = wav or chunks_to_wav_bytes(audio_chunks, normalize=True)
+            text = engine.transcribe(wav)
+            if text is not None or engine.state.stt_ok():
                 out.put(text)               # None = keine Sprache erkannt, kein Fehler
                 return
-            print("⚠️  onnx-asr STT failed → falling back to Speaches")
+            print(f"⚠️  {name} STT failed → nächste Stufe")
         if self.speaches.state.stt_ok():
             print("🔄 STT: trying Speaches...")
             wav_bytes = chunks_to_wav_bytes(audio_chunks, normalize=True)

@@ -72,7 +72,7 @@ from voice_assistant.services.leds import (
 )
 from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import (
-    LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
+    LlamaCppAsrStt, LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
 )
 from voice_assistant.services.tts import (
     ReplySpeaker,
@@ -946,7 +946,32 @@ def run() -> None:
             # Ohne das Modell läuft alles wie vorher über Speaches — kein Grund,
             # den Assistenten nicht zu starten.
             print(f"⚠️  {profile.stt_onnx_model} nicht ladbar ({e}) → Speaches zuerst")
-    stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt)
+    llamacpp_stt = None
+    if profile.stt_llamacpp_url:
+        def _stt_kontext() -> str | None:
+            # Wakewort + je Ziel der erste Name, in Digest-Reihenfolge — genau
+            # die Form, mit der gemessen wurde (tools/stt_vergleich.py). Liest
+            # den Aktuator beim Aufruf: er entsteht erst weiter unten, und die
+            # Ziele ändern sich mit jedem capabilities-Refresh.
+            try:
+                if actuator is None or not actuator.ziele:
+                    return None
+            except NameError:               # vor dem Anlegen des Aktuators
+                return None
+            namen: list[str] = []
+            for z in actuator.ziele:
+                n = (z.get("namen") or [None])[0]
+                if n and n not in namen:
+                    namen.append(n)
+            wort = profile.wakewords[0].bundle.replace("_", " ").title()
+            return f"{wort}, " + ", ".join(namen) + "."
+        llamacpp_stt = LlamaCppAsrStt(
+            profile.stt_llamacpp_url,
+            kontext=_stt_kontext if profile.stt_llamacpp_kontext else None,
+        )
+        print(f"✅ STT über llama.cpp: {profile.stt_llamacpp_url}"
+              + (" (mit Gerätenamen als Kontext)" if profile.stt_llamacpp_kontext else ""))
+    stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt, llamacpp_stt)
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
     thinking = ThinkingWorker(
         audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts

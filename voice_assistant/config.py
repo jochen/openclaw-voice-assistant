@@ -466,6 +466,12 @@ class Profile:
     # Messwerkzeuge. Siehe services/stt.OnnxAsrStt.
     stt_onnx_model: str = ""
     stt_onnx_threads: int = 8
+    # STT über einen llama-server mit Audio-Modell (Qwen3-ASR), VOR onnx-asr
+    # und Speaches. Leer = aus. Mit stt_llamacpp_kontext bekommt das Modell
+    # Wakewort + Gerätenamen aus /capabilities mit (gemessen deutlich besser
+    # bei Gerätenamen). Siehe services/stt.LlamaCppAsrStt.
+    stt_llamacpp_url: str = ""
+    stt_llamacpp_kontext: bool = True
     speaches_tts_model: str = ""
     speaches_tts_voice: str = ""
 
@@ -850,6 +856,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         speaches_stt_model=str(raw.get("speaches_stt_model", "")),
         stt_onnx_model=str(raw.get("stt_onnx_model", "") or ""),
         stt_onnx_threads=int(raw.get("stt_onnx_threads", 8)),
+        stt_llamacpp_url=str(raw.get("stt_llamacpp_url", "") or ""),
+        stt_llamacpp_kontext=bool(raw.get("stt_llamacpp_kontext", True)),
         speaches_tts_model=str(raw.get("speaches_tts_model", "")),
         speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
         openclaw_token=str(raw.get("openclaw_token", "")),

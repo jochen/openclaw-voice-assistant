@@ -10,7 +10,7 @@ Wakeword-driven voice assistant for Raspberry Pi. Connects local speech input to
 Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
   → openWakeWord ("hey jarvis")
   → WebRTC VAD + recording (max 30 s)
-  → STT: Speaches /v1/audio/transcriptions  (fallback: faster-whisper local)
+  → STT: [llama.cpp audio model →] [onnx-asr →] Speaches  (fallback: faster-whisper local)
   → Diarization (parallel): Speaches /v1/audio/diarization with known speakers
   → Voice actuator (optional): a switching command? → run locally (~0.5 s), skip the rest
   → Confirmation TTS ("I understood…") — parallel thread
@@ -860,6 +860,21 @@ Diarization: `POST {speaches_base}/v1/audio/diarization` — models `Wespeaker/w
 - STT fallback: `faster-whisper` (model `small`, runs on the Pi)
 - TTS fallback: Piper (`~/.local/share/piper/de_DE-thorsten-low.onnx`)
 - Diarization has no local fallback — falls through to "speaker: unknown"
+
+### Other STT engines (optional)
+
+Speaches only serves Whisper-family models well. Two profile options put another engine **in front of** it; each falls through to the next stage on an error, an empty result means "no speech":
+
+```yaml
+stt_llamacpp_url: http://127.0.0.1:8094          # llama-server with an audio model, e.g.
+                                                 #   ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0
+stt_llamacpp_kontext: true                       # send wake word + device names as context
+stt_onnx_model: istupakov/parakeet-tdt-0.6b-v3-onnx   # onnx-asr, in-process, CPU
+```
+
+Order: llama.cpp → onnx-asr → Speaches → local faster-whisper. With the actuator enabled, the context is the wake word plus the first name of every target from `/capabilities`; the model then spells device names correctly instead of guessing. If it copies the context instead of transcribing (it happens, rarely), the same recording is transcribed again without it. Neither engine reports `no_speech_prob`, so the Whisper hallucination filter does not apply; false triggers reach the brain with a hint instead (`anrede_hinweis`).
+
+**Choose by measurement, not by leaderboard.** Without reference transcripts, an STT model can still be judged by its *effect*: run its transcripts through the actuator and compare with labelled intents (`tools/stt_vergleich.py --transkripte`, candidates on another GPU via `tools/stt_kandidaten.py`). For plain text quality you need a few dozen sentences checked by ear — blind, without model names, and not only the ones where models disagree (that selection made one model look ten times better than it was). Run the Whisper baseline through the same Speaches you use live: the same model in another faster-whisper/ctranslate2 version, or on another GPU generation, produces different wording.
 
 ### Piper TTS (local fallback)
 

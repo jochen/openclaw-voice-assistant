@@ -665,6 +665,36 @@ weiterhin Vorrang vor der Wakeword-Stimme).
 STT/TTS beide nutzen 60-Sekunden-Cooldown nach Fehler vor erneutem
 Speaches-Versuch (`services/speaches.py:SpeachesState`).
 
+### STT-Kette (seit 2026-10-05)
+
+**Qwen3-ASR → Parakeet → Speaches/medium → faster-whisper-small**, jede
+Stufe fällt bei Fehler auf die nächste (`SttPipeline`). Qwen läuft als
+Container `llamacpp-qwenasr` (openclaw-voice-stack, Q8, Port 8094) und bekommt
+Wakewort + je Ziel den ersten Namen aus `/capabilities` als Kontext
+(`stt_llamacpp_url`, `services/stt.LlamaCppAsrStt`, Leck-Schutz
+`ist_kontext_leck`). Parakeet rechnet im Assistenten auf der CPU
+(`stt_onnx_model`, `OnnxAsrStt`). `speaches_stt_model` bleibt medium — das ist
+auch das Modell der Messwerkzeuge.
+
+Gemessen (Messreihe im Docstring von `tools/stt_vergleich.py`, Hörproben in
+`testsets/stt_referenz.jsonl`): am Aktuator Qwen 93/2/0, medium 88/7/1,
+Parakeet 83/11/1; bei Brain-Fragen Qwen ≈ medium, Parakeet schwächer. Qwen
+schreibt wortgetreu (Wiederholungen, Satzabbrüche) — **Transkripte nie „nach
+Sinn“ bewerten**, das hat am 2026-10-05 drei richtige Qwen-Sätze zu
+„erfunden“ erklärt. Nur blind gehört zählt.
+
+Grafikspeicher (3060 Ti, 8 GB) reicht nur, weil **ser auf der CPU** läuft
+(openclaw-voice-stack `384f117`): Qwen ~3,1 GB, Laya 1,8, Speaches (medium,
+Piper, Diarization) Rest; Lasttest-Spitze 7,0 GB. Alles auf der GPU mit ser:
+Qwen OOM bzw. Speaches-Diarization HTTP 500. Die Stimmungsanalyse bekommt
+nur die ersten 10 s (`workers._MOOD_MAX_SEC`), sonst überschreitet ser auf
+der CPU bei langen Aufnahmen die 2-s-Wartegrenze.
+
+Offen: Sprechererkennung braucht live ~2 s (volle Diarization je Turn).
+Sprecher-Verifikation per WeSpeaker-Embedding auf der CPU wäre ~53 ms und
+erkennt Jochen öfter — Schwelle ist eine Sicherheitsentscheidung, braucht
+gehörte Labels (MemPalace `openclaw_voice_assist/technical`, 2026-10-05).
+
 ## State Machine
 
 Fünf Zustände in der Hauptschleife (`voice_assistant/assistant.py`):
