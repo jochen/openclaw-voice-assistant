@@ -160,7 +160,8 @@ Antwort soll dadurch keine Millisekunde langsamer werden. Lieber kein `vorher`
 als ein langsames.
 
 **Status `bereits`** — das Ziel ist schon im verlangten Zustand. Die ausführende
-Seite schaltet dann **nicht** und sagt das in `gesprochen`:
+Seite schaltet dann nicht (oder sendet den harmlosen Befehl trotzdem, siehe
+unten) und sagt das in `gesprochen`:
 
 ```json
 { "status": "bereits", "request_id": "…",
@@ -181,9 +182,19 @@ Grenzen, die die ausführende Seite kennen muss:
 - Nur für Einzelziele mit klarem Zustand (licht, schalter; rollo bei `auf`/`zu`
   mit kleiner Toleranz, etwa ±3 Prozentpunkte). **Nicht** bei Gruppen, Szenen,
   Abläufen und nicht bei einem Rollo, das gerade fährt.
-- Ist der Zustand älter als ein paar Sekunden oder unbekannt: normal schalten.
-  Ein veralteter Zustand darf höchstens eine überflüssige Ansage kosten, nie
-  einen ausgelassenen Befehl, den jemand gerade wirklich will.
+- `bereits` nur, wenn der Zustand **sicher** bekannt ist — nicht „jung“. Ein
+  Gerät, das Änderungen zuverlässig meldet und erreichbar ist, ist auch nach
+  Stunden sicher; unsicher ist etwa: nicht verfügbar, meldet nicht zuverlässig,
+  Befehl unterwegs, Rollo fährt, eben erst von jemand anderem geschaltet. Die
+  Einordnung je Gerätetyp trifft die ausführende Seite. Grund ist die
+  Asymmetrie: ein ausgelassenes `bereits` ist der harmlose Status quo, ein
+  falsches `bereits` verschluckt einen gewollten Befehl und sagt dazu das
+  Falsche an.
+- Wer das Risiko ganz herausnehmen will, **sendet den Befehl trotzdem** (ein
+  „aus“ an ein ausgeschaltetes Licht ist harmlos und heilt einen falsch
+  gemerkten Zustand) und sagt dennoch „… war schon aus“ an; dann `ausgefuehrt`
+  wie gewohnt füllen. Ein falsch angenommener Zustand kostet so höchstens eine
+  unpassende Ansage, nie einen verlorenen Befehl.
 - `bereits` fängt nur Verhörer, die nichts geändert hätten. War das falsche Ziel
   im anderen Zustand, wird es geschaltet; das sieht dann der Überwacher, der
   `vorher` im Aktuator-Log findet.
