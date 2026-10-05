@@ -97,7 +97,7 @@ class SpeachesStt:
             self.state.mark_stt_failed()
             return None
 
-    def transcribe_raw(self, wav_bytes: bytes) -> dict:
+    def transcribe_raw(self, wav_bytes: bytes, prompt: str | None = None) -> dict:
         """Nur die Anfrage: verbose_json roh, Fehler als Exception.
 
         Ohne Halluzinations-Filter und OHNE Wirkung auf SpeachesState — für
@@ -116,7 +116,10 @@ class SpeachesStt:
             f'Content-Disposition: form-data; name="response_format"\r\n\r\n'
             f"verbose_json\r\n"
             f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
+            + (f'Content-Disposition: form-data; name="prompt"\r\n\r\n'
+               f"{prompt}\r\n"
+               f"--{boundary}\r\n" if prompt else "")
+            + f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
             f"Content-Type: audio/wav\r\n\r\n"
         ).encode() + wav_bytes + f"\r\n--{boundary}--\r\n".encode()
 
