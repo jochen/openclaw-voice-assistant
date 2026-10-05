@@ -793,6 +793,8 @@ Jede Aufnahme läuft parallel zur STT durch die Speaches-Diarization. Der domina
 🎤 [Sprecher: unbekannt] Wie wird das Wetter?
 ```
 
+**Schnellere Alternative: Sprecher-Verifikation** (`sprecher_verifikation: true`). Statt einer vollen Diarization je Turn (Segmentierung, Fingerabdruck, Clustering — live rund 2 s, und kurze Sätze brauchen oft einen zweiten Durchlauf) wird ein Stimm-Fingerabdruck der ganzen Aufnahme auf der CPU mit den angelernten Referenzen verglichen (~50 ms, dasselbe WeSpeaker-Modell). Als bekannt gilt nur, wer über `sprecher_schwelle` liegt **und** mindestens `sprecher_abstand` vor der zweitbesten Referenz. Das Anlernen über den Brain funktioniert unverändert; eine geänderte Referenz-Datei wirkt ohne Neustart. Die Standard-Schwelle (0,40) ist gegen blind per Ohr geprüfte Labels gewählt, sodass keine Aufnahme der falschen Person zugeordnet wurde — mit eigenen Stimmen per `tools/sprecher_verifikation_test.py` nachmessen, bevor man ihr traut; die Sprecher-Schranke hängt daran.
+
 ### Workspace-Layout
 
 ```

@@ -776,6 +776,8 @@ Each recording runs through Speaches diarization in parallel to STT. The dominan
 🎤 [Sprecher: unbekannt] How is the weather?
 ```
 
+**Faster alternative: speaker verification** (`sprecher_verifikation: true`). Instead of a full diarization per turn (segmentation, embedding, clustering — around 2 s live, and short sentences often need a second pass), one voice embedding of the whole recording is compared with the enrolled references on the CPU (~50 ms, same WeSpeaker model). A speaker counts as known only above `sprecher_schwelle` **and** with `sprecher_abstand` ahead of the next-best reference. Enrolment via the brain works unchanged; a changed reference file is picked up without a restart. The default threshold (0.40) was chosen against blind, ear-checked labels so that no recording was attributed to the wrong person — measure again with `tools/sprecher_verifikation_test.py` for your own voices before trusting it; the speaker gate depends on it.
+
 ### Workspace layout
 
 ```

@@ -315,6 +315,21 @@ was tatsaechlich passiert ist: eine Rationalisierung. Die echte Grenze waere,
 Power-Aktionen hinter einen Dienst zu legen, den der Agent nicht als derselbe
 Benutzer erreicht. Offen.
 
+**Sprecher-Verifikation statt Diarization (`sprecher_verifikation`, seit
+2026-10-05).** `services/sprecher_verifikation.py`: ein WeSpeaker-Fingerabdruck
+der ganzen Aufnahme auf der CPU (~50 ms, gleiches Modell und gleicher
+Rechenweg wie Speaches — Abweichung zur Messung 0,000000), Kosinus gegen
+`voice/speakers/*.wav`. `bekannt` nur ab Schwelle 0,40 UND 0,15 Abstand zur
+zweitbesten Stimme. Gemessen gegen 33 blind gehörte Aufnahmen
+(`testsets/sprecher_labels.jsonl`, Audio gesichert in
+`voice/corpus_sprecher/`) + Fernseh-Clips: 0 falsch zugeordnet; die
+Diarization hatte von 27 gehörten Jochen-Aufnahmen nur 2 erkannt.
+Wiederholen kurzer Aufnahmen (der Diarization-Trick) hilft hier nicht —
+gemessen. Anlernen über den Brain (`voice_enroll_speaker`) bleibt; eine
+geänderte Referenz wird ohne Neustart neu berechnet. **Schwelle nur gegen
+`tools/sprecher_verifikation_test.py` ändern**, FALSCH muss 0 bleiben.
+Tests: `tests/test_sprecher_verifikation.py`.
+
 **Aenderungen hier nur gegen `tests/test_speaker_verdict.py`** (14 Tests, ohne
 Netz). Der Test haelt genau die Bruchlinie fest, an der es schiefging: jeder
 Fehlerweg muss `ausgefallen` ergeben, jeder gemessene Nicht-Treffer
@@ -690,10 +705,8 @@ Qwen OOM bzw. Speaches-Diarization HTTP 500. Die Stimmungsanalyse bekommt
 nur die ersten 10 s (`workers._MOOD_MAX_SEC`), sonst überschreitet ser auf
 der CPU bei langen Aufnahmen die 2-s-Wartegrenze.
 
-Offen: Sprechererkennung braucht live ~2 s (volle Diarization je Turn).
-Sprecher-Verifikation per WeSpeaker-Embedding auf der CPU wäre ~53 ms und
-erkennt Jochen öfter — Schwelle ist eine Sicherheitsentscheidung, braucht
-gehörte Labels (MemPalace `openclaw_voice_assist/technical`, 2026-10-05).
+Sprechererkennung: siehe „Sprecher-Verifikation“ unten — statt ~2 s
+Diarization ~50 ms auf der CPU.
 
 ## State Machine
 

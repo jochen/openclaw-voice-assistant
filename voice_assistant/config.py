@@ -472,6 +472,12 @@ class Profile:
     # bei Gerätenamen). Siehe services/stt.LlamaCppAsrStt.
     stt_llamacpp_url: str = ""
     stt_llamacpp_kontext: bool = True
+    # Sprechererkennung per Stimm-Fingerabdruck auf der CPU statt Diarization
+    # über Speaches (services/sprecher_verifikation.py). Default aus. Schwelle
+    # und Abstand nur gegen tools/sprecher_verifikation_test.py ändern.
+    sprecher_verifikation: bool = False
+    sprecher_schwelle: float = 0.40
+    sprecher_abstand: float = 0.15
     speaches_tts_model: str = ""
     speaches_tts_voice: str = ""
 
@@ -858,6 +864,9 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         stt_onnx_threads=int(raw.get("stt_onnx_threads", 8)),
         stt_llamacpp_url=str(raw.get("stt_llamacpp_url", "") or ""),
         stt_llamacpp_kontext=bool(raw.get("stt_llamacpp_kontext", True)),
+        sprecher_verifikation=bool(raw.get("sprecher_verifikation", False)),
+        sprecher_schwelle=float(raw.get("sprecher_schwelle", 0.40)),
+        sprecher_abstand=float(raw.get("sprecher_abstand", 0.15)),
         speaches_tts_model=str(raw.get("speaches_tts_model", "")),
         speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
         openclaw_token=str(raw.get("openclaw_token", "")),

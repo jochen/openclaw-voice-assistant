@@ -61,6 +61,7 @@ from voice_assistant.services.diarization import (
     SpeakerVerdict,
 )
 from voice_assistant.services.speaker_state import write_current_speaker
+from voice_assistant.services.sprecher_verifikation import SprecherVerifikation
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
@@ -977,6 +978,14 @@ def run() -> None:
         audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts
     )
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
+    if profile.sprecher_verifikation:
+        try:
+            diarizer = SprecherVerifikation(profile.sprecher_schwelle, profile.sprecher_abstand)
+            print(f"✅ Sprecher-Verifikation (CPU): Schwelle {profile.sprecher_schwelle:.2f}, "
+                  f"Abstand {profile.sprecher_abstand:.2f}")
+        except Exception as e:
+            # Ohne Modell bleibt die Diarization — kein Grund, nicht zu starten.
+            print(f"⚠️  Sprecher-Verifikation nicht ladbar ({e}) → Diarization über Speaches")
     if not VOICE_ANALYSIS_BASE:
         # Bis 2026-07 war das eine Konstante im Code. Wer von einer älteren
         # Fassung aktualisiert, verliert die Analyse sonst wortlos.
