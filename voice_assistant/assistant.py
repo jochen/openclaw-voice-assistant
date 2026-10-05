@@ -71,7 +71,9 @@ from voice_assistant.services.leds import (
     LedDirector, RespeakerRing, WledLeds,
 )
 from voice_assistant.services.speaches import SpeachesState
-from voice_assistant.services.stt import LocalWhisperStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes
+from voice_assistant.services.stt import (
+    LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
+)
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -936,7 +938,15 @@ def run() -> None:
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
     # --- Services zusammenstecken ---
-    stt_pipeline = SttPipeline(speaches_stt, local_stt)
+    onnx_stt = None
+    if profile.stt_onnx_model:
+        try:
+            onnx_stt = OnnxAsrStt(profile.stt_onnx_model, profile.stt_onnx_threads)
+        except Exception as e:
+            # Ohne das Modell läuft alles wie vorher über Speaches — kein Grund,
+            # den Assistenten nicht zu starten.
+            print(f"⚠️  {profile.stt_onnx_model} nicht ladbar ({e}) → Speaches zuerst")
+    stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt)
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
     thinking = ThinkingWorker(
         audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts

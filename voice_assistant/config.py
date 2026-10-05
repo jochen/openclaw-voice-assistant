@@ -460,6 +460,12 @@ class Profile:
     # Speaches
     speaches_base: str = ""
     speaches_stt_model: str = ""
+    # STT im eigenen Prozess (onnx-asr, CPU) VOR Speaches, z. B.
+    # "istupakov/parakeet-tdt-0.6b-v3-onnx". Leer = aus, Speaches zuerst wie
+    # bisher. speaches_stt_model bleibt dann Rückfall und das Modell der
+    # Messwerkzeuge. Siehe services/stt.OnnxAsrStt.
+    stt_onnx_model: str = ""
+    stt_onnx_threads: int = 8
     speaches_tts_model: str = ""
     speaches_tts_voice: str = ""
 
@@ -842,6 +848,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         leds=leds,
         speaches_base=str(raw.get("speaches_base", "")),
         speaches_stt_model=str(raw.get("speaches_stt_model", "")),
+        stt_onnx_model=str(raw.get("stt_onnx_model", "") or ""),
+        stt_onnx_threads=int(raw.get("stt_onnx_threads", 8)),
         speaches_tts_model=str(raw.get("speaches_tts_model", "")),
         speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
         openclaw_token=str(raw.get("openclaw_token", "")),

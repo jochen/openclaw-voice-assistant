@@ -138,6 +138,51 @@ class SpeachesStt:
             return json.loads(resp.read())
 
 
+class OnnxAsrStt:
+    """STT im eigenen Prozess über onnx-asr, auf der CPU (seit 2026-10-05).
+
+    Für Parakeet-TDT-0.6B-v3: auf der CPU ~0,2–0,3 s je Aufnahme, schneller
+    als medium live auf der GPU (0,36 s). Auf die GPU passt es nicht: Speaches
+    lädt nur die fp32-Fassung (~2,4 GB Gewichte), neben Laya, ser und
+    Speaches selbst bleiben auf der 3060 Ti keine 3 GB — gemessen, HTTP 500
+    aus der ONNX-Arena. Vergleich mit medium: tools/stt_vergleich.py.
+
+    Gleiche Schnittstelle wie SpeachesStt (state, transcribe(wav_bytes)), damit
+    SttPipeline beide gleich behandelt. Kein Halluzinations-Filter: Parakeet
+    liefert kein no_speech_prob. Fehltrigger gehen zum Brain, der einen
+    Hinweis bekommt, wenn das Wakewort fehlt (voice_assistant/anrede.py).
+    """
+
+    def __init__(self, model: str, threads: int = 8) -> None:
+        import onnx_asr  # type: ignore[import-not-found]
+        import onnxruntime as ort  # type: ignore[import-not-found]
+
+        print(f"🔧 Loading {model} (onnx-asr, CPU, {threads} Threads)...")
+        so = ort.SessionOptions()
+        # Nicht alle Kerne: Wakeword und Audio laufen im selben Prozess weiter.
+        so.intra_op_num_threads = threads
+        so.inter_op_num_threads = 1
+        self.model_name = model
+        self.model = onnx_asr.load_model(model, providers=["CPUExecutionProvider"], sess_options=so)
+        self.state = SpeachesState()        # nur für stt_ok()/Cooldown-Semantik
+        print(f"✅ {model} ready")
+
+    def transcribe(self, wav_bytes: bytes) -> str | None:
+        try:
+            with wave.open(io.BytesIO(wav_bytes)) as w:
+                audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+            text = self.model.recognize(audio.astype(np.float32) / 32768.0, sample_rate=16000)
+            text = (text or "").strip()
+            self.state.mark_stt_ok()
+            if text:
+                print(f"🗣  [{self.model_name.split('/')[-1]}] Erkannt: '{text}'")
+            return text or None
+        except Exception as e:
+            print(f"⚠️  onnx-asr STT error: {e}")
+            self.state.mark_stt_failed()
+            return None
+
+
 class LocalWhisperStt:
     """Fallback-STT mit faster-whisper (CPU)."""
 
@@ -166,13 +211,21 @@ class LocalWhisperStt:
 
 
 class SttPipeline:
-    """Kapselt Speaches + Whisper-Fallback in einem Aufruf."""
+    """Kapselt [onnx-asr →] Speaches → Whisper-Fallback in einem Aufruf."""
 
-    def __init__(self, speaches_stt: SpeachesStt, local_stt: LocalWhisperStt) -> None:
+    def __init__(self, speaches_stt: SpeachesStt, local_stt: LocalWhisperStt,
+                 onnx_stt: OnnxAsrStt | None = None) -> None:
         self.speaches = speaches_stt
         self.local = local_stt
+        self.onnx = onnx_stt
 
     def run(self, audio_chunks: list[np.ndarray], out: queue.Queue) -> None:
+        if self.onnx is not None and self.onnx.state.stt_ok():
+            text = self.onnx.transcribe(chunks_to_wav_bytes(audio_chunks, normalize=True))
+            if text is not None or self.onnx.state.stt_ok():
+                out.put(text)               # None = keine Sprache erkannt, kein Fehler
+                return
+            print("⚠️  onnx-asr STT failed → falling back to Speaches")
         if self.speaches.state.stt_ok():
             print("🔄 STT: trying Speaches...")
             wav_bytes = chunks_to_wav_bytes(audio_chunks, normalize=True)
