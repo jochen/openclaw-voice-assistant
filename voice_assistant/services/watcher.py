@@ -142,6 +142,18 @@ def user_nachricht(turn: dict, mit_kontext: bool = True) -> str:
     if mit_kontext:
         zeilen.append(f'Status: {turn.get("status") or "?"}')
         zeilen.append("Ausgeführt: " + json.dumps(turn.get("ausgefuehrt"), ensure_ascii=False))
+        vorher = turn.get("vorher")
+        if vorher:
+            # Nur wenn die Gegenstelle den Zustand mitliefert (ACTUATOR_INTERFACE.md).
+            # Bewusst hier und nicht im System-Prompt: Turns ohne "vorher" bekommen
+            # so exakt die Eingabe, gegen die tools/argus_replay.py gemessen hat.
+            zeilen.append(
+                "Vorher (Zustand des Ziels vor dem Schalten, laut Haussteuerung): "
+                + json.dumps(vorher, ensure_ascii=False)
+                + ". War das Ziel schon im verlangten Zustand, hat sich nichts geändert — "
+                  "dann wurde nichts falsch geschaltet, und \"wieder einschalten\" wäre als "
+                  "Korrektur falsch. War es im anderen Zustand, wurde es wirklich umgeschaltet."
+            )
         if turn.get("unklar_round"):
             zeilen.append("Kontext: Der Satz ist die Antwort auf eine Rückfrage des "
                           "Aktuators (\"Sag noch einmal, was ich schalten soll\").")

@@ -138,6 +138,62 @@ Installation, verzweigt aber nicht danach — er schreibt sie nur mit. Eine
 Portierung braucht also **eine** exakte Statuszeichenkette: `zurueckgestellt`.
 Der Rest darf heißen, wie er will.
 
+### Optional: Zustand vor dem Schalten (`vorher`, Status `bereits`)
+
+Ergänzung vom 2026-10-05. Beides ist **optional**; eine Gegenstelle ohne diese
+Felder verhält sich wie bisher, der Assistent braucht keine Fallunterscheidung.
+
+**`vorher`** — der Zustand des Ziels unmittelbar *vor* dem Schalten, so wie die
+ausführende Seite ihn kennt:
+
+```json
+{ "status": "ausgefuehrt", "…": "…",
+  "vorher": { "zustand": "an" } }          // licht, schalter: "an" | "aus"
+  "vorher": { "position": 40 } }            // rollo: 0 = zu … 100 = offen
+  "vorher": { "soll": 21.5 } }              // heizung: Solltemperatur
+```
+
+Weglassen, wenn der Zustand nicht bekannt ist, und bei Gruppen, Szenen und
+Abläufen (ein Gruppenzustand ist keine Zahl). **Aus dem eigenen Speicher, nicht
+vom Gerät erfragt:** die ausführende Seite hält Gerätezustände ohnehin, die
+Antwort soll dadurch keine Millisekunde langsamer werden. Lieber kein `vorher`
+als ein langsames.
+
+**Status `bereits`** — das Ziel ist schon im verlangten Zustand. Die ausführende
+Seite schaltet dann **nicht** und sagt das in `gesprochen`:
+
+```json
+{ "status": "bereits", "request_id": "…",
+  "ausgefuehrt": null,
+  "vorher": { "zustand": "aus" },
+  "gesprochen": "Das Licht im kleinen Zimmer ist schon aus." }
+```
+
+Warum: ein Befehl, der nichts ändern würde, ist meist ein verhörtes Ziel.
+Belegt am 2026-10-05: „Gaston, schalte das Küchenlicht aus“ wurde als
+„Kirchenlicht“ transkribiert und auf `kleineszimmerlicht` geschaltet; das
+Küchenlicht blieb an, und niemand merkte es. Mit `bereits` hört der Sprecher
+sofort, *welches* Ziel verstanden wurde, und wiederholt. Bewusst eine Ansage
+und keine Rückfrage: es wäre ohnehin nichts passiert.
+
+Grenzen, die die ausführende Seite kennen muss:
+
+- Nur für Einzelziele mit klarem Zustand (licht, schalter; rollo bei `auf`/`zu`
+  mit kleiner Toleranz, etwa ±3 Prozentpunkte). **Nicht** bei Gruppen, Szenen,
+  Abläufen und nicht bei einem Rollo, das gerade fährt.
+- Ist der Zustand älter als ein paar Sekunden oder unbekannt: normal schalten.
+  Ein veralteter Zustand darf höchstens eine überflüssige Ansage kosten, nie
+  einen ausgelassenen Befehl, den jemand gerade wirklich will.
+- `bereits` fängt nur Verhörer, die nichts geändert hätten. War das falsche Ziel
+  im anderen Zustand, wird es geschaltet; das sieht dann der Überwacher, der
+  `vorher` im Aktuator-Log findet.
+
+Der Assistent liest `gesprochen` vor wie bei jedem Status und schreibt `status`
+und `vorher` ins Aktuator-Log (`actuator_turns.log`). Der Überwacher (Argus)
+bekommt `vorher` in seine Prüfung: „war schon aus, nichts geändert“ ist ein
+anderer Befund als „falsches Licht ausgeschaltet“, und seine Korrektur
+(„wieder einschalten“) wäre im ersten Fall falsch.
+
 `ausgefuehrt` und `grund` sind optional und landen nur im Mitschnitt.
 
 ### Der Bestätigungs-Handshake

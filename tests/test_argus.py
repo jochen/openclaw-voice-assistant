@@ -125,3 +125,25 @@ class OverseerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VorherZustandTest(unittest.TestCase):
+    """"vorher" (ACTUATOR_INTERFACE.md) erscheint nur, wenn die Gegenstelle es
+    liefert — sonst bleibt die Eingabe exakt die gemessene (argus_replay)."""
+
+    def _turn(self, **extra):
+        return {"transcript": "Plastron, schalte das Kirchenlicht aus.",
+                "intent": {"ziel": "kleineszimmerlicht", "aktion": "aus"},
+                "status": "ausgefuehrt",
+                "ausgefuehrt": {"ziel": "kleineszimmerlicht", "aktion": "aus"}, **extra}
+
+    def test_ohne_vorher_keine_zeile(self):
+        from voice_assistant.services.watcher import user_nachricht
+        self.assertNotIn("Vorher", user_nachricht(self._turn()))
+        self.assertNotIn("Vorher", user_nachricht(self._turn(vorher=None)))
+
+    def test_mit_vorher_steht_der_zustand_drin(self):
+        from voice_assistant.services.watcher import user_nachricht
+        text = user_nachricht(self._turn(vorher={"zustand": "aus"}))
+        self.assertIn('Vorher', text)
+        self.assertIn('"zustand": "aus"', text)

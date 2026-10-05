@@ -2027,6 +2027,9 @@ def run() -> None:
                                 "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
                                 "grund": (resp or {}).get("grund"),
                                 "gesprochen": (resp or {}).get("gesprochen"),
+                                # Zustand vor dem Schalten, wenn die Gegenstelle ihn
+                                # mitliefert (ACTUATOR_INTERFACE.md, "vorher"/"bereits").
+                                "vorher": (resp or {}).get("vorher"),
                                 "unklar_round": unklar_round,
                             }
                             # Ein ausgefuehrtes Schaltkommando ist der stärkste
