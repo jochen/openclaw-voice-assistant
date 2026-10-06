@@ -269,6 +269,20 @@ Modell etwas geändert hätte. Im Journal steht davon nichts.
 - **Dauer:** Daten ~10 s, Training 7,5 min (2 Epochen, 3.778 Schritte),
   Image-Bau ohne Cache mehrere Minuten (6 GB, fast alles CUDA).
 
+### 14. Ein Container-Start aus der Unit stirbt mit der Unit
+
+Erster erzwungener Probelauf (2026-10-06 03:05, `--erzwingen`, transiente
+Unit): Training und Messung liefen durch (v4 351/18/2, v5a 345/21/5, v5b
+345/22/4 — korrekt **nicht** umgeschaltet). Danach starb aber, was die Unit
+gestartet hatte: rootless Podman lässt die Port-Weiterleitung
+(`rootlessport`) im cgroup des Aufrufers, die Unit lief beim Beenden in den
+Timeout, und systemd tötete per SIGKILL conmon und Weiterleitung von Laya
+und Qwen mit. Die Container liefen innen gesund weiter, 8094/8096 waren vom
+Host aus bis 18:50 tot, jeder Turn lief über Parakeet und Gemma — gemerkt
+hat es niemand. Seither startet das Werkzeug Container über
+`voice_assistant/services/container.py` (eigener Scope), und der
+Dienst-Wächter (`dienstwaechter:`) meldet und heilt einen solchen Ausfall.
+
 ## Was die Automatisierung als Ganzes leisten muss
 
 1. **Auslöser erkennen** (capabilities-Version ungleich der des
