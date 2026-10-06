@@ -610,13 +610,15 @@ den neuesten Stand, der dann eine andere ESPHome-Version verlangte. Ein Update
 ist eine bewusste Änderung dieser Refs, zusammen mit `esphome` im venv und
 `min_version`.
 
-Stand 2026-10-03: auf dem Heim-Gerät läuft die April-Firmware (ESPHome
-2026.4.0, gebaut 2026-04-23 15:02 auf dem alten Pi). Sie ist wieder gesichert
-— auf dem alten Pi fanden sich Firmware und Build-Verzeichnis, jetzt in
-`~/esphome-firmware/respeaker-openclaw/2026-04-23_1502_…/` auf beiden
-Rechnern. Rückweg per OTA:
+Stand 2026-10-06: auf dem Heim-Gerät läuft **2026.9.1** (Commit `157a7fb`,
+Richtungszeiger nur bei Sprachenergie), gesichert unter
+`~/esphome-firmware/respeaker-openclaw/2026-10-06_1821_…/`. Die Wiedergabe
+darunter wird noch beobachtet (Befund 1 unten). Ein zweiter API-Client
+(`esphome logs`) hat sich dort abgemeldet, ohne die Hör-Session zu reißen.
+Rückweg ist die April-Firmware (ESPHome 2026.4.0, gebaut 2026-04-23 15:02 auf
+dem alten Pi) in `~/esphome-firmware/respeaker-openclaw/2026-04-23_1502_…/`,
+per OTA:
 `esphome upload esphome/respeaker.yaml --device <ip> --file …/firmware.ota.bin`.
-Der Build mit 2026.9.1 ist kompiliert, nicht geflasht.
 
 **2026.9.1 im Fablab getestet und zurückgenommen (2026-10-02 19:45–19:56).**
 Zwei Befunde, beide vor dem nächsten Versuch zu klären:
