@@ -192,7 +192,9 @@ respeaker_xvf3800:
       - lambda: |-
           // XVF3800 liefert direkt LED-Index 0–11 (nicht Grad)
           // +6 = 180° Korrektur (Gerät mit LEDs oben montiert)
-          id(beam_led_pos) = ((int)(x + 0.5f) + 6) % 12;
+          // Nur die Rohrichtung: uebernommen wird sie in animation_loop,
+          // und nur bei Sprachenergie ueber der Schwelle (siehe dort).
+          id(beam_roh) = ((int)(x + 0.5f) + 6) % 12;
   firmware:
     url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration/raw/refs/heads/main/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
     version: "1.0.7"
@@ -274,6 +276,42 @@ number:
     on_value:
       - lambda: id(boot_step) = (int)x;
 
+  # Ab welcher Sprachenergie (dB, AEC_SPENERGY des Auto-Select-Strahls) der
+  # Richtungszeiger der Stimme folgt. Darunter bleibt er stehen — in der
+  # Stille sprang er sonst staendig hin und her. -100 heisst "jede Energie
+  # ueber 0" (laut Seeed: >0 = Sprache). Schwelle am Sensor "Sprachenergie"
+  # ablesen, nicht raten. Gemessen 2026-10-06 (Heim, 2-s-Maxima): Stille
+  # genau 0 (die Richtung sprang dabei 3–5x je Sekunde ueber den ganzen
+  # Kreis), Fernseher 40–60 dB, Zaehlen im Raum 37–57 dB. Eine hoehere
+  # Schwelle trennt den Fernseher also nicht von der Stimme, sie schnitte
+  # nur leises Sprechen ab — deshalb bleibt -100.
+  - platform: template
+    name: "Richtung ab Sprachenergie"
+    id: richtung_schwelle_db
+    min_value: -100
+    max_value: 100
+    step: 1
+    mode: box
+    unit_of_measurement: dB
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: -100
+
+sensor:
+  # Hoechste Sprachenergie des letzten Intervalls in dB (10*log10), Basis fuer
+  # "Richtung ab Sprachenergie". -100 = keine Sprache erkannt (Energie 0).
+  - platform: template
+    name: "Sprachenergie"
+    id: sprachenergie_sensor
+    unit_of_measurement: dB
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: |-
+      float v = id(sp_energie_max_db);
+      id(sp_energie_max_db) = -100.0f;
+      return v;
+
 # voice_assistant — Pi steuert alle LED-Phasen, keine internen Handler
 voice_assistant:
   id: va
@@ -314,10 +352,22 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
-  - id: beam_led_pos
+  - id: beam_led_pos      # uebernommene Richtung (nur bei Sprache), Ziel des Zeigers
     type: int
     restore_value: no
     initial_value: '0'
+  - id: beam_roh          # letzte Richtung vom XVF3800, ungefiltert
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: beam_anzeige      # angezeigte Position, laeuft weich zu beam_led_pos
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+  - id: sp_energie_max_db # Maximum fuer den Sensor "Sprachenergie"
+    type: float
+    restore_value: no
+    initial_value: '-100.0'
 
 script:
   # Ist-Werte der XVF3800-Signalverarbeitung, nur lesend. Anlass (2026-10-02):
@@ -398,6 +448,37 @@ script:
                 std::array<uint32_t, 12> c = {};
                 uint32_t t_ms = millis();
 
+                // Richtung nur bei Sprache uebernehmen (alle 100 ms). Ohne
+                // dieses Tor folgte der Zeiger in der Stille jedem Rauschen.
+                // AEC_SPENERGY_VALUES (resid 33, cmd 80): 4 Floats, Index 3 =
+                // Auto-Select-Strahl, derselbe, aus dem die Richtung kommt.
+                // Ein Versuch, kein Wiederholen: das hier blockiert den Loop.
+                static uint8_t energie_takt = 0;
+                if (++energie_takt >= 2) {
+                  energie_takt = 0;
+                  uint8_t req[3] = {33, (uint8_t) (80 | 0x80), 17};
+                  uint8_t resp[17] = {0};
+                  if (id(respeaker).write_read(req, 3, resp, 17) == i2c::ERROR_OK && resp[0] == 0) {
+                    float e; memcpy(&e, &resp[1 + 3 * 4], 4);
+                    float db = (e > 0.0f) ? 10.0f * log10f(e) : -100.0f;
+                    if (db > id(sp_energie_max_db)) id(sp_energie_max_db) = db;
+                    if (e > 0.0f && db >= id(richtung_schwelle_db).state)
+                      id(beam_led_pos) = id(beam_roh);
+                  }
+                }
+
+                // Angezeigte Position laeuft auf dem kuerzeren Weg zum Ziel,
+                // hoechstens 0,4 LED je 50 ms (ein halber Kreis in ~0,75 s).
+                float anz = id(beam_anzeige);
+                float d = (float) id(beam_led_pos) - anz;
+                while (d > 6.0f) d -= 12.0f;
+                while (d <= -6.0f) d += 12.0f;
+                if (fabsf(d) < 0.02f) anz = (float) id(beam_led_pos);
+                else anz += fmaxf(-0.4f, fminf(0.4f, d * 0.3f));
+                while (anz < 0.0f) anz += 12.0f;
+                while (anz >= 12.0f) anz -= 12.0f;
+                id(beam_anzeige) = anz;
+
                 if (phase == 0) {
                   // BOOT: boot_step LEDs weiß (0=0 LEDs, 3=WiFi, 6=API, 9=Speaches, 12=Wakeword)
                   int steps = id(boot_step);
@@ -405,10 +486,15 @@ script:
                     c[i] = 0x303030;
 
                 } else if (phase == 1) {
-                  // IDLE: alle LEDs sehr gedimmt blau, Beam-LED etwas heller
-                  int pos = id(beam_led_pos);
-                  for (auto& x : c) x = 0x000040;  // Basis: sehr gedimmt
-                  c[pos] = 0x000060;                // Beam-Richtung: leicht heller
+                  // IDLE: alle LEDs sehr gedimmt blau, Beam-Richtung etwas
+                  // heller. Zwischen zwei LEDs teilt sich die Helligkeit auf,
+                  // so laeuft der Lichtpunkt um den Kreis statt zu springen.
+                  for (int i = 0; i < 12; i++) {
+                    float dist = fabsf((float) i - anz);
+                    if (dist > 6.0f) dist = 12.0f - dist;
+                    float w = fmaxf(0.0f, 1.0f - dist);
+                    c[i] = (uint32_t) (0x40 + 0x20 * w + 0.5f);  // 0x40 Basis, 0x60 Spitze
+                  }
 
                 } else if (phase == 2) {
                   // WAKEWORD: alle 12 LEDs hell rot
