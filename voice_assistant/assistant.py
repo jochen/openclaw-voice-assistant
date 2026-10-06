@@ -297,6 +297,17 @@ def _save_trigger_audio(audio_chunks: list, bundle: str, kind: str, trigger_id: 
         print(f"⚠️  Trigger-Audio ({kind}) nicht gespeichert: {e}")
 
 
+def _ist_stiller_abbruch(
+    bargein_round: int, speech_detected: bool, chunks_seit_trigger: int, nachlauf_chunks: int
+) -> bool:
+    """Aufnahme nach einem Barge-in, in der nach dem Trigger nichts mehr kam.
+
+    Begruendung an der Aufrufstelle in STATE_RECORDING. Nur nach einem
+    Barge-in: nach einem normalen Ruf ist Schweigen das Warten auf das "Ja?".
+    """
+    return bool(bargein_round) and not speech_detected and chunks_seit_trigger >= nachlauf_chunks
+
+
 def _pre_roll(ring: deque, seconds: float) -> list:
     """Die letzten `seconds` Sekunden des Ringpuffers als Chunk-Liste.
 
@@ -1224,6 +1235,10 @@ def run() -> None:
     # gleiche Ueberlegung wie bei followup_round/unklar_round), und die Quittung
     # nach dem Abbruch wird nur hier gesprochen.
     bargein_round = 0
+    # Die Aufnahme nach einem Barge-in endete, weil nach dem Trigger nichts
+    # mehr kam (reiner Abbruch, siehe STATE_RECORDING). Dann geht der Turn nie
+    # an den Brain — egal, was die STT aus dem kurzen Stueck macht.
+    bargein_still = False
     # Barge-in ist gerade stummgeschaltet, weil der Assistent selbst spricht
     # (nur bei while_speaking=False). Merker, damit der Ring genau EINMAL beim
     # Uebergang geleert wird und nicht bei jedem Chunk.
@@ -1704,9 +1719,28 @@ def run() -> None:
 
                 timeout = (now - state_start) > turn_max_sec
                 stop = speech_detected and silence_counter >= turn_silence_limit
+                # Reiner Abbruch: nach einem Barge-in kommt eine Nachlauf-Laenge
+                # lang keine Sprache. Das Stopp-Wort steckt dann ganz im
+                # Pre-Roll ("Gaston stopp" ist gesagt, bevor der Trigger
+                # feuert), und den sieht der VAD nie — ohne diese Regel wartete
+                # die Aufnahme auf Sprache, die nicht kommt, bis der Nutzer bei
+                # offener Aufnahme (Ring rot) noch einmal "Stopp" sagte. So bei
+                # allen drei Abbruechen im Archiv (2026-09-23, -10-05, -10-06).
+                # Gezaehlt in Chunks, nicht in Uhrzeit: nach dem Abbruch-Beep
+                # kommt ein Rueckstau auf einmal (wie tools/endpoint_replay.py
+                # --bargein). Warum nicht einfach den Pre-Roll als Sprache
+                # zaehlen: dann endete die Aufnahme genauso frueh, aber die
+                # STT muesste aus dem kurzen Stueck das Stopp-Wort lesen — bei
+                # Qwen klappte das in 2 von 3 Faellen ("Gastvorstellung."), und
+                # was sie nicht erkennt, ginge als neuer Auftrag an den Brain.
+                still_abbruch = _ist_stiller_abbruch(
+                    bargein_round, speech_detected,
+                    len(recorded_chunks) - pre_roll_chunks, turn_silence_limit,
+                )
 
-                if stop or timeout:
-                    reason = "silence" if stop else "timeout"
+                if stop or timeout or still_abbruch:
+                    reason = ("silence" if stop
+                              else "bargein_still" if still_abbruch else "timeout")
                     pre_roll_sec = pre_roll_chunks * _chunk_sec
                     dur = len(recorded_chunks) * _chunk_sec
                     print(
@@ -1746,7 +1780,13 @@ def run() -> None:
                         trigger_audio_id = None
                     # Der Pre-Roll zählt für MIN_SPEECH_CHUNKS nicht mit — sonst
                     # wäre das Gate allein durch ihn immer erfüllt.
-                    if speech_detected and (len(recorded_chunks) - pre_roll_chunks) >= MIN_SPEECH_CHUNKS:
+                    # Der reine Abbruch geht trotzdem durch die STT: sein
+                    # Stopp-Wort im Pre-Roll ist der Beleg fuer das
+                    # Fehltrigger-Label und die Quittung.
+                    bargein_still = still_abbruch
+                    if still_abbruch or (
+                        speech_detected and (len(recorded_chunks) - pre_roll_chunks) >= MIN_SPEECH_CHUNKS
+                    ):
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         turn_stt_q = queue.Queue()
@@ -1786,6 +1826,8 @@ def run() -> None:
                         bargein.reset()
                     war_bargein = bargein_round
                     bargein_round = 0
+                    war_bargein_still = bargein_still
+                    bargein_still = False
                     if pending_confirm is not None:
                         # Ja/Nein-Antwort auf eine Aktuator-Rückfrage (Handshake).
                         try:
@@ -1956,6 +1998,28 @@ def run() -> None:
                         followup_rms_sum = 0.0
                         followup_rms_count = 0
                         followup_vad_speech = 0
+                    elif war_bargein_still:
+                        # Reiner Abbruch, aber die STT fand im kurzen Stueck
+                        # kein Stopp-Wort (oder gar nichts). Kein neuer Auftrag
+                        # — dafuer haette nach dem Trigger jemand sprechen
+                        # muessen. Ohne Stopp-Wort auch kein Fehltrigger-Label
+                        # und keine Quittung: der Beep hat den Abbruch schon
+                        # angezeigt, das "Okay" sagt "Stopp verstanden".
+                        print(f"[{now:.1f}s] 🛑 Abbruch ohne weiteren Auftrag: '{text}'")
+                        _log_outcome("bargein_still", transcript=text, via="bargein")
+                        _flush_endpoint(text, ausgang="bargein_still", via="bargein")
+                        try:
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        bargein_abgebrochen_audio = None
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        state = STATE_LISTENING
                     elif text:
                         # Kein Stopp-Wort: der Barge-in war ein neuer Auftrag,
                         # kein Urteil ueber den abgebrochenen Trigger. Das

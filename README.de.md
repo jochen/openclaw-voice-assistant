@@ -461,6 +461,19 @@ die Frage einer **unbeteiligten zweiten Person** ein, die dann als neuer Auftrag
 beantwortet wurde. Für diesen Zustand ist das Kommando-Endpointing (1 s, 8 s)
 das richtige.
 
+**Und beende sie, wenn nach dem Trigger nichts mehr kommt.** „Stopp Gaston" und
+sogar ein schnelles „Gaston stopp" sind fertig gesprochen, *bevor* das Wakewort
+feuert — das Stopp-Wort steckt also ganz im Pre-Roll, und den sieht der VAD nie.
+„Ende nach Stille, die auf Sprache folgt" wartet dann auf Sprache, die nicht
+kommt: bei allen drei Abbrüchen in unserem Archiv blieb die Aufnahme offen (LED
+zeigte weiter „ich höre zu"), bis der Nutzer noch einmal „Stopp" sagte. Unsere
+Regel: kommt nach einem Barge-in eine Nachlauf-Länge lang keine Sprache, endet
+die Aufnahme als reiner Abbruch und geht **nie** als Auftrag weiter. Zähl
+stattdessen nicht einfach den Pre-Roll als Sprache und lass die STT
+entscheiden: aus so einem kurzen Stück las sie in einem von drei Fällen kein
+Stopp-Wort („Gastvorstellung."), und das wäre als neuer Auftrag an den Brain
+gegangen. Messen mit `tools/endpoint_replay.py --bargein`.
+
 **Wenn du etwas Ähnliches baust: prüfe das Abbruch-Kennzeichen erneut, nachdem
 du dein Audio-Lock bekommen hast.** Unser erster Live-Abbruch sprach noch einen
 Satz — weil dieser Satz die Abbruch-Prüfung schon passiert hatte und dann am

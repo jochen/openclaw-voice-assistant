@@ -481,6 +481,29 @@ gerichtet, und dass hier gerade gesprochen wurde, ist nicht geraten, sondern
 der Anlass. Im `endpoint.log` steht so ein Turn als `mode=kommando` mit
 `followup_round=0` — nachjustierbar gegen `tools/endpoint_replay.py`.
 
+**Nachtrag 2026-10-06: der stille Abbruch.** Das Kommando-Endpointing allein
+reichte nicht. Die Aufnahme endet erst bei „Stille *nach* Sprache", und das
+Stopp-Wort steht beim Barge-in ganz im Pre-Roll (auch ein schnelles „Gaston
+stopp" ist fertig, bevor der Trigger feuert) — den sieht der VAD nie. Alle
+drei Abbrüche im Archiv (09-23, 10-05, 10-06) blieben deshalb 5–10 s offen,
+bis der Nutzer bei rotem Ring noch einmal „Stopp" sagte. Jetzt endet die
+Aufnahme nach einer Nachlauf-Länge ohne Sprache (`_ist_stiller_abbruch`,
+`reason=bargein_still`) und geht **nie** an den Brain. Die STT läuft trotzdem:
+findet sie das Stopp-Wort, gibt es Fehltrigger-Label und „Okay" wie bisher,
+sonst `ausgang=bargein_still` ohne Label und ohne Quittung. Verworfen:
+Pre-Roll als Sprache zählen — gleicher Schnitt, aber dann entscheidet die STT
+am kurzen Stück über „Auftrag oder nicht", und Qwen las dort in 1 von 3
+Fällen kein Stopp-Wort („Gastvorstellung."). Gemessen mit
+`tools/endpoint_replay.py --bargein` (6 Barge-ins: 4 Abbrüche 5–18 s → 2,5 s,
+der eine echte neue Auftrag unverändert). Tests:
+`tests/test_bargein.py::StillerAbbruchTest`.
+
+Dazu gehört `RespeakerSink.play_wav`: bleibt der Start-Anker aus (nach einem
+STOP typisch, der Player meldet keinen neuen Abspiel-Zustand), zählt die
+Hol-Annahme ab dem Senden, und die Anker-Wartezeit ist auf Datei + Annahme
+gekappt. Vorher blockierte der 0,3-s-Abbruch-Beep die Hauptschleife 2,9 s.
+Tests: `tests/test_wiedergabe_zeit.py`.
+
 **3. Der Abbruch war an nichts zu erkennen.** Das einzige Signal war, dass die
 Stimme aufhörte; danach 18 s grüner Ring und Stille. Jetzt kommt im Moment des
 Abbruchs ein **fallender Doppelton** (740 → 466 Hz, `prerender_abort_beep()`)

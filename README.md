@@ -451,6 +451,18 @@ after the abort stayed open for 18.2 seconds and picked up a *bystander's*
 question, which was then answered as a new request. Command endpointing (1 s,
 8 s) is the right setting for this state.
 
+**And end it when nothing follows the trigger.** "Stop Gaston" and even a fast
+"Gaston stop" are complete *before* the wake word fires, so the stop word sits
+entirely in the pre-roll — which the VAD never sees. "End after silence that
+follows speech" then waits for speech that never comes: in all three aborts in
+our archive the recording stayed open (LED still showing "listening") until the
+user said "stop" again. Our rule: after a barge-in, if one trailing-silence
+length passes with no speech, the recording ends as a plain abort and is
+**never** sent on as a request. Don't instead count the pre-roll as speech and
+let STT decide: on such a short clip it missed the stop word in one of three
+cases ("Gastvorstellung."), which would then have gone to the brain as a new
+request. Measure it with `tools/endpoint_replay.py --bargein`.
+
 **If you build something like this: re-check the abort flag after acquiring your
 audio lock.** Our first live abort still spoke one sentence, because that
 sentence had already passed the abort check and was then blocked on the playback
