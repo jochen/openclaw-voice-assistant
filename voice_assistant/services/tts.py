@@ -19,6 +19,7 @@ import urllib.request
 import wave
 from typing import Callable
 
+from voice_assistant.services import aussprache
 from voice_assistant.config import (
     ABORT_BEEP_PATH,
     FOLLOWUP_BEEP_PATH,
@@ -311,6 +312,9 @@ class SpeachesTts:
         model = vm or self.model
         voice = vv or self.voice
         speed = vsp if vsp else 1.0
+        # Problemwoerter als [[Phoneme]] (services/aussprache.py). Erst HIER,
+        # nach clean_for_tts — das entfernt eckige Klammern.
+        text = aussprache.fuer_piper(text, model)
 
         try:
             data = self._do_synth(model, voice, speed, text)
@@ -355,6 +359,7 @@ class SpeachesTts:
 # ---------------------------------------------------------------------------
 def piper_synth(text: str, model: str = PIPER_MODEL) -> str | None:
     """Rendert Text in eine WAV-Datei mit Piper und gibt den Pfad zurück."""
+    text = aussprache.fuer_piper(text, "piper")
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             tmp_wav = f.name

@@ -717,6 +717,51 @@ once stage 1 has proven reliable over weeks.
 
 ## OpenClaw Integration
 
+### Pronunciation list (optional, `aussprache:`)
+
+Piper sends every word through espeak-ng's rules for the voice's language, so
+loanwords and names come out wrong ("Sauce" as *Sau-ke*, "Andrew Jackson" as
+*Andreef Jakson*); switching voices doesn't help, they all share that front end.
+Piper reads text in `[[ … ]]` as phonemes, so the assistant replaces known
+problem words right before synthesis (Telegram and the brain still see plain text):
+
+1. **Base list from Wiktionary** (`data/aussprache/de_wiktionary.tsv`, ~19 000
+   words, CC BY-SA): the German Wiktionary gives loanwords their *usual German*
+   pronunciation — in a blind test that version won 4 of 6. Only words where
+   espeak differs noticeably are kept; homographs (incl. across case, "Seine"
+   the river vs. "seine"), function words and words under 4 letters are left
+   out — measured on what the assistant actually said, without these rules the
+   two most frequent words ("der", "Die") got wrong entries. IPA is mapped onto
+   the symbols espeak itself produces, because that's all the voice ever heard
+   (Wiktionary's ʁ, ̯, ʔ never occur in espeak output).
+   Build it: `tools/aussprache_grundstock.py <dewiktionary dump>`.
+2. **Cases are collected automatically**: spoken words that are neither in the
+   list nor in the Wiktionary vocabulary (names, new anglicisms).
+3. **Once there are enough (`min_faelle`, 50)**, a timer runs
+   `tools/aussprache_ergaenzen.py`: any OpenAI-compatible LLM (`llm_url`,
+   `llm_model`) proposes a German respelling and an IPA per word; each is
+   synthesised and run back through STT, and only a version that brings the
+   word back is kept — no listening needed. If today's pronunciation already
+   comes back, no entry is made.
+4. **Direct correction via the brain** (`voice_aussprache_setzen`): the user
+   says how it should sound in German spelling ("*Sohße*"), it applies at once
+   and a sample is spoken.
+
+Generated entries stay private; `tools/aussprache_veroeffentlichen.py` copies
+the public ones into `data/aussprache/de_ergaenzt.tsv` (with hard filters for
+speaker names and device-name parts — the LLM's own "public" flag wasn't
+reliable). Only for Piper voices; for another language add its list and
+set `sprache`.
+
+```yaml
+    aussprache:
+      enabled: true
+      sprache: de
+      llm_url: http://<llm-host>:<port>   # optional; without it cases are only collected
+      llm_model: <model>
+      min_faelle: 50
+```
+
 ### Service watchdog (optional, `dienstwaechter:`)
 
 The fallback chains (STT stage after stage, Gemma instead of Laya) have a
@@ -879,6 +924,7 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | manage known speakers |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (also per speaker via `for_speaker`) |
 | `voice_analyze_last_output(…)` | re-analyse the assistant's own last spoken reply (text fidelity, timing, prosody) |
+| `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | fix how a word is pronounced, at once ("Sauce is said *Sohße*"); see *Pronunciation list* |
 
 Install / register:
 

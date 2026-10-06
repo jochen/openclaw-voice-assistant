@@ -385,6 +385,25 @@ class DienstWaechterConfig:
 
 
 @dataclass
+class AusspracheConfig:
+    """Aussprache-Liste fuer Piper-Stimmen (services/aussprache.py).
+
+    Default enabled=False. Die Liste ist sprachgebunden (``sprache``): der
+    Grundstock liegt als ``data/aussprache/<sprache>_*.tsv`` im Repo, eigene
+    und neu erzeugte Eintraege im Workspace. Das LLM fuer den
+    Ergaenzungslauf (tools/aussprache_ergaenzen.py) ist irgendein
+    OpenAI-kompatibler Endpunkt; ohne ``llm_url`` wird nur gesammelt.
+    """
+    enabled: bool = False
+    sprache: str = "de"
+    llm_url: str = ""
+    llm_model: str = ""
+    llm_api_key: str = ""
+    # Ab so vielen gesammelten Faellen laeuft ein Ergaenzungslauf.
+    min_faelle: int = 50
+
+
+@dataclass
 class BargeInConfig:
     """Abbruch mitten im Turn ("Stopp Gaston"), optional pro Profil.
 
@@ -579,6 +598,9 @@ class Profile:
 
     # Überwacher Stufe 1 — fehlt der Block: kein Watcher-Thread.
     watcher: WatcherConfig = field(default_factory=WatcherConfig)
+
+    # Aussprache-Liste — fehlt der Block: Piper spricht wie bisher.
+    aussprache: AusspracheConfig = field(default_factory=AusspracheConfig)
 
     # Dienst-Waechter — fehlt der Block: kein Waechter-Thread.
     dienstwaechter: DienstWaechterConfig = field(default_factory=DienstWaechterConfig)
@@ -853,6 +875,17 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         dienste=tuple((str(d["name"]), str(d["url"])) for d in dw_raw.get("dienste") or ()),
     )
 
+    as_raw = raw.get("aussprache") or {}
+    _das = AusspracheConfig()
+    aussprache = AusspracheConfig(
+        enabled=bool(as_raw.get("enabled", _das.enabled)),
+        sprache=str(as_raw.get("sprache", _das.sprache)),
+        llm_url=str(as_raw.get("llm_url", _das.llm_url)),
+        llm_model=str(as_raw.get("llm_model", _das.llm_model)),
+        llm_api_key=str(as_raw.get("llm_api_key", _das.llm_api_key)),
+        min_faelle=int(as_raw.get("min_faelle", _das.min_faelle)),
+    )
+
     rewind_raw = raw.get("rewind") or {}
     _drw = RewindConfig()
     rewind = RewindConfig(
@@ -928,6 +961,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         actuator=actuator,
         watcher=watcher,
         dienstwaechter=dienstwaechter,
+        aussprache=aussprache,
         rewind=rewind,
         wakewords=wakewords,
         barge_in=barge_in,

@@ -1096,6 +1096,17 @@ def run() -> None:
         print("⚠️  Überwacher aktiviert, aber watcher.chat_id ist leer — "
               "kein Ziel für Meldungen. Überwacher bleibt aus.")
 
+    # --- Aussprache-Liste (Problemwoerter als Phoneme an Piper) ---
+    if profile.aussprache.enabled:
+        try:
+            from voice_assistant.services import aussprache as aussprache_mod
+            _as = aussprache_mod.fuer_sprache(profile.aussprache.sprache)
+            aussprache_mod.einrichten(_as)
+            print(f"🗣️  Aussprache-Liste ({profile.aussprache.sprache}): "
+                  f"{len(_as._lexikon)} Einträge, Fälle → {_as.faelle_pfad}")
+        except Exception as e:
+            print(f"⚠️  Aussprache-Liste nicht geladen: {e}")
+
     # --- Dienst-Waechter (Ausfall melden + lokale Container neu starten) ---
     # Meldet an dieselbe Gruppe wie der Ueberwacher. Ohne chat_id laeuft er
     # trotzdem: dann steht es nur im Journal, und geheilt wird auch.

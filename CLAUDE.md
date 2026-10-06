@@ -300,6 +300,25 @@ abrufbar, urteilt er mit dem letzten bekannten und vermerkt es im Befund.
 Docstring, Labels in `testsets/argus_befunde_labels.jsonl`. Hintergrund und
 Entscheidungen: MemPalace `noderedpi4-home-pi/weltmodell`.
 
+### Aussprache-Liste (`aussprache:`, seit 2026-10-06)
+
+`services/aussprache.py` ersetzt in `SpeachesTts.synth`/`piper_synth` (nach
+`clean_for_tts`, das Klammern entfernt) Problemwörter durch `[[Phoneme]]`.
+Nur bei Piper-Modellen. Schichten, spätere gewinnen: Repo
+`data/aussprache/de_wiktionary.tsv` + `de_ergaenzt.tsv` → Workspace
+`voice/aussprache/de_ergaenzt.tsv` (LLM, privat) → `de_eigen.tsv` (Brain-
+Werkzeug `voice_aussprache_setzen`, Endpunkt `POST /aussprache` am
+Sprech-Server). Fälle: `de_faelle.jsonl` (nicht aus der Bestätigung, siehe
+`ohne_sammeln`); Timer `aussprache-ergaenzen.timer` 05:15 läuft erst ab 50.
+Übernahme ohne Anhören, Prüfung per STT-Rückprobe (Jochen). Die Lehren beim
+Bau, alle gemessen: Homographen über Groß/klein, Funktionswörter, und die
+Abbildung auf espeaks Zeichenvorrat (Docstrings von
+`tools/aussprache_grundstock.py` und `piper_phoneme`). Jochens Hinweis dazu:
+„nicht verrennen, am Anfang muss es nicht perfekt sein" — erst Betrieb
+beobachten, dann nachbessern. Offen: ASCII-Umlaute aus Brain-Antworten
+(„fuenf") gehören eigentlich in die Textaufbereitung. Tests:
+`tests/test_aussprache.py`.
+
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 
 `services/dienstwaechter.py` — Thread im Assistenten, prüft alle 60 s

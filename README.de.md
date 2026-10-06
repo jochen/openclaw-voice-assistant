@@ -736,6 +736,53 @@ bauen darauf auf, sobald Stufe 1 sich über Wochen bewährt hat.
 
 ## OpenClaw-Integration
 
+### Aussprache-Liste (optional, `aussprache:`)
+
+Piper schickt jedes Wort durch die espeak-ng-Regeln der Stimmsprache, deshalb
+klingen Fremdwörter und Namen falsch („Sauce" als *Sau-ke*, „Andrew Jackson"
+als *Andreef Jakson*). Eine andere Stimme hilft nicht, alle teilen dieses
+Vorverarbeiten. Piper liest Text in `[[ … ]]` als Phoneme, also ersetzt der
+Assistent bekannte Problemwörter direkt vor der Synthese (Telegram und der
+Brain sehen weiter normalen Text):
+
+1. **Grundstock aus dem Wiktionary** (`data/aussprache/de_wiktionary.tsv`,
+   ~19 000 Wörter, CC BY-SA): Das deutsche Wiktionary gibt Fremdwörtern ihre
+   *im Deutschen übliche* Aussprache — im Blindtest gewann genau diese 4 von 6.
+   Aufgenommen wird nur, wo espeak deutlich anders spricht; Homographen (auch
+   über Groß/klein: „Seine" der Fluss gegen „seine"), Funktionswörter und
+   Wörter unter 4 Buchstaben bleiben draußen — gemessen an dem, was der
+   Assistent tatsächlich gesagt hat: ohne diese Regeln bekamen die zwei
+   häufigsten Wörter („der", „Die") falsche Einträge. Die IPA wird auf die
+   Zeichen abgebildet, die espeak selbst erzeugt, denn nur die hat die Stimme
+   je gehört (Wiktionarys ʁ, ̯, ʔ kommen in espeak-Ausgabe nicht vor).
+   Erzeugen: `tools/aussprache_grundstock.py <dewiktionary-Abzug>`.
+2. **Fälle sammeln sich von selbst**: gesprochene Wörter, die weder in der
+   Liste noch im Wiktionary-Wortschatz stehen (Namen, neue Anglizismen).
+3. **Sind genug beisammen (`min_faelle`, 50)**, startet ein Timer
+   `tools/aussprache_ergaenzen.py`: Ein beliebiges OpenAI-kompatibles LLM
+   (`llm_url`, `llm_model`) schlägt je Wort eine deutsche Umschreibung und eine
+   IPA vor; beide werden synthetisiert und durch die STT zurückgehört, und nur
+   eine Fassung, die das Wort zurückbringt, wird übernommen — ohne Anhören.
+   Bringt schon die heutige Aussprache das Wort zurück, entsteht kein Eintrag.
+4. **Direkt korrigieren über den Brain** (`voice_aussprache_setzen`): Der Nutzer
+   sagt, wie es in deutscher Schreibung klingen soll („*Sohße*"); es gilt sofort,
+   und eine Probe wird vorgesprochen.
+
+Erzeugte Einträge bleiben privat; `tools/aussprache_veroeffentlichen.py`
+übernimmt die öffentlichen nach `data/aussprache/de_ergaenzt.tsv` (mit harten
+Filtern für Sprechernamen und Bestandteile von Gerätenamen — die
+„öffentlich"-Markierung des LLM war nicht zuverlässig). Nur für Piper-Stimmen;
+für eine andere Sprache deren Liste anlegen und `sprache` setzen.
+
+```yaml
+    aussprache:
+      enabled: true
+      sprache: de
+      llm_url: http://<llm-host>:<port>   # optional; ohne wird nur gesammelt
+      llm_model: <modell>
+      min_faelle: 50
+```
+
 ### Dienst-Wächter (optional, `dienstwaechter:`)
 
 Die Rückfall-Ketten (STT Stufe um Stufe, Gemma statt Laya) haben eine
@@ -901,6 +948,7 @@ Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert die Tools, die 
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | bekannte Sprecher verwalten |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (auch pro Sprecher via `for_speaker`) |
 | `voice_analyze_last_output(…)` | die eigene zuletzt gesprochene Antwort erneut analysieren (Texttreue, Timing, Prosodie) |
+| `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | Aussprache eines Worts sofort korrigieren („Sauce spricht man *Sohße*"); siehe *Aussprache-Liste* |
 
 Installieren / registrieren:
 

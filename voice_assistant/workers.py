@@ -7,6 +7,7 @@ import threading
 
 import numpy as np
 
+from voice_assistant.services import aussprache
 from voice_assistant.config import RATE_OW
 from voice_assistant.services import openclaw, telegram
 from voice_assistant.services.diarization import (
@@ -149,7 +150,9 @@ class Workers:
 
     def start_confirmation(self, recognized_text: str, turn: int | None = None) -> threading.Thread:
         t = threading.Thread(
-            target=self.speaker.speak,
+            # Ohne Fall-Sammeln: das rohe Transkript enthaelt Verhoerer,
+            # keine Aussprache-Faelle (services/aussprache.py).
+            target=aussprache.ohne_sammeln(self.speaker.speak),
             args=(f"{self.confirmation_prefix}{recognized_text}",),
             kwargs={"restore_leds": False, "turn": turn},
             daemon=True,
