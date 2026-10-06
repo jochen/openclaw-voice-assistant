@@ -104,6 +104,8 @@ voice_assistant/
     stt.py               SpeachesStt + LocalWhisperStt + SttPipeline
     tts.py               SpeachesTts + Piper + ReplySpeaker + ThinkingWorker
     openclaw.py          /v1/responses Client
+    dienstwaechter.py    Ausfall der Dienste melden, lokale Container neu starten
+    container.py         Podman-Container im eigenen Scope starten (rootlessport-Falle)
 ```
 
 ### Wakeword-Studio-CLI (`wakeword_studio/`)
@@ -275,6 +277,28 @@ abrufbar, urteilt er mit dem letzten bekannten und vermerkt es im Befund.
 **Prompt-Änderungen nur gegen `tools/argus_replay.py`** — Messreihe im
 Docstring, Labels in `testsets/argus_befunde_labels.jsonl`. Hintergrund und
 Entscheidungen: MemPalace `noderedpi4-home-pi/weltmodell`.
+
+### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
+
+`services/dienstwaechter.py` — Thread im Assistenten, prüft alle 60 s
+`/health` jeder Dienst-URL aus dem Profil (Speaches, Qwen, Gemma, Laya;
+`dienste_aus_profil`). Weg länger als `gnadenfrist` (180 s) → Meldung an die
+Argus-Gruppe, lokaler Container (über den Port gefunden) wird gestoppt und im
+eigenen Scope gestartet, Ergebnis in derselben Meldung; höchstens 3 Versuche
+mit 30 min Abstand. Still während `ruhe_units` (hier
+`laya-nachtraining.service` — das Training stoppt Laya und Qwen absichtlich;
+ein Heilversuch dort startete einen Container ins Training hinein). Tests:
+`tests/test_dienstwaechter.py`.
+
+Anlass: 2026-10-06 03:31–18:50 waren Qwen und Laya vom Host aus tot, und die
+Rückfall-Ketten haben es perfekt verdeckt. Ursache war **rootless Podman**:
+`rootlessport` bleibt im cgroup dessen, der `podman start` aufruft. Der
+Probelauf des Nachtrainings (transiente Unit) startete die Container, endete
+mit Timeout, und systemd tötete die Weiterleitungen mit. Seither startet
+**jeder Container-Start in diesem Repo über `services/container.py`**
+(`systemd-run --user --scope`), auch in `tools/laya_nachtraining.py`. Wer
+von Hand startet: genauso, sonst hängt die Weiterleitung an der eigenen
+tmux-/SSH-Sitzung.
 
 ## Sprecher-Zustand und die Schranke (`current_speaker.json`)
 

@@ -717,6 +717,36 @@ once stage 1 has proven reliable over weeks.
 
 ## OpenClaw Integration
 
+### Service watchdog (optional, `dienstwaechter:`)
+
+The fallback chains (STT stage after stage, Gemma instead of Laya) have a
+downside: a dead service becomes **invisible**. Ours lost Qwen-STT and Laya for
+15 hours — the containers were healthy inside, but their host port forwarding
+had died — and every turn quietly ran on the next stage. Nobody noticed.
+
+The watchdog checks `/health` of every service URL the profile uses (Speaches,
+llama.cpp STT, classification LLM, Laya — taken from the profile, nothing
+hard-coded) once a minute. A service that stays down past a grace period is
+reported to the overseer's chat, and if a **local Podman container** publishes
+that port, it is stopped and started again (a limited number of times, with a
+gap between attempts); the result goes into the same message. Recovery is
+reported too. Quiet hours: it heals but collects the messages.
+
+```yaml
+    dienstwaechter:
+      enabled: true
+      ruhe_units: [laya-nachtraining.service]   # planned downtime: no alarm, no healing
+      # gnadenfrist: 180   intervall: 60   heilen: true   max_heilversuche: 3
+      # dienste: [{name: "My service", url: "http://127.0.0.1:9000/health"}]
+```
+
+**If you run rootless Podman: never start a container from inside a systemd
+unit with a plain `podman start`.** The port forwarder (`rootlessport`) stays
+in the caller's cgroup, and when that unit ends, systemd kills it — the
+container keeps running, its port is dead. That is exactly what happened to
+us. `voice_assistant/services/container.py` starts containers in their own
+transient scope (`systemd-run --user --scope`); use that.
+
 ### Session Key
 
 `openclaw_session` determines which session voice requests land in. For voice and Telegram chat to share context, this key must match the Telegram session key.

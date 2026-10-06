@@ -1096,6 +1096,37 @@ def run() -> None:
         print("⚠️  Überwacher aktiviert, aber watcher.chat_id ist leer — "
               "kein Ziel für Meldungen. Überwacher bleibt aus.")
 
+    # --- Dienst-Waechter (Ausfall melden + lokale Container neu starten) ---
+    # Meldet an dieselbe Gruppe wie der Ueberwacher. Ohne chat_id laeuft er
+    # trotzdem: dann steht es nur im Journal, und geheilt wird auch.
+    if profile.dienstwaechter.enabled:
+        try:
+            from voice_assistant.services.dienstwaechter import (
+                DienstWaechter, dienste_aus_profil,
+            )
+            dwc, wt = profile.dienstwaechter, profile.watcher
+            dw_bot = wt.bot_token or profile.telegram_bot_token
+            dw_dienste = dienste_aus_profil(profile)
+            DienstWaechter(
+                dw_dienste,
+                melden=lambda text: telegram.send(dw_bot, wt.chat_id, text),
+                intervall=dwc.intervall,
+                gnadenfrist=dwc.gnadenfrist,
+                heilen=dwc.heilen,
+                ruhe_units=dwc.ruhe_units,
+                quiet_start=wt.quiet_start,
+                quiet_end=wt.quiet_end,
+                max_heilversuche=dwc.max_heilversuche,
+                heil_abstand=dwc.heil_abstand,
+            ).start()
+            print(f"🩺 Dienst-Wächter aktiv: {', '.join(d.name for d in dw_dienste)}"
+                  f" (alle {dwc.intervall:.0f} s, Frist {dwc.gnadenfrist:.0f} s,"
+                  f" heilen: {'ja' if dwc.heilen else 'nein'}"
+                  + (f", Ruhe bei {', '.join(dwc.ruhe_units)}" if dwc.ruhe_units else "")
+                  + ")")
+        except Exception as e:
+            print(f"⚠️  Dienst-Wächter-Start fehlgeschlagen: {e}")
+
     # --- State-Machine ---
     state = STATE_LISTENING
     state_start = time.time()

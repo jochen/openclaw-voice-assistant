@@ -736,6 +736,38 @@ bauen darauf auf, sobald Stufe 1 sich über Wochen bewährt hat.
 
 ## OpenClaw-Integration
 
+### Dienst-Wächter (optional, `dienstwaechter:`)
+
+Die Rückfall-Ketten (STT Stufe um Stufe, Gemma statt Laya) haben eine
+Kehrseite: ein toter Dienst wird **unsichtbar**. Bei uns waren Qwen-STT und
+Laya 15 Stunden weg — die Container liefen innen gesund, aber ihre
+Port-Weiterleitung zum Host war gestorben — und jeder Turn lief still über die
+nächste Stufe. Gemerkt hat es niemand.
+
+Der Wächter fragt einmal pro Minute `/health` jeder Dienst-URL ab, die das
+Profil benutzt (Speaches, llama.cpp-STT, Klassifikations-LLM, Laya — aus dem
+Profil, nichts fest im Code). Bleibt ein Dienst über eine Gnadenfrist hinaus
+weg, geht eine Meldung an den Chat des Überwachers, und veröffentlicht ein
+**lokaler Podman-Container** diesen Port, wird er gestoppt und neu gestartet
+(begrenzt oft, mit Abstand zwischen den Versuchen); das Ergebnis steht in
+derselben Meldung. Auch die Rückkehr wird gemeldet. In den stillen Stunden
+heilt er, sammelt aber die Meldungen.
+
+```yaml
+    dienstwaechter:
+      enabled: true
+      ruhe_units: [laya-nachtraining.service]   # geplante Auszeit: kein Alarm, kein Heilen
+      # gnadenfrist: 180   intervall: 60   heilen: true   max_heilversuche: 3
+      # dienste: [{name: "Mein Dienst", url: "http://127.0.0.1:9000/health"}]
+```
+
+**Wer rootless Podman nutzt: nie aus einer systemd-Unit heraus einen
+Container mit schlichtem `podman start` starten.** Die Port-Weiterleitung
+(`rootlessport`) bleibt im cgroup des Aufrufers, und endet diese Unit, tötet
+systemd sie mit — der Container läuft weiter, sein Port ist tot. Genau das ist
+uns passiert. `voice_assistant/services/container.py` startet Container in
+einem eigenen transienten Scope (`systemd-run --user --scope`); den benutzen.
+
 ### Session-Key
 
 `openclaw_session` bestimmt, in welcher Session Voice-Anfragen landen. Damit Voice und Telegram-Chat denselben Kontext teilen, muss dieser Key mit dem Telegram-Session-Key übereinstimmen.

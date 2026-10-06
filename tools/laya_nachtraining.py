@@ -67,7 +67,7 @@ if os.path.exists(_VENV) and os.path.realpath(sys.executable) != os.path.realpat
     os.execv(_VENV, [_VENV, "-m", "tools.laya_nachtraining", *sys.argv[1:]])
 
 from voice_assistant.config import WORKSPACE, load_profile  # noqa: E402
-from voice_assistant.services import telegram  # noqa: E402
+from voice_assistant.services import container, telegram  # noqa: E402
 from voice_assistant.services.actuator import Actuator  # noqa: E402
 from voice_assistant.services.aktuator_schatten import laya_checkpoint  # noqa: E402
 from tools import aktuator_vergleich  # noqa: E402
@@ -211,8 +211,11 @@ class Lauf:
 
     def recreate_laya(self) -> dict | None:
         d = os.path.dirname(os.path.abspath(self.a.compose))
-        sh("podman-compose", "-f", os.path.basename(self.a.compose), "up", "-d",
-           "--force-recreate", self.a.container, cwd=d)
+        # Im eigenen Scope: sonst haengt die Port-Weiterleitung im cgroup
+        # dieser Unit und stirbt mit ihr (services/container.py).
+        sh(*container.im_eigenen_scope(
+            self.a.container, "podman-compose", "-f", os.path.basename(self.a.compose),
+            "up", "-d", "--force-recreate", self.a.container), cwd=d)
         return warte_health(self.cfg_url_live)
 
     def melden(self, text: str) -> None:
@@ -300,7 +303,10 @@ class Lauf:
             #    Checkpoint: bis zum Umschalten entscheidet er, nicht Gemma.
             for name in self.gestoppt:
                 if not laeuft(name):
-                    sh("podman", "start", name, check=False)
+                    # Nicht `podman start` direkt: die Port-Weiterleitung
+                    # starb sonst mit dieser Unit (2026-10-06 03:31, Qwen und
+                    # Laya einen Tag lang vom Host aus tot).
+                    container.starten(name)
         self.bericht["gemessen"] = gemessen
         self.qwen_pruefen()
 

@@ -361,6 +361,30 @@ class WatcherConfig:
 
 
 @dataclass
+class DienstWaechterConfig:
+    """Dienst-Waechter (services/dienstwaechter.py): merkt, wenn STT, Laya,
+    Klassifikations-LLM oder Speaches wegbleiben, meldet es an die Gruppe des
+    Ueberwachers (watcher.chat_id) und startet lokale Container neu.
+
+    Default enabled=False: ohne den Block laeuft nichts. Die Dienste stehen
+    nicht hier, sie kommen aus dem Profil (jede gesetzte URL, die der
+    Assistent benutzt); ``dienste`` ergaenzt weitere als {name, url}.
+    """
+    enabled: bool = False
+    intervall: float = 60.0
+    # So lange darf ein Dienst weg sein, bevor gemeldet und geheilt wird —
+    # ein Container-Neustart von Hand oder ein Modell-Laden soll nicht melden.
+    gnadenfrist: float = 180.0
+    heilen: bool = True
+    max_heilversuche: int = 3
+    heil_abstand: float = 1800.0
+    # systemd-User-Units, waehrend derer Ausfaelle geplant sind (z.B. ein
+    # Training, das Container stoppt, um die GPU frei zu haben).
+    ruhe_units: tuple[str, ...] = ()
+    dienste: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass
 class BargeInConfig:
     """Abbruch mitten im Turn ("Stopp Gaston"), optional pro Profil.
 
@@ -555,6 +579,9 @@ class Profile:
 
     # Überwacher Stufe 1 — fehlt der Block: kein Watcher-Thread.
     watcher: WatcherConfig = field(default_factory=WatcherConfig)
+
+    # Dienst-Waechter — fehlt der Block: kein Waechter-Thread.
+    dienstwaechter: DienstWaechterConfig = field(default_factory=DienstWaechterConfig)
 
     # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
     rewind: RewindConfig = field(default_factory=RewindConfig)
@@ -813,6 +840,19 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         haus_mcp_token=str(watcher_raw.get("haus_mcp_token", _dw.haus_mcp_token)),
     )
 
+    dw_raw = raw.get("dienstwaechter") or {}
+    _ddw = DienstWaechterConfig()
+    dienstwaechter = DienstWaechterConfig(
+        enabled=bool(dw_raw.get("enabled", _ddw.enabled)),
+        intervall=max(10.0, float(dw_raw.get("intervall", _ddw.intervall))),
+        gnadenfrist=float(dw_raw.get("gnadenfrist", _ddw.gnadenfrist)),
+        heilen=bool(dw_raw.get("heilen", _ddw.heilen)),
+        max_heilversuche=int(dw_raw.get("max_heilversuche", _ddw.max_heilversuche)),
+        heil_abstand=float(dw_raw.get("heil_abstand", _ddw.heil_abstand)),
+        ruhe_units=tuple(str(u) for u in dw_raw.get("ruhe_units") or ()),
+        dienste=tuple((str(d["name"]), str(d["url"])) for d in dw_raw.get("dienste") or ()),
+    )
+
     rewind_raw = raw.get("rewind") or {}
     _drw = RewindConfig()
     rewind = RewindConfig(
@@ -887,6 +927,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         locale=locale,
         actuator=actuator,
         watcher=watcher,
+        dienstwaechter=dienstwaechter,
         rewind=rewind,
         wakewords=wakewords,
         barge_in=barge_in,
