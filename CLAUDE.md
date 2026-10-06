@@ -47,7 +47,29 @@ Aufnahmen macht (`wakeword_studio record`), stoppt vorher die Unit.
 
 Das kleine Klassifikations-LLM des Aktuators und die Speaches-Container
 liegen in einem eigenen Repo (`openclaw-voice-stack`, compose je Host,
-`restart: unless-stopped`) — nicht hier, und nicht von Hand gestartet.
+`restart: unless-stopped`) — nicht hier.
+
+**`unless-stopped` allein startet bei rootless Podman nach einem Reboot
+nichts.** Das macht nur `podman-restart.service`, und der startet von Haus
+aus nur `restart=always`. Bis 2026-10-06 war er aus: nach dem Boot am
+2026-07-24 liefen die Container erst ab 07-30, von Hand aus tmux-Fenstern
+gestartet — und ihre Port-Weiterleitungen hingen seither an diesen Fenstern
+(siehe „Dienst-Wächter"). Seit 2026-10-06 auf dem Assistenz-Rechner:
+`podman-restart.service` aktiv, mit Drop-in
+`~/.config/systemd/user/podman-restart.service.d/unless-stopped.conf`, das
+`~/.local/bin/podman-start-unless-stopped` aufruft. Das startet jeden
+`unless-stopped`-Container im eigenen Scope — **außer** absichtlich
+gestoppten (`StoppedByUser=true`, z. B. die alte `llamacpp-gemma` auf der
+3060 Ti, die sonst den Grafikspeicher von Qwen/Laya/Speaches belegte).
+`ExecStop` bewusst nicht erweitert: ein `podman stop` beim Herunterfahren
+setzte `StoppedByUser=true`, und beim nächsten Boot bliebe alles aus. Einen
+Container von Hand starten: über `services/container.py` oder
+`systemd-run --user --scope podman start …`, nie direkt. Einen Container
+dauerhaft aus haben: `podman stop` (setzt `StoppedByUser`), nicht `kill`.
+Nicht dabei, weil `restart: no`: `paperless-https`, `speaches-warmup`,
+`mood-warmup` — die laufen nach einem Reboot nicht von selbst.
+Geprüft mit einem Wegwerf-Container (erzeugt, nie gestartet → gestartet,
+Port im eigenen Scope); ein echter Reboot steht noch aus.
 
 Der alte Monolith `voice_assistant.py` wurde in ein Package refaktoriert und
 liegt übergangsweise als `voice_assistant_legacy.py` weiter im Repo (zum
