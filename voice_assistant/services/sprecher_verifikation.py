@@ -27,13 +27,24 @@ Nachlernen wirken ohne Neustart.
 
 Vertrag wie bei der Diarization (SPEAKER_STATE.md): jeder Fehlerweg ergibt
 `ausgefallen`, nie `unbekannt`; ohne Referenzen `nicht_eingerichtet`.
+
+Mit `url` (Profil `sprecher_verifikation_url`, seit 2026-10-07) rechnet ein
+anderer Rechner nur den Fingerabdruck: voice-analysis `/fingerabdruck` im
+openclaw-voice-stack, mit wörtlich derselben Rechnung und denselben
+Paketversionen. Anlass: ein Pi 4 braucht ~0,37 s je Audio-Sekunde (median
+2,8 s) und überschreitet damit DIARIZATION_JOIN_TIMEOUT. Gesendet werden die
+float32-Samples selbst, kein neu kodiertes WAV — so kommt auf der Gegenseite
+exakt dasselbe Array an. Referenzen, Vergleich und Urteil bleiben hier;
+antwortet der Dienst nicht, ist das ein Ausfall wie jeder andere.
 """
 
 from __future__ import annotations
 
 import io
+import json
 import os
 import threading
+import urllib.request
 import wave
 
 import numpy as np
@@ -91,15 +102,20 @@ class SprecherVerifikation:
     """`diarize(wav_bytes) -> SpeakerVerdict`, austauschbar mit SpeachesDiarizer."""
 
     def __init__(self, schwelle: float = 0.40, abstand: float = 0.15,
-                 threads: int = 4, sprecher_dir: str = SPEAKERS_DIR) -> None:
-        import onnxruntime as ort
-        from huggingface_hub import hf_hub_download
+                 threads: int = 4, sprecher_dir: str = SPEAKERS_DIR,
+                 url: str = "", timeout: float = 3.0) -> None:
+        self.url = url.rstrip("/")
+        self.timeout = timeout
+        self._sess = None
+        if not self.url:
+            import onnxruntime as ort
+            from huggingface_hub import hf_hub_download
 
-        so = ort.SessionOptions()
-        so.intra_op_num_threads = threads
-        so.inter_op_num_threads = 1
-        pfad = hf_hub_download(MODELL_REPO, MODELL_DATEI)
-        self._sess = ort.InferenceSession(pfad, so, providers=["CPUExecutionProvider"])
+            so = ort.SessionOptions()
+            so.intra_op_num_threads = threads
+            so.inter_op_num_threads = 1
+            pfad = hf_hub_download(MODELL_REPO, MODELL_DATEI)
+            self._sess = ort.InferenceSession(pfad, so, providers=["CPUExecutionProvider"])
         self.schwelle = schwelle
         self.abstand = abstand
         self.sprecher_dir = sprecher_dir
@@ -107,9 +123,24 @@ class SprecherVerifikation:
         self._refs: dict[str, tuple[float, np.ndarray]] = {}   # name -> (mtime, Fingerabdruck)
 
     def fingerabdruck(self, audio: np.ndarray) -> np.ndarray:
+        if self.url:
+            return self._fingerabdruck_entfernt(audio)
         f = _fbank(audio)
         e = self._sess.run(None, {"feats": f[None, :, :]})[0][0]
         return e / np.linalg.norm(e)
+
+    def _fingerabdruck_entfernt(self, audio: np.ndarray) -> np.ndarray:
+        req = urllib.request.Request(
+            f"{self.url}/fingerabdruck",
+            data=np.ascontiguousarray(audio, dtype="<f4").tobytes(),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            antwort = json.loads(resp.read())
+        e = np.asarray(antwort["vektor"], dtype=np.float32)
+        if e.ndim != 1 or e.size == 0 or not np.all(np.isfinite(e)):
+            raise ValueError(f"unbrauchbarer Fingerabdruck von {self.url}")
+        return e
 
     def _referenzen(self) -> tuple[dict[str, np.ndarray], int]:
         """Fingerabdrücke aller angelernten Stimmen; neu nur, wenn die Datei sich

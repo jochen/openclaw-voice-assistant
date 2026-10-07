@@ -521,6 +521,10 @@ class Profile:
     sprecher_verifikation: bool = False
     sprecher_schwelle: float = 0.40
     sprecher_abstand: float = 0.15
+    # Fingerabdruck auf einem anderen Rechner rechnen lassen (voice-analysis
+    # /fingerabdruck, openclaw-voice-stack) — fuer schwache Hardware wie den
+    # Pi 4 (2,8 s statt 50 ms). Leer = lokal.
+    sprecher_verifikation_url: str = ""
     speaches_tts_model: str = ""
     speaches_tts_voice: str = ""
 
@@ -940,6 +944,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         sprecher_verifikation=bool(raw.get("sprecher_verifikation", False)),
         sprecher_schwelle=float(raw.get("sprecher_schwelle", 0.40)),
         sprecher_abstand=float(raw.get("sprecher_abstand", 0.15)),
+        sprecher_verifikation_url=str(raw.get("sprecher_verifikation_url", "") or ""),
         speaches_tts_model=str(raw.get("speaches_tts_model", "")),
         speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
         openclaw_token=str(raw.get("openclaw_token", "")),

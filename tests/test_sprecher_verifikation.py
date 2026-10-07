@@ -122,5 +122,101 @@ class DiarizeTest(unittest.TestCase):
         self.assertEqual(v.diarize(_wav(0.3)).name, "petra")
 
 
+class _Gegenstelle:
+    """voice-analysis /fingerabdruck im Kleinen: merkt sich die Samples und
+    antwortet mit dem Fake-Abdruck — oder mit dem, was der Test vorgibt."""
+
+    def __init__(self, antwort=None, status=200):
+        import http.server
+        import threading
+
+        self.empfangen = []
+        stelle = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                roh = self.rfile.read(int(self.headers["Content-Length"]))
+                audio = np.frombuffer(roh, dtype="<f4")
+                stelle.empfangen.append(audio)
+                body = antwort if antwort is not None else {"vektor": list(map(float, _fake_abdruck(audio)))}
+                daten = body if isinstance(body, bytes) else __import__("json").dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(daten)))
+                self.end_headers()
+                self.wfile.write(daten)
+
+            def log_message(self, *a):
+                pass
+
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_port}"
+
+    def stop(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+
+class EntferntTest(unittest.TestCase):
+    """sprecher_verifikation_url: nur der Fingerabdruck wird woanders gerechnet."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.verz = self.tmp.name
+        with open(os.path.join(self.verz, "jochen.wav"), "wb") as f:
+            f.write(_wav(0.1))
+        with open(os.path.join(self.verz, "petra.wav"), "wb") as f:
+            f.write(_wav(0.6))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _v(self, url):
+        # Echter Konstruktor: mit url darf er kein ONNX-Modell laden
+        return SprecherVerifikation(sprecher_dir=self.verz, url=url, timeout=2.0)
+
+    def test_bekannte_stimme_ueber_die_gegenstelle(self):
+        g = _Gegenstelle()
+        try:
+            u = self._v(g.url).diarize(_wav(0.1))
+        finally:
+            g.stop()
+        self.assertEqual((u.name, u.status), ("jochen", STATUS_BEKANNT))
+
+    def test_samples_kommen_unveraendert_an(self):
+        # Kein WAV unterwegs: genau das float32-Array, das lokal gerechnet wuerde
+        g = _Gegenstelle()
+        try:
+            v = self._v(g.url)
+            audio = np.linspace(-0.5, 0.5, 1601, dtype=np.float32)
+            v.fingerabdruck(audio)
+        finally:
+            g.stop()
+        np.testing.assert_array_equal(g.empfangen[-1], audio)
+
+    def test_fehler_der_gegenstelle_ist_ausfall(self):
+        g = _Gegenstelle(antwort={"error": "onnx"}, status=500)
+        try:
+            u = self._v(g.url).diarize(_wav(0.1))
+        finally:
+            g.stop()
+        self.assertEqual(u.status, STATUS_AUSGEFALLEN)
+
+    def test_gegenstelle_nicht_erreichbar_ist_ausfall(self):
+        g = _Gegenstelle()
+        url = g.url
+        g.stop()                                # Port ist jetzt zu
+        self.assertEqual(self._v(url).diarize(_wav(0.1)).status, STATUS_AUSGEFALLEN)
+
+    def test_unbrauchbarer_vektor_ist_ausfall(self):
+        for kaputt in ({"vektor": []}, {"vektor": [float("nan"), 1.0]}, {"nix": 1}, b"kein json"):
+            g = _Gegenstelle(antwort=kaputt)
+            try:
+                u = self._v(g.url).diarize(_wav(0.1))
+            finally:
+                g.stop()
+            self.assertEqual(u.status, STATUS_AUSGEFALLEN, kaputt)
+
+
 if __name__ == "__main__":
     unittest.main()

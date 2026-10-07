@@ -67,6 +67,8 @@ def main() -> int:
     ap.add_argument("--schwelle", type=float, default=0.40)
     ap.add_argument("--abstand", type=float, default=0.15)
     ap.add_argument("--mit-leer", action="store_true")
+    ap.add_argument("--url", default="",
+                    help="Fingerabdruck dort rechnen (voice-analysis /fingerabdruck) statt lokal")
     args = ap.parse_args()
 
     wahr = {}
@@ -81,7 +83,7 @@ def main() -> int:
             if d.get("result") == "outcome" and d.get("ausgang") == "leer" and c not in _LEER_ABER_ECHT:
                 wahr.setdefault(c, "niemand")
 
-    v = SprecherVerifikation(schwelle=args.schwelle, abstand=args.abstand)
+    v = SprecherVerifikation(schwelle=args.schwelle, abstand=args.abstand, url=args.url)
     zaehl = {"richtig": 0, "unbekannt": 0, "FALSCH": 0, "ohne Audio": 0}
     for clip, soll in sorted(wahr.items()):
         b = _audio(clip)
