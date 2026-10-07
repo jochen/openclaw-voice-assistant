@@ -104,8 +104,9 @@ def main() -> int:
     alle = sorted([*vorhanden.values(), *neu], key=lambda z: z[0])
     os.makedirs(os.path.dirname(ziel), exist_ok=True)
     with open(ziel, "w", encoding="utf-8") as f:
-        f.write("# Aussprache-Ergaenzungen: vom LLM vorgeschlagen, per STT-Rueckprobe geprueft\n")
-        f.write("# (tools/aussprache_ergaenzen.py), oeffentlich (tools/aussprache_veroeffentlichen.py).\n")
+        f.write("# Aussprache-Ergaenzungen (oeffentlich): vom LLM vorgeschlagen und per STT-Rueckprobe\n")
+        f.write("# geprueft (tools/aussprache_ergaenzen.py -> tools/aussprache_veroeffentlichen.py),\n")
+        f.write("# oder von Hand nach Hoerprobe eingetragen (allgemeine Woerter, keine Eigennamen).\n")
         f.write("# CC BY-SA 4.0, siehe LIZENZ.md\n")
         f.write("# wort\tphoneme\tumschreibung\tdatum\n")
         for z in alle:
