@@ -1,0 +1,7 @@
+# Aussprache-Ergaenzungen (oeffentlich): vom LLM vorgeschlagen und per STT-Rueckprobe
+# geprueft (tools/aussprache_ergaenzen.py -> tools/aussprache_veroeffentlichen.py),
+# oder von Hand nach Hoerprobe eingetragen (allgemeine Woerter, keine Eigennamen).
+# CC BY-SA 4.0, siehe LIZENZ.md
+# wort	phoneme	umschreibung	datum
+FabLab	fˈɛplˌɛp		2026-10-07
+Fablab	fˈɛplˌɛp		2026-10-07

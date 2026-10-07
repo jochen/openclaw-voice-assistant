@@ -46,7 +46,7 @@ from voice_assistant.config import (
     WakewordConfig,
     load_profile,
 )
-from voice_assistant.services import aktuator_schatten
+from voice_assistant.services import aktuator_schatten, telegram
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.actuator import (
     Actuator,
@@ -56,10 +56,12 @@ from voice_assistant.services.actuator import (
 )
 from voice_assistant.services.diarization import (
     STATUS_AUSGEFALLEN,
+    STATUS_BEKANNT,
     SpeachesDiarizer,
     SpeakerVerdict,
 )
 from voice_assistant.services.speaker_state import write_current_speaker
+from voice_assistant.services.sprecher_verifikation import SprecherVerifikation
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
@@ -70,7 +72,9 @@ from voice_assistant.services.leds import (
     LedDirector, RespeakerRing, WledLeds,
 )
 from voice_assistant.services.speaches import SpeachesState
-from voice_assistant.services.stt import LocalWhisperStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes
+from voice_assistant.services.stt import (
+    LlamaCppAsrStt, LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
+)
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -96,6 +100,7 @@ from voice_assistant.state import (
 )
 from voice_assistant.wakeword.openwakeword_engine import OpenWakewordEngine
 from voice_assistant.wakeword.respeaker import RespeakerWakeword
+from voice_assistant.anrede import anrede_im_text
 from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
 from voice_assistant.nearmiss_shadow import NearMissShadow
 from voice_assistant.rewind import RewindBuffer
@@ -290,6 +295,17 @@ def _save_trigger_audio(audio_chunks: list, bundle: str, kind: str, trigger_id: 
             f.write(chunks_to_wav_bytes(list(audio_chunks)))
     except Exception as e:
         print(f"⚠️  Trigger-Audio ({kind}) nicht gespeichert: {e}")
+
+
+def _ist_stiller_abbruch(
+    bargein_round: int, speech_detected: bool, chunks_seit_trigger: int, nachlauf_chunks: int
+) -> bool:
+    """Aufnahme nach einem Barge-in, in der nach dem Trigger nichts mehr kam.
+
+    Begruendung an der Aufrufstelle in STATE_RECORDING. Nur nach einem
+    Barge-in: nach einem normalen Ruf ist Schweigen das Warten auf das "Ja?".
+    """
+    return bool(bargein_round) and not speech_detected and chunks_seit_trigger >= nachlauf_chunks
 
 
 def _pre_roll(ring: deque, seconds: float) -> list:
@@ -934,12 +950,55 @@ def run() -> None:
     leds.set_boot_step(12)  # Wakeword-Modell geladen
 
     # --- Services zusammenstecken ---
-    stt_pipeline = SttPipeline(speaches_stt, local_stt)
+    onnx_stt = None
+    if profile.stt_onnx_model:
+        try:
+            onnx_stt = OnnxAsrStt(profile.stt_onnx_model, profile.stt_onnx_threads)
+        except Exception as e:
+            # Ohne das Modell läuft alles wie vorher über Speaches — kein Grund,
+            # den Assistenten nicht zu starten.
+            print(f"⚠️  {profile.stt_onnx_model} nicht ladbar ({e}) → Speaches zuerst")
+    llamacpp_stt = None
+    if profile.stt_llamacpp_url:
+        def _stt_kontext() -> str | None:
+            # Wakewort + je Ziel der erste Name, in Digest-Reihenfolge — genau
+            # die Form, mit der gemessen wurde (tools/stt_vergleich.py). Liest
+            # den Aktuator beim Aufruf: er entsteht erst weiter unten, und die
+            # Ziele ändern sich mit jedem capabilities-Refresh.
+            try:
+                if actuator is None or not actuator.ziele:
+                    return None
+            except NameError:               # vor dem Anlegen des Aktuators
+                return None
+            namen: list[str] = []
+            for z in actuator.ziele:
+                n = (z.get("namen") or [None])[0]
+                if n and n not in namen:
+                    namen.append(n)
+            wort = profile.wakewords[0].bundle.replace("_", " ").title()
+            return f"{wort}, " + ", ".join(namen) + "."
+        llamacpp_stt = LlamaCppAsrStt(
+            profile.stt_llamacpp_url,
+            kontext=_stt_kontext if profile.stt_llamacpp_kontext else None,
+        )
+        print(f"✅ STT über llama.cpp: {profile.stt_llamacpp_url}"
+              + (" (mit Gerätenamen als Kontext)" if profile.stt_llamacpp_kontext else ""))
+    stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt, llamacpp_stt)
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
     thinking = ThinkingWorker(
         audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts
     )
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
+    if profile.sprecher_verifikation:
+        try:
+            diarizer = SprecherVerifikation(profile.sprecher_schwelle, profile.sprecher_abstand,
+                                            url=profile.sprecher_verifikation_url)
+            wo = profile.sprecher_verifikation_url or "CPU"
+            print(f"✅ Sprecher-Verifikation ({wo}): Schwelle {profile.sprecher_schwelle:.2f}, "
+                  f"Abstand {profile.sprecher_abstand:.2f}")
+        except Exception as e:
+            # Ohne Modell bleibt die Diarization — kein Grund, nicht zu starten.
+            print(f"⚠️  Sprecher-Verifikation nicht ladbar ({e}) → Diarization über Speaches")
     if not VOICE_ANALYSIS_BASE:
         # Bis 2026-07 war das eine Konstante im Code. Wer von einer älteren
         # Fassung aktualisiert, verliert die Analyse sonst wortlos.
@@ -991,7 +1050,16 @@ def run() -> None:
                 n_ziele = len(actuator.digest or {})
                 print(f"🔌 Aktuator aktiv — {n_ziele} Ziele, Version {actuator.version}")
                 if profile.actuator.laya_url:
-                    aktuator_schatten.aufwaermen(actuator)
+                    # Passt der Checkpoint nicht zu den capabilities, geht das
+                    # an die Argus-Gruppe — dort landet, was am Aktuator schief ist.
+                    wt = profile.watcher
+                    melden = None
+                    if wt.chat_id:
+                        bot_tok = wt.bot_token or profile.telegram_bot_token
+                        melden = lambda text: telegram.send(bot_tok, wt.chat_id, text)  # noqa: E731
+                    aktuator_schatten.aufwaermen(actuator, melden)
+                    actuator.nach_refresh.append(
+                        lambda: aktuator_schatten.pruefe_checkpoint(actuator, melden))
             else:
                 print("⚠️  Aktuator aktiviert, aber initialer refresh() fehlgeschlagen — startet ohne Ziel-Vokabular, Poll/MQTT versuchen es weiter")
         except Exception as e:
@@ -1029,6 +1097,48 @@ def run() -> None:
     elif profile.watcher.enabled and not profile.watcher.chat_id:
         print("⚠️  Überwacher aktiviert, aber watcher.chat_id ist leer — "
               "kein Ziel für Meldungen. Überwacher bleibt aus.")
+
+    # --- Aussprache-Liste (Problemwoerter als Phoneme an Piper) ---
+    if profile.aussprache.enabled:
+        try:
+            from voice_assistant.services import aussprache as aussprache_mod
+            _as = aussprache_mod.fuer_sprache(profile.aussprache.sprache)
+            aussprache_mod.einrichten(_as)
+            print(f"🗣️  Aussprache-Liste ({profile.aussprache.sprache}): "
+                  f"{len(_as._lexikon)} Einträge, Fälle → {_as.faelle_pfad}")
+        except Exception as e:
+            print(f"⚠️  Aussprache-Liste nicht geladen: {e}")
+
+    # --- Dienst-Waechter (Ausfall melden + lokale Container neu starten) ---
+    # Meldet an dieselbe Gruppe wie der Ueberwacher. Ohne chat_id laeuft er
+    # trotzdem: dann steht es nur im Journal, und geheilt wird auch.
+    if profile.dienstwaechter.enabled:
+        try:
+            from voice_assistant.services.dienstwaechter import (
+                DienstWaechter, dienste_aus_profil,
+            )
+            dwc, wt = profile.dienstwaechter, profile.watcher
+            dw_bot = wt.bot_token or profile.telegram_bot_token
+            dw_dienste = dienste_aus_profil(profile)
+            DienstWaechter(
+                dw_dienste,
+                melden=lambda text: telegram.send(dw_bot, wt.chat_id, text),
+                intervall=dwc.intervall,
+                gnadenfrist=dwc.gnadenfrist,
+                heilen=dwc.heilen,
+                ruhe_units=dwc.ruhe_units,
+                quiet_start=wt.quiet_start,
+                quiet_end=wt.quiet_end,
+                max_heilversuche=dwc.max_heilversuche,
+                heil_abstand=dwc.heil_abstand,
+            ).start()
+            print(f"🩺 Dienst-Wächter aktiv: {', '.join(d.name for d in dw_dienste)}"
+                  f" (alle {dwc.intervall:.0f} s, Frist {dwc.gnadenfrist:.0f} s,"
+                  f" heilen: {'ja' if dwc.heilen else 'nein'}"
+                  + (f", Ruhe bei {', '.join(dwc.ruhe_units)}" if dwc.ruhe_units else "")
+                  + ")")
+        except Exception as e:
+            print(f"⚠️  Dienst-Wächter-Start fehlgeschlagen: {e}")
 
     # --- State-Machine ---
     state = STATE_LISTENING
@@ -1169,6 +1279,10 @@ def run() -> None:
     # gleiche Ueberlegung wie bei followup_round/unklar_round), und die Quittung
     # nach dem Abbruch wird nur hier gesprochen.
     bargein_round = 0
+    # Die Aufnahme nach einem Barge-in endete, weil nach dem Trigger nichts
+    # mehr kam (reiner Abbruch, siehe STATE_RECORDING). Dann geht der Turn nie
+    # an den Brain — egal, was die STT aus dem kurzen Stueck macht.
+    bargein_still = False
     # Barge-in ist gerade stummgeschaltet, weil der Assistent selbst spricht
     # (nur bei while_speaking=False). Merker, damit der Ring genau EINMAL beim
     # Uebergang geleert wird und nicht bei jedem Chunk.
@@ -1414,6 +1528,7 @@ def run() -> None:
                             turn_speech_chunks = 0
                             turn_loud_chunks = 0
                             nur_wakewort_runde = False
+                            bargein_round = 0   # frischer Ruf, kein Barge-in (s. "keine Sprache" unten)
                             turn_rms = []
                             turn_frames_speech = 0
                             turn_frames_total = 0
@@ -1549,6 +1664,7 @@ def run() -> None:
                         turn_speech_chunks = 0
                         turn_loud_chunks = 0
                         nur_wakewort_runde = False
+                        bargein_round = 0   # frischer Ruf, kein Barge-in (s. "keine Sprache" unten)
                         turn_rms = []
                         turn_frames_speech = 0
                         turn_frames_total = 0
@@ -1647,9 +1763,28 @@ def run() -> None:
 
                 timeout = (now - state_start) > turn_max_sec
                 stop = speech_detected and silence_counter >= turn_silence_limit
+                # Reiner Abbruch: nach einem Barge-in kommt eine Nachlauf-Laenge
+                # lang keine Sprache. Das Stopp-Wort steckt dann ganz im
+                # Pre-Roll ("Gaston stopp" ist gesagt, bevor der Trigger
+                # feuert), und den sieht der VAD nie — ohne diese Regel wartete
+                # die Aufnahme auf Sprache, die nicht kommt, bis der Nutzer bei
+                # offener Aufnahme (Ring rot) noch einmal "Stopp" sagte. So bei
+                # allen drei Abbruechen im Archiv (2026-09-23, -10-05, -10-06).
+                # Gezaehlt in Chunks, nicht in Uhrzeit: nach dem Abbruch-Beep
+                # kommt ein Rueckstau auf einmal (wie tools/endpoint_replay.py
+                # --bargein). Warum nicht einfach den Pre-Roll als Sprache
+                # zaehlen: dann endete die Aufnahme genauso frueh, aber die
+                # STT muesste aus dem kurzen Stueck das Stopp-Wort lesen — bei
+                # Qwen klappte das in 2 von 3 Faellen ("Gastvorstellung."), und
+                # was sie nicht erkennt, ginge als neuer Auftrag an den Brain.
+                still_abbruch = _ist_stiller_abbruch(
+                    bargein_round, speech_detected,
+                    len(recorded_chunks) - pre_roll_chunks, turn_silence_limit,
+                )
 
-                if stop or timeout:
-                    reason = "silence" if stop else "timeout"
+                if stop or timeout or still_abbruch:
+                    reason = ("silence" if stop
+                              else "bargein_still" if still_abbruch else "timeout")
                     pre_roll_sec = pre_roll_chunks * _chunk_sec
                     dur = len(recorded_chunks) * _chunk_sec
                     print(
@@ -1689,7 +1824,13 @@ def run() -> None:
                         trigger_audio_id = None
                     # Der Pre-Roll zählt für MIN_SPEECH_CHUNKS nicht mit — sonst
                     # wäre das Gate allein durch ihn immer erfüllt.
-                    if speech_detected and (len(recorded_chunks) - pre_roll_chunks) >= MIN_SPEECH_CHUNKS:
+                    # Der reine Abbruch geht trotzdem durch die STT: sein
+                    # Stopp-Wort im Pre-Roll ist der Beleg fuer das
+                    # Fehltrigger-Label und die Quittung.
+                    bargein_still = still_abbruch
+                    if still_abbruch or (
+                        speech_detected and (len(recorded_chunks) - pre_roll_chunks) >= MIN_SPEECH_CHUNKS
+                    ):
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
                         turn_stt_q = queue.Queue()
@@ -1704,6 +1845,10 @@ def run() -> None:
                         _flush_endpoint(ausgang="keine_sprache")
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
+                        # Sonst bliebe ein Barge-in ohne Sprache markiert, und der
+                        # NAECHSTE normale Ruf liefe als Barge-in — Aktuator
+                        # gesperrt (2026-10-05 16:59: "Tischlicht aus" -> Brain).
+                        bargein_round = 0
                         state = STATE_LISTENING
 
             # --- PROCESSING (STT running) ---
@@ -1725,6 +1870,8 @@ def run() -> None:
                         bargein.reset()
                     war_bargein = bargein_round
                     bargein_round = 0
+                    war_bargein_still = bargein_still
+                    bargein_still = False
                     if pending_confirm is not None:
                         # Ja/Nein-Antwort auf eine Aktuator-Rückfrage (Handshake).
                         try:
@@ -1895,6 +2042,28 @@ def run() -> None:
                         followup_rms_sum = 0.0
                         followup_rms_count = 0
                         followup_vad_speech = 0
+                    elif war_bargein_still:
+                        # Reiner Abbruch, aber die STT fand im kurzen Stueck
+                        # kein Stopp-Wort (oder gar nichts). Kein neuer Auftrag
+                        # — dafuer haette nach dem Trigger jemand sprechen
+                        # muessen. Ohne Stopp-Wort auch kein Fehltrigger-Label
+                        # und keine Quittung: der Beep hat den Abbruch schon
+                        # angezeigt, das "Okay" sagt "Stopp verstanden".
+                        print(f"[{now:.1f}s] 🛑 Abbruch ohne weiteren Auftrag: '{text}'")
+                        _log_outcome("bargein_still", transcript=text, via="bargein")
+                        _flush_endpoint(text, ausgang="bargein_still", via="bargein")
+                        try:
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        bargein_abgebrochen_audio = None
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        state = STATE_LISTENING
                     elif text:
                         # Kein Stopp-Wort: der Barge-in war ein neuer Auftrag,
                         # kein Urteil ueber den abgebrochenen Trigger. Das
@@ -1915,6 +2084,11 @@ def run() -> None:
                         intent = None
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         aktuator_gesperrt = followup_round > 0 or bool(war_bargein)
+                        # Erst-Turn: diese Aufnahme beginnt mit dem Wakewort im
+                        # Pre-Roll (auch ein Barge-in). Nach "Ja?", in Follow-ups
+                        # und nach einer Rückfrage fehlt es zu Recht. Hier
+                        # festgehalten, weil die Zähler unten zurückgesetzt werden.
+                        erst_turn = followup_round == 0 and not unklar_round and not nur_wakewort_runde
                         # Klassifikation: entscheidet Gemma (Torfrage + classify)
                         # oder Laya (mit Gemma als Rueckfall), siehe
                         # actuator.klassifikator und services/aktuator_schatten.py.
@@ -1970,6 +2144,9 @@ def run() -> None:
                                 "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
                                 "grund": (resp or {}).get("grund"),
                                 "gesprochen": (resp or {}).get("gesprochen"),
+                                # Zustand vor dem Schalten, wenn die Gegenstelle ihn
+                                # mitliefert (ACTUATOR_INTERFACE.md, "vorher"/"bereits").
+                                "vorher": (resp or {}).get("vorher"),
                                 "unklar_round": unklar_round,
                             }
                             # Ein ausgefuehrtes Schaltkommando ist der stärkste
@@ -2175,7 +2352,18 @@ def run() -> None:
                                 mood_label = ""
                             _flush_endpoint(text, speaker=spk_label, ausgang="brain")
                             print(f"[{now:.1f}s] 📤 Sending to OpenClaw [{spk_label}{' | ' + mood_label if mood_label else ''}]: '{text}'")
-                            _log_outcome("brain", transcript=text)
+                            # Fehltrigger-Hinweis (voice_assistant/anrede.py): kein
+                            # Filter, nur ein Beleg für den Brain, der am Inhalt
+                            # entscheidet, ob er gemeint ist.
+                            hinweis = None
+                            if (profile.anrede_hinweis and erst_turn
+                                    and spk_verdict.status != STATUS_BEKANNT
+                                    and not anrede_im_text(text, current_wakeword.bundle)):
+                                hinweis = profile.locale.anrede_hinweis
+                                print(f"[{now:.1f}s] 🗯️  Wakewort fehlt im Transkript, Sprecher "
+                                      f"{spk_label} → Hinweis an den Brain")
+                            _log_outcome("brain", transcript=text,
+                                         **({"anrede_hinweis": True} if hinweis else {}))
                             # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
                             # last_speaker nur bei positiver ID überschreiben — ein
                             # nicht zuordenbarer Kurz-Follow-up (spk=None) soll den
@@ -2192,6 +2380,7 @@ def run() -> None:
                             workers.start_openclaw_turn(
                                 text, speaker=spk_verdict, mood=mood,
                                 session=current_wakeword.session, turn=turn_nr,
+                                hinweis=hinweis,
                             )
                             state = STATE_WAITING
                             state_start = now

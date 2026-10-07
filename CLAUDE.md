@@ -47,7 +47,29 @@ Aufnahmen macht (`wakeword_studio record`), stoppt vorher die Unit.
 
 Das kleine Klassifikations-LLM des Aktuators und die Speaches-Container
 liegen in einem eigenen Repo (`openclaw-voice-stack`, compose je Host,
-`restart: unless-stopped`) — nicht hier, und nicht von Hand gestartet.
+`restart: unless-stopped`) — nicht hier.
+
+**`unless-stopped` allein startet bei rootless Podman nach einem Reboot
+nichts.** Das macht nur `podman-restart.service`, und der startet von Haus
+aus nur `restart=always`. Bis 2026-10-06 war er aus: nach dem Boot am
+2026-07-24 liefen die Container erst ab 07-30, von Hand aus tmux-Fenstern
+gestartet — und ihre Port-Weiterleitungen hingen seither an diesen Fenstern
+(siehe „Dienst-Wächter"). Seit 2026-10-06 auf dem Assistenz-Rechner:
+`podman-restart.service` aktiv, mit Drop-in
+`~/.config/systemd/user/podman-restart.service.d/unless-stopped.conf`, das
+`~/.local/bin/podman-start-unless-stopped` aufruft. Das startet jeden
+`unless-stopped`-Container im eigenen Scope — **außer** absichtlich
+gestoppten (`StoppedByUser=true`, z. B. die alte `llamacpp-gemma` auf der
+3060 Ti, die sonst den Grafikspeicher von Qwen/Laya/Speaches belegte).
+`ExecStop` bewusst nicht erweitert: ein `podman stop` beim Herunterfahren
+setzte `StoppedByUser=true`, und beim nächsten Boot bliebe alles aus. Einen
+Container von Hand starten: über `services/container.py` oder
+`systemd-run --user --scope podman start …`, nie direkt. Einen Container
+dauerhaft aus haben: `podman stop` (setzt `StoppedByUser`), nicht `kill`.
+Nicht dabei, weil `restart: no`: `paperless-https`, `speaches-warmup`,
+`mood-warmup` — die laufen nach einem Reboot nicht von selbst.
+Geprüft mit einem Wegwerf-Container (erzeugt, nie gestartet → gestartet,
+Port im eigenen Scope); ein echter Reboot steht noch aus.
 
 Der alte Monolith `voice_assistant.py` wurde in ein Package refaktoriert und
 liegt übergangsweise als `voice_assistant_legacy.py` weiter im Repo (zum
@@ -104,6 +126,8 @@ voice_assistant/
     stt.py               SpeachesStt + LocalWhisperStt + SttPipeline
     tts.py               SpeachesTts + Piper + ReplySpeaker + ThinkingWorker
     openclaw.py          /v1/responses Client
+    dienstwaechter.py    Ausfall der Dienste melden, lokale Container neu starten
+    container.py         Podman-Container im eigenen Scope starten (rootlessport-Falle)
 ```
 
 ### Wakeword-Studio-CLI (`wakeword_studio/`)
@@ -170,7 +194,12 @@ Jochen 2026-10-01), `setzen` ohne Zahl → Rückfrage. Tests
 Checkpoint nach `~/laya-modelle/`, gehört zu genau einer capabilities-Version)
 → Container `laya` in `openclaw-voice-stack` (`LAYA_CKPT`). Messen:
 `tools/aktuator_vergleich.py` (Test-Set oder `--schatten`). Stand und Zahlen:
-`LAYA_TRAINING.md`, Abschnitt „Stand". `schatten_url` (der Name vom
+`LAYA_TRAINING.md`, Abschnitt „Stand". **Checkpoint-Version gegen
+Live-Version (seit 2026-10-06):** `/health` des Containers trägt
+`checkpoint.capabilities`, `aktuator_schatten.pruefe_checkpoint` meldet eine
+Abweichung (Journal + Argus-Gruppe), `tools/laya_nachtraining.py`
+(`laya-nachtraining.timer`, 3:00) trainiert dann neu und schaltet nur hinter
+Schranken um. `schatten_url` (der Name vom
 2026-09-29) wird als alter Name von `laya_url` weiter gelesen.
 **Wer das Training anfasst oder automatisiert, liest `LAYA_TRAINING.md`** —
 Ablauf, die Fallen der ersten Läufe (OOM, Training verdrängt Speaches, torch-CPU-Fassung, HTTP 500
@@ -271,6 +300,51 @@ abrufbar, urteilt er mit dem letzten bekannten und vermerkt es im Befund.
 Docstring, Labels in `testsets/argus_befunde_labels.jsonl`. Hintergrund und
 Entscheidungen: MemPalace `noderedpi4-home-pi/weltmodell`.
 
+### Aussprache-Liste (`aussprache:`, seit 2026-10-06)
+
+`services/aussprache.py` ersetzt in `SpeachesTts.synth`/`piper_synth` (nach
+`clean_for_tts`, das Klammern entfernt) Problemwörter durch `[[Phoneme]]`.
+Nur bei Piper-Modellen. Schichten, spätere gewinnen: Repo
+`data/aussprache/de_wiktionary.tsv` + `de_ergaenzt.tsv` → Workspace
+`voice/aussprache/de_ergaenzt.tsv` (LLM, privat) → `de_eigen.tsv` (Brain-
+Werkzeug `voice_aussprache_setzen`, Endpunkt `POST /aussprache` am
+Sprech-Server). Fälle: `de_faelle.jsonl` (nicht aus der Bestätigung, siehe
+`ohne_sammeln`); Timer `aussprache-ergaenzen.timer` 05:15 läuft erst ab 50.
+Übernahme ohne Anhören, Prüfung per STT-Rückprobe (Jochen).
+**Speaches braucht den piper-Patch** (`openclaw-voice-stack`
+`patches/piper_voice.py`, seit 2026-10-07 auf beiden Hosts): piper 1.3.0
+machte aus dem Rest hinter einem Block am Satzende einen leeren Satz → lautes
+„zischd" (im Fablab gehört, Ursache im Container gelesen). Die Lehren beim
+Bau, alle gemessen: Homographen über Groß/klein, Funktionswörter, und die
+Abbildung auf espeaks Zeichenvorrat (Docstrings von
+`tools/aussprache_grundstock.py` und `piper_phoneme`). Jochens Hinweis dazu:
+„nicht verrennen, am Anfang muss es nicht perfekt sein" — erst Betrieb
+beobachten, dann nachbessern. Offen: ASCII-Umlaute aus Brain-Antworten
+(„fuenf") gehören eigentlich in die Textaufbereitung. Tests:
+`tests/test_aussprache.py`.
+
+### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
+
+`services/dienstwaechter.py` — Thread im Assistenten, prüft alle 60 s
+`/health` jeder Dienst-URL aus dem Profil (Speaches, Qwen, Gemma, Laya;
+`dienste_aus_profil`). Weg länger als `gnadenfrist` (180 s) → Meldung an die
+Argus-Gruppe, lokaler Container (über den Port gefunden) wird gestoppt und im
+eigenen Scope gestartet, Ergebnis in derselben Meldung; höchstens 3 Versuche
+mit 30 min Abstand. Still während `ruhe_units` (hier
+`laya-nachtraining.service` — das Training stoppt Laya und Qwen absichtlich;
+ein Heilversuch dort startete einen Container ins Training hinein). Tests:
+`tests/test_dienstwaechter.py`.
+
+Anlass: 2026-10-06 03:31–18:50 waren Qwen und Laya vom Host aus tot, und die
+Rückfall-Ketten haben es perfekt verdeckt. Ursache war **rootless Podman**:
+`rootlessport` bleibt im cgroup dessen, der `podman start` aufruft. Der
+Probelauf des Nachtrainings (transiente Unit) startete die Container, endete
+mit Timeout, und systemd tötete die Weiterleitungen mit. Seither startet
+**jeder Container-Start in diesem Repo über `services/container.py`**
+(`systemd-run --user --scope`), auch in `tools/laya_nachtraining.py`. Wer
+von Hand startet: genauso, sonst hängt die Weiterleitung an der eigenen
+tmux-/SSH-Sitzung.
+
 ## Sprecher-Zustand und die Schranke (`current_speaker.json`)
 
 Der erkannte Sprecher war bis zum 2026-09-19 **ausschliesslich ein Label im
@@ -315,10 +389,44 @@ was tatsaechlich passiert ist: eine Rationalisierung. Die echte Grenze waere,
 Power-Aktionen hinter einen Dienst zu legen, den der Agent nicht als derselbe
 Benutzer erreicht. Offen.
 
+**Sprecher-Verifikation statt Diarization (`sprecher_verifikation`, seit
+2026-10-05).** `services/sprecher_verifikation.py`: ein WeSpeaker-Fingerabdruck
+der ganzen Aufnahme auf der CPU (~50 ms, gleiches Modell und gleicher
+Rechenweg wie Speaches — Abweichung zur Messung 0,000000), Kosinus gegen
+`voice/speakers/*.wav`. `bekannt` nur ab Schwelle 0,40 UND 0,15 Abstand zur
+zweitbesten Stimme. Gemessen gegen 33 blind gehörte Aufnahmen
+(`testsets/sprecher_labels.jsonl`, Audio gesichert in
+`voice/corpus_sprecher/`) + Fernseh-Clips: 0 falsch zugeordnet; die
+Diarization hatte von 27 gehörten Jochen-Aufnahmen nur 2 erkannt.
+Wiederholen kurzer Aufnahmen (der Diarization-Trick) hilft hier nicht —
+gemessen. Anlernen über den Brain (`voice_enroll_speaker`) bleibt; eine
+geänderte Referenz wird ohne Neustart neu berechnet. **Schwelle nur gegen
+`tools/sprecher_verifikation_test.py` ändern**, FALSCH muss 0 bleiben.
+`sprecher_verifikation_url` (seit 2026-10-07, für den Fablab-Pi: 2,8 s →
+0,1 s) lässt voice-analysis `/fingerabdruck` (openclaw-voice-stack) den
+Vektor rechnen; dessen `_fbank` ist eine wörtliche Kopie — **wer die Rechnung
+hier ändert, ändert sie dort mit**. Gemessen bitgleich (`--url` am Werkzeug).
+Tests: `tests/test_sprecher_verifikation.py`.
+
 **Aenderungen hier nur gegen `tests/test_speaker_verdict.py`** (14 Tests, ohne
 Netz). Der Test haelt genau die Bruchlinie fest, an der es schiefging: jeder
 Fehlerweg muss `ausgefallen` ergeben, jeder gemessene Nicht-Treffer
 `unbekannt`. Verschmelzen die beiden wieder, ist das Loch lautlos zurueck.
+
+### Hinweis bei fehlender Anrede (`anrede_hinweis`, seit 2026-10-05)
+
+Fehltrigger durch Fernseher oder Gespräche im Raum werden **nicht verworfen**,
+sondern gehen mit einem Hinweis an den Brain (Jochen: „beim Schalten müsste
+das ein extrem dummer Zufall sein, das geht eh zum Brain"). `anrede.py` prüft
+im Erst-Turn, ob das Wakewort (oder ein Verhörer, aus dem Bundle-Namen)
+unter den ersten vier Wörtern steht. Fehlt es und ist der Sprecher nicht
+`bekannt`, hängt `locale.anrede_hinweis` hinter das Transkript; der Brain
+entscheidet am Inhalt, notfalls `NO_REPLY`. Gemessen: 0 von 11 Fernseh-Clips
+mit Anrede, 60 von 69 Aktuator-Kommandos mit. Die Regel ist bewusst eng
+(Anlaut + Länge), weil „hast", „ganz", „Jackson" sonst als Anrede zählen.
+Wirkung im Betrieb: `anrede_hinweis: true` in `wake_events.log` (outcome).
+Die Regel steht auch in der ausgerollten `AGENTS.md` und in beiden READMEs.
+Tests: `tests/test_anrede.py`.
 
 ## Abbruch mitten im Turn (`barge_in`, optional pro Profil)
 
@@ -445,6 +553,29 @@ das **Kommando-Endpointing** (1 s Nachlauf, 8 s Deckel), ohne die
 gerichtet, und dass hier gerade gesprochen wurde, ist nicht geraten, sondern
 der Anlass. Im `endpoint.log` steht so ein Turn als `mode=kommando` mit
 `followup_round=0` — nachjustierbar gegen `tools/endpoint_replay.py`.
+
+**Nachtrag 2026-10-06: der stille Abbruch.** Das Kommando-Endpointing allein
+reichte nicht. Die Aufnahme endet erst bei „Stille *nach* Sprache", und das
+Stopp-Wort steht beim Barge-in ganz im Pre-Roll (auch ein schnelles „Gaston
+stopp" ist fertig, bevor der Trigger feuert) — den sieht der VAD nie. Alle
+drei Abbrüche im Archiv (09-23, 10-05, 10-06) blieben deshalb 5–10 s offen,
+bis der Nutzer bei rotem Ring noch einmal „Stopp" sagte. Jetzt endet die
+Aufnahme nach einer Nachlauf-Länge ohne Sprache (`_ist_stiller_abbruch`,
+`reason=bargein_still`) und geht **nie** an den Brain. Die STT läuft trotzdem:
+findet sie das Stopp-Wort, gibt es Fehltrigger-Label und „Okay" wie bisher,
+sonst `ausgang=bargein_still` ohne Label und ohne Quittung. Verworfen:
+Pre-Roll als Sprache zählen — gleicher Schnitt, aber dann entscheidet die STT
+am kurzen Stück über „Auftrag oder nicht", und Qwen las dort in 1 von 3
+Fällen kein Stopp-Wort („Gastvorstellung."). Gemessen mit
+`tools/endpoint_replay.py --bargein` (6 Barge-ins: 4 Abbrüche 5–18 s → 2,5 s,
+der eine echte neue Auftrag unverändert). Tests:
+`tests/test_bargein.py::StillerAbbruchTest`.
+
+Dazu gehört `RespeakerSink.play_wav`: bleibt der Start-Anker aus (nach einem
+STOP typisch, der Player meldet keinen neuen Abspiel-Zustand), zählt die
+Hol-Annahme ab dem Senden, und die Anker-Wartezeit ist auf Datei + Annahme
+gekappt. Vorher blockierte der 0,3-s-Abbruch-Beep die Hauptschleife 2,9 s.
+Tests: `tests/test_wiedergabe_zeit.py`.
 
 **3. Der Abbruch war an nichts zu erkennen.** Das einzige Signal war, dass die
 Stimme aufhörte; danach 18 s grüner Ring und Stille. Jetzt kommt im Moment des
@@ -575,13 +706,15 @@ den neuesten Stand, der dann eine andere ESPHome-Version verlangte. Ein Update
 ist eine bewusste Änderung dieser Refs, zusammen mit `esphome` im venv und
 `min_version`.
 
-Stand 2026-10-03: auf dem Heim-Gerät läuft die April-Firmware (ESPHome
-2026.4.0, gebaut 2026-04-23 15:02 auf dem alten Pi). Sie ist wieder gesichert
-— auf dem alten Pi fanden sich Firmware und Build-Verzeichnis, jetzt in
-`~/esphome-firmware/respeaker-openclaw/2026-04-23_1502_…/` auf beiden
-Rechnern. Rückweg per OTA:
+Stand 2026-10-06: auf dem Heim-Gerät läuft **2026.9.1** (Commit `157a7fb`,
+Richtungszeiger nur bei Sprachenergie), gesichert unter
+`~/esphome-firmware/respeaker-openclaw/2026-10-06_1821_…/`. Die Wiedergabe
+darunter wird noch beobachtet (Befund 1 unten). Ein zweiter API-Client
+(`esphome logs`) hat sich dort abgemeldet, ohne die Hör-Session zu reißen.
+Rückweg ist die April-Firmware (ESPHome 2026.4.0, gebaut 2026-04-23 15:02 auf
+dem alten Pi) in `~/esphome-firmware/respeaker-openclaw/2026-04-23_1502_…/`,
+per OTA:
 `esphome upload esphome/respeaker.yaml --device <ip> --file …/firmware.ota.bin`.
-Der Build mit 2026.9.1 ist kompiliert, nicht geflasht.
 
 **2026.9.1 im Fablab getestet und zurückgenommen (2026-10-02 19:45–19:56).**
 Zwei Befunde, beide vor dem nächsten Versuch zu klären:
@@ -649,6 +782,34 @@ weiterhin Vorrang vor der Wakeword-Stimme).
 
 STT/TTS beide nutzen 60-Sekunden-Cooldown nach Fehler vor erneutem
 Speaches-Versuch (`services/speaches.py:SpeachesState`).
+
+### STT-Kette (seit 2026-10-05)
+
+**Qwen3-ASR → Parakeet → Speaches/medium → faster-whisper-small**, jede
+Stufe fällt bei Fehler auf die nächste (`SttPipeline`). Qwen läuft als
+Container `llamacpp-qwenasr` (openclaw-voice-stack, Q8, Port 8094) und bekommt
+Wakewort + je Ziel den ersten Namen aus `/capabilities` als Kontext
+(`stt_llamacpp_url`, `services/stt.LlamaCppAsrStt`, Leck-Schutz
+`ist_kontext_leck`). Parakeet rechnet im Assistenten auf der CPU
+(`stt_onnx_model`, `OnnxAsrStt`). `speaches_stt_model` bleibt medium — das ist
+auch das Modell der Messwerkzeuge.
+
+Gemessen (Messreihe im Docstring von `tools/stt_vergleich.py`, Hörproben in
+`testsets/stt_referenz.jsonl`): am Aktuator Qwen 93/2/0, medium 88/7/1,
+Parakeet 83/11/1; bei Brain-Fragen Qwen ≈ medium, Parakeet schwächer. Qwen
+schreibt wortgetreu (Wiederholungen, Satzabbrüche) — **Transkripte nie „nach
+Sinn“ bewerten**, das hat am 2026-10-05 drei richtige Qwen-Sätze zu
+„erfunden“ erklärt. Nur blind gehört zählt.
+
+Grafikspeicher (3060 Ti, 8 GB) reicht nur, weil **ser auf der CPU** läuft
+(openclaw-voice-stack `384f117`): Qwen ~3,1 GB, Laya 1,8, Speaches (medium,
+Piper, Diarization) Rest; Lasttest-Spitze 7,0 GB. Alles auf der GPU mit ser:
+Qwen OOM bzw. Speaches-Diarization HTTP 500. Die Stimmungsanalyse bekommt
+nur die ersten 10 s (`workers._MOOD_MAX_SEC`), sonst überschreitet ser auf
+der CPU bei langen Aufnahmen die 2-s-Wartegrenze.
+
+Sprechererkennung: siehe „Sprecher-Verifikation“ unten — statt ~2 s
+Diarization ~50 ms auf der CPU.
 
 ## State Machine
 

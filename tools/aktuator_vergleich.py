@@ -134,8 +134,10 @@ def bewerte(f: dict, intent: dict | None, verdict: str) -> str:
     return "FALSCH" if ausgefuehrt else "richtig"
 
 
-def testset(akt: Actuator, url: str, schwelle: float, datei: str, json_aus: str | None,
-            variante: str = "getrennt", mit_gemma: bool = True) -> int:
+def messen(akt: Actuator, url: str, schwelle: float, datei: str = _TESTSET,
+           variante: str = "getrennt", mit_gemma: bool = True):
+    """Test-Set durch die Ketten schicken -> (zaehl, ms, zeilen, ketten).
+    Auch von tools/laya_nachtraining.py benutzt (Schranke vor dem Umschalten)."""
     faelle = [json.loads(z) for z in open(datei, encoding="utf-8")
               if z.strip() and not z.startswith("#")]
     faelle = [f for f in faelle if f.get("schalten") is not None]
@@ -165,8 +167,13 @@ def testset(akt: Actuator, url: str, schwelle: float, datei: str, json_aus: str 
              "gemma": ausgang(gi, gv) if mit_gemma else "—", "gemma_klasse": gk,
              "laya": ausgang(li, lv), "laya_klasse": lk, "laya_roh": lu.als_dict()}
         zeilen.append(z)
+    return zaehl, ms, zeilen, ketten
 
-    print(f"{len(faelle)} Saetze, capabilities {akt.version}, Laya {url} "
+
+def testset(akt: Actuator, url: str, schwelle: float, datei: str, json_aus: str | None,
+            variante: str = "getrennt", mit_gemma: bool = True) -> int:
+    zaehl, ms, zeilen, ketten = messen(akt, url, schwelle, datei, variante, mit_gemma)
+    print(f"{len(zeilen)} Saetze, capabilities {akt.version}, Laya {url} "
           f"(Fragen {variante}, Schwelle {schwelle})\n")
     print(f"{'':8s} {'richtig':>8s} {'verpasst':>9s} {'FALSCH':>7s} {'Ausfall':>8s}   Latenz median / max")
     for k in ketten:

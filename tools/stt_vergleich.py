@@ -6,6 +6,28 @@ Aufruf (Projekt-venv wird selbst gesucht):
     ow-venv/bin/python -m tools.stt_vergleich --modelle guillaumekln/faster-whisper-medium \\
         deepdml/faster-whisper-large-v3-turbo-ct2 --json /tmp/stt.json
 
+Modelle, die Speaches nicht kann (--export-wavs, --speaches-lauf, --transkripte)
+----------------------------------------------------------------------------
+Speaches bedient nur faster-whisper. Alles andere (NeMo, Qwen3-ASR, Voxtral)
+läuft mit tools/stt_kandidaten.py auf einem GPU-Rechner; hier wird nur
+ausgewertet:
+
+    ow-venv/bin/python -m tools.stt_vergleich --export-wavs <ordner>   # -> GPU-Rechner
+    ow-venv/bin/python -m tools.stt_vergleich --speaches-lauf medium.jsonl \\
+        --modelle guillaumekln/faster-whisper-medium x                   # Basislinie
+    ow-venv/bin/python -m tools.stt_vergleich --transkripte medium.jsonl <lauf>.jsonl ...
+
+Die Basislinie MUSS über Speaches laufen, nicht als faster-whisper auf dem
+GPU-Rechner: dort traf dasselbe Modell mit denselben Parametern nur 78/155
+Live-Transkripte (Speaches: 151/155) — andere faster-whisper-/ctranslate2-
+Fassung. Whisper-Varianten (Prompt, large-v3) deshalb auch über Speaches.
+
+Zusätzliche Spalten: "Text auf Leer-Clip" (von den Clips, die live wegen
+no_speech_prob verworfen wurden, liefert das Modell Text — ohne eigenes
+Verwerfungs-Signal gingen die zum Brain), "Stopp erkannt" (live als
+Stopp-Wort beendete Clips, Muster wie im Betrieb) und "FALSCH?" (Label vom
+verstümmelten Live-Satz, das Modell hört etwas anderes — nachhören).
+
 Kanal-Vergleich (--kanaele)
 ---------------------------
     ow-venv/bin/python -m tools.stt_vergleich --kanaele --seit 20261003_1200
@@ -97,6 +119,100 @@ Messreihe
                 - +130 ms im Median, Ausreisser bis 2,1 s.
                 Ergebnis: am Aktuator leicht besser (+3 richtig, +1 FALSCH),
                 beim Verwerfen deutlich schlechter. Medium bleibt.
+
+    2026-10-05  Neuere Modelle (--transkripte). 169 Clips 2026-09-05..10-04,
+                155 mit Live-Transkript, 96 gelabelt, 14 live verworfen, 11
+                live als Stopp beendet; capabilities 70866bd6, Laya aktuator-v1.
+                medium über Speaches (3060 Ti, HTTP), alle anderen in-process
+                auf einer RTX 5060 Ti (Fablab-Server) — Latenzen also nur grob
+                vergleichbar. Prompt = Gerätenamen aus /capabilities (106 Wörter).
+
+                              = live verw. Text auf  Latenz med/p90/max  richtig verp. FALSCH FALSCH? Stopp
+                                           Leer-Clip
+                medium (live)   151/155  14   0/14    360 /  479 / 1117    88     7     1      0    9/11
+                medium +prompt   76/155  27   3/14    402 /  541 / 2409    87     7     1      1    6/11
+                parakeet-tdt-0.6b-v3 21   7   9/14     72 /  102 /  214    83    12     0      1    8/11
+                canary-1b-v2         14   8  11/14    239 /  433 / 1853    79    15     1      1    7/11
+                Qwen3-ASR-0.6B       10   0  14/14    431 /  947 / 4681    73    19     2      2    9/11
+                Qwen3-ASR-1.7B       19   0  14/14    458 / 1141 / 4967    88     6     1      1    9/11
+                Qwen3-ASR-1.7B +Kon. 26   0  14/14    443 / 1105 / 7492    92     3     0      1    9/11
+                Voxtral-Mini-3B      22   0  14/14    439 /  954 / 4242    90     5     0      1    9/11
+                large-v3 (fw 1.2.1)  33   4  11/14    309 /  531 / 3094    92     3     0      1    9/11
+
+                FALSCH? ist überall derselbe Clip (20260926_194253): live
+                "Atemgericht" (Label: Ziel offen), fast alle anderen hören
+                "Abendlicht" — vermutlich richtig gehört, nicht nachgehört.
+
+                + Am Aktuator sind Qwen3-ASR-1.7B mit Gerätenamen als Kontext
+                  (92/3/0) und Voxtral-Mini (90/5/0) besser als medium
+                  (88/7/1, das FALSCH ist "Lohnsimmerrolle" -> rosazimmer).
+                  Aber auch Qwen gibt den Kontext zweimal komplett als
+                  Transkript aus ("Gaston, Küchenlicht, Wohnzimmerrollo,
+                  <weitere Gerätenamen> ...", 20260923_170033 und
+                  20261003_140037, beides echte Kommandos -> Rückfrage).
+                  Schlimmer bei Whisper: medium +prompt verwirft 16 Clips, die live Text hatten, verliert 3
+                  Stopps und schreibt bei Fernsehton die Prompt-Wörter hin
+                  (ein Gerätename aus dem Prompt, mehrfach wiederholt).
+                - KEIN Kandidat hat ein Verwerfungs-Signal. Qwen und Voxtral
+                  liefern auf allen 14 Leer-Clips Text (Hörspiel, Fernsehen,
+                  Gespräche im Raum), der zum Brain ginge; Voxtral erfindet
+                  bei Stille "Vielen Dank.", Qwen "Gaston." und "Ja.".
+                  Die Token-Konfidenz von Parakeet trennt nicht (echte Turns
+                  Median 0,15, Leer-Clips 0,01-0,32).
+                - Parakeet/Canary: am schnellsten, aber am Aktuator
+                  schlechter (12/15 verpasst) — Rollo/Licht-Verhörer
+                  ("Rollus", "Rolls", "Wohnzimmerholder"). Alle zusätzlichen
+                  Fehlgriffe von Parakeet enden als Rückfrage, keiner schaltet
+                  falsch. VORBEHALT für alle Nicht-medium-Läufe: Layas
+                  Trainingsdaten tragen die Verhörer von medium
+                  (tor_trainset._VERHOERER, aus den Live-Logs), nicht die
+                  eines anderen Modells ("Rollus", "Rolls"). Mit dessen
+                  Verhörern im Training wären die Kandidaten eher besser
+                  als hier.
+                Nebenbefund zum Verwerfen selbst: von den 14 Leer-Clips sind
+                2 echte Stopps ("Stopp, Stopp!", "Stopp!") und 1 echte
+                Ansprache ("Gaston, ... auf die Essensliste") — medium
+                verliert sie über no_speech_prob. Der Fernseh-Filter hängt
+                also an einer Whisper-Eigenheit, die selbst Fehler macht.
+                Nachtrag, gleicher Tag: Speaches 0.9.0-rc.3 bedient Parakeet
+                schon (onnx-asr, istupakov/parakeet-tdt-0.6b-v3-onnx; nur
+                response_format json, kein prompt). Gemessen in einem
+                Speaches-Container auf der 5060 Ti, medium daneben:
+
+                              = live verw. Text auf  Server-Latenz med/p90/max  richtig verp. FALSCH
+                medium            124   15   0/14        157 / 249 / 731         88     7     1
+                parakeet-onnx      20    7   9/14         66 /  94 / 223         83    11     1
+
+                Die ONNX-Fassung entspricht NeMo (83/12/0); ihr FALSCH ist
+                "Kirchenlicht" -> kleineszimmerlicht (bei NeMo dasselbe Wort,
+                dort "aus?" -> Brain). Medium im GLEICHEN Image trifft auf
+                der 5060 Ti nur 124/155 Live-Transkripte wortgleich — schon
+                die GPU-Generation verschiebt den Wortlaut, am Aktuator
+                ändert es nichts. Server-Latenz aus dem Speaches-Log; die
+                Rundreise ins Fablab (~1,3 s) ist Leitung, nicht Modell.
+
+                Ergebnis: medium bleibt, solange das Verwerfen an
+                no_speech_prob hängt. Ein Wechsel zu Qwen3-ASR-1.7B (+Kontext)
+                setzt ein eigenes Verwerfungs-Kriterium voraus (VAD-Anteil,
+                Pegel, Sprecher — ungemessen), und 0 FALSCH gegen 1 bei
+                96 Labels ist noch keine Signifikanz.
+
+                Revidiert (Jochen, 2026-10-05): Verwerfen ist kein Kriterium.
+                Ein Fehltrigger schaltet nichts, er geht zum Brain — und der
+                bekommt jetzt einen Hinweis, wenn das Wakewort im Transkript
+                fehlt (voice_assistant/anrede.py). Gemessen: VAD-Anteil und
+                Pegel trennen Fernsehton NICHT von echten Turns (Fernsehen
+                rms_median 140-374, echte 24-699), der Sprecher-Status nur
+                halb (alle 11 Fernseh-Clips "unbekannt", aber auch 72 von 158
+                echten Turns). Die fehlende Anrede trennt: 0/11 gegen 60/69.
+                Damit fällt die Hürde für Parakeet und Qwen; offen bleibt
+                ihr Abstand am Aktuator.
+
+                Nachtraining mit Parakeet-Verhörern (LAYA_TRAINING.md, Stand
+                2026-10-05) schließt den Abstand NICHT: "alle Rollus/Rolls"
+                erkennt Laya schon richtig, die Rückfrage kommt von Regel A
+                (Gruppenwort exakt im Satz). Der Rest sind Raumnamen-
+                Verhörer ("Zischlicht", "Kirchenlicht", "Wohnzimmerholder").
 """
 
 from __future__ import annotations
@@ -104,6 +220,7 @@ from __future__ import annotations
 import argparse
 import collections
 import contextlib
+import dataclasses
 import glob
 import io
 import json
@@ -188,8 +305,172 @@ def transkribiere(stt: SpeachesStt, wav: bytes) -> tuple[str | None, float, int]
     return (None if nsp >= 0.5 or not text else text), round(nsp, 2), ms
 
 
+def export_wavs(ziel: str, ordner: str) -> int:
+    """Die Clips so normalisiert ablegen, wie sie live an die STT gehen —
+    Eingabe für tools/stt_kandidaten.py auf einem fremden GPU-Rechner."""
+    os.makedirs(ziel, exist_ok=True)
+    clips = sorted(glob.glob(os.path.join(ordner, "*_rec.wav")))
+    for pfad in clips:
+        with open(os.path.join(ziel, os.path.basename(pfad)), "wb") as f:
+            f.write(lies_wav(pfad))
+    print(f"{len(clips)} Clips -> {ziel}")
+    return 0
+
+
+def speaches_lauf(modell: str, ziel: str, ordner: str, prompt: str | None = None,
+                  base: str | None = None) -> int:
+    """Ein Modell über das Speaches des Profils, im Format von
+    tools/stt_kandidaten.py — die Basislinie, die den Betrieb nachstellt.
+    Ein faster-whisper auf einem anderen Rechner tut das NICHT (gemessen
+    2026-10-05: gleiches Modell, gleiche Parameter, 78/155 statt 151/155
+    wortgleich mit live — faster-whisper 1.2.1/ctranslate2 4.8.2 dort,
+    1.1.1/4.5.0 in Speaches 0.9.0-rc.3). `prompt` geht als initial_prompt an
+    Whisper."""
+    stt = SpeachesStt(SpeachesState(), base or load_profile().speaches_base, modell)
+    clips = sorted(glob.glob(os.path.join(ordner, "*_rec.wav")))
+    transkribiere(stt, lies_wav(clips[0]))
+    with open(ziel, "w", encoding="utf-8") as f:
+        wo = " (Speaches extern)" if base else " (Speaches)"
+        f.write(json.dumps({"name": _kurz(modell) + (" +prompt" if prompt else "") + wo,
+                            "engine": "speaches", "modell": modell, "prompt": bool(prompt)}) + "\n")
+        for i, pfad in enumerate(clips):
+            t0 = time.monotonic()
+            r = stt.transcribe_raw(lies_wav(pfad), prompt=prompt)
+            seg = r.get("segments") or []
+            nsp = sum(s.get("no_speech_prob", 0.0) for s in seg) / len(seg) if seg else 0.0
+            f.write(json.dumps({"clip": os.path.basename(pfad), "text": (r.get("text") or "").strip(),
+                                "nsp": round(nsp, 3), "ms": int((time.monotonic() - t0) * 1000)},
+                               ensure_ascii=False) + "\n")
+            print(f"\r{i + 1}/{len(clips)}", end="", file=sys.stderr, flush=True)
+    print(f"\n-> {ziel}", file=sys.stderr)
+    return 0
+
+
+def _verworfen(e: dict) -> bool:
+    """Wie im Betrieb: no_speech_prob im Mittel >= 0,5 (nur Whisper hat es),
+    sonst nur leerer Text."""
+    return not e.get("text") or (e.get("nsp") or 0.0) >= 0.5
+
+
+def transkripte_auswerten(dateien: list[str], ohne_aktuator: bool, json_ziel: str | None,
+                          laya_url: str | None = None) -> int:
+    """Läufe aus tools/stt_kandidaten.py gegen Live-Transkript, Labels und
+    die Laya-Kette — dieselbe Bewertung wie der Speaches-Vergleich."""
+    laeufe = {}
+    for d in dateien:
+        zeilen = [json.loads(z) for z in open(d, encoding="utf-8") if z.strip()]
+        kopf, rest = zeilen[0], zeilen[1:]
+        laeufe[kopf["name"]] = {"kopf": kopf, "clips": {e["clip"]: e for e in rest}}
+    namen = list(laeufe)
+    clips = sorted(set.intersection(*(set(l["clips"]) for l in laeufe.values())))
+    live = live_ausgaenge()
+    lab = labels()
+    akt = None
+    if not ohne_aktuator:
+        cfg = load_profile().actuator
+        if laya_url:                    # Kandidaten-Checkpoint statt des laufenden
+            cfg = dataclasses.replace(cfg, laya_url=laya_url)
+        akt = Actuator(cfg)
+        if not akt.refresh():
+            print("capabilities-refresh fehlgeschlagen — ohne Aktuator weiter")
+            akt = None
+    cache: dict[str, str] = {}          # Text -> Ausgang; Laya ist deterministisch
+
+    zeilen = []
+    for i, clip in enumerate(clips):
+        lv = live.get(clip[:15]) or {}
+        f = lab.get(_norm(lv.get("transcript") or "")) if lv.get("transcript") else None
+        z = {"clip": clip, "live": lv.get("transcript"), "live_ausgang": lv.get("ausgang"),
+             "label": f, "modelle": {}}
+        for n in namen:
+            e = dict(laeufe[n]["clips"][clip])
+            text = None if _verworfen(e) else e["text"]
+            e["text_roh"], e["text"] = e.get("text"), text
+            if akt and text:
+                if text not in cache:
+                    k = aktuator_schatten.kette_laya(akt, text, timeout=10)
+                    cache[text] = (k.intent, k.verdict)
+                intent, verdict = cache[text]
+                e["ausgang"] = ausgang(intent, verdict)
+                if f:
+                    e["klasse"] = bewerte(f, intent, verdict)
+                    # Das Label gehört zum Live-Satz. War der verstümmelt (Label ohne
+                    # Ziel, "-> Rückfrage") und hört dieses Modell einen anderen Satz,
+                    # kann FALSCH auch heißen: richtig gehört. Gefunden 2026-10-05 an
+                    # "Atemgericht" -> "Abendlicht". Entscheidet nur das Ohr.
+                    if (e["klasse"] == "FALSCH" and not f.get("ziel")
+                            and _norm(text) != _norm(lv.get("transcript"))):
+                        e["klasse"] = "FALSCH?"
+            elif f:
+                e["ausgang"] = "verworfen"
+                e["klasse"] = "verpasst" if f.get("schalten") and f.get("ziel") else "richtig"
+            z["modelle"][n] = e
+        zeilen.append(z)
+        print(f"\r{i + 1}/{len(clips)}", end="", file=sys.stderr, flush=True)
+    print(file=sys.stderr)
+
+    from voice_assistant.assistant import _is_stop_command
+    mit_live = sum(1 for z in zeilen if z["live"])
+    leer = [z for z in zeilen if z["live_ausgang"] == "leer"]
+    stopp = [z for z in zeilen if z["live_ausgang"] == "stopwort"]
+    print(f"{len(clips)} Clips, mit Live-Transkript {mit_live}, "
+          f"gelabelt {sum(1 for z in zeilen if z['label'])}, live verworfen {len(leer)}\n")
+    print(f"{'Lauf':30s} {'= live':>7s} {'verw.':>5s} {'Text auf':>8s}   Latenz med / p90 / max"
+          f"  {'richtig':>7s} {'verp.':>5s} {'FALSCH':>6s} {'FALSCH?':>7s}  {'Stopp':>6s}  laden")
+    print(f"{'':30s} {'':7s} {'':5s} {'Leer-Clip':>8s}{'':63s}{'erkannt':>7s}")
+    for n in namen:
+        es = [z["modelle"][n] for z in zeilen]
+        gleich = sum(1 for z in zeilen if z["live"] and _norm(z["modelle"][n]["text"]) == _norm(z["live"]))
+        c = collections.Counter(e.get("klasse") for e in es if e.get("klasse"))
+        ms = sorted(e["ms"] for e in es)
+        p90 = ms[int(len(ms) * 0.9) - 1]
+        auf_leer = sum(1 for z in leer if z["modelle"][n]["text"])
+        # Stopp: auf den Clips, die live als Stopp-Wort endeten, nach demselben
+        # Muster wie im Betrieb (Erst-Turn) — ein verlorenes Stopp ist ein
+        # Auftrag an den Brain statt eines Abbruchs.
+        st = sum(1 for z in stopp if _is_stop_command(z["modelle"][n]["text"] or "", 0))
+        print(f"{n[:30]:30s} {gleich:3d}/{mit_live:<3d} {sum(e['text'] is None for e in es):5d} "
+              f"{auf_leer:4d}/{len(leer):<3d}   {statistics.median(ms):5.0f} / {p90:4d} / {ms[-1]:5d} ms"
+              f"  {c['richtig']:7d} {c['verpasst']:5d} {c['FALSCH']:6d} {c['FALSCH?']:7d}"
+              f"  {st:2d}/{len(stopp):<3d}"
+              f"  {laeufe[n]['kopf'].get('lade_s', '-')} s")
+
+    print("\nFALSCH je Lauf (Label sagt etwas anderes; FALSCH? = Label vom verstümmelten Live-Satz):")
+    for n in namen:
+        for z in zeilen:
+            e = z["modelle"][n]
+            if e.get("klasse") in ("FALSCH", "FALSCH?"):
+                print(f"  {e['klasse']:7s} {n[:22]:22s} {z['clip'][:15]}  {str(e['text'])[:55]:55s} -> {e.get('ausgang')}"
+                      f"   (live: {str(z['live'])[:50]})")
+
+    print("\nLive verworfene Clips (medium sagte: keine Sprache) — was hören die anderen?")
+    for z in leer:
+        print(f"  {z['clip'][:15]}")
+        for n in namen:
+            e = z["modelle"][n]
+            print(f"    {n[:22]:22s} {str(e['text_roh'])[:70]:70s} {e.get('ausgang', '')}")
+
+    if json_ziel:
+        json.dump({"laeufe": {n: l["kopf"] for n, l in laeufe.items()}, "clips": zeilen},
+                  open(json_ziel, "w"), ensure_ascii=False, indent=1)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--export-wavs", metavar="ORDNER",
+                    help="nur die normalisierten Clips ablegen (für tools/stt_kandidaten.py)")
+    ap.add_argument("--transkripte", nargs="+", metavar="JSONL",
+                    help="statt Speaches: Läufe aus tools/stt_kandidaten.py auswerten")
+    ap.add_argument("--speaches-lauf", metavar="JSONL",
+                    help="Modell A über Speaches laufen lassen und im Format von "
+                         "tools/stt_kandidaten.py ablegen (Basislinie für --transkripte)")
+    ap.add_argument("--speaches-url", help="mit --speaches-lauf: anderes Speaches als das des "
+                                           "Profils (z. B. ein Test-Container auf dem GPU-Rechner)")
+    ap.add_argument("--prompt-datei", help="mit --speaches-lauf: Anfangs-Prompt für Whisper "
+                                           "(z. B. die Gerätenamen; Datei außerhalb des Repos)")
+    ap.add_argument("--laya-url", help="mit --transkripte: anderer Laya-Endpunkt als der des "
+                                       "Profils (Kandidaten-Checkpoint)")
     ap.add_argument("--modelle", nargs=2, default=_DEFAULT, metavar=("A", "B"))
     ap.add_argument("--ordner", default=TRIGGER_AUDIO_DIR)
     ap.add_argument("--json", help="Ergebnis je Clip hierhin schreiben")
@@ -199,6 +480,15 @@ def main() -> int:
                          "gegen Kanal 2 (*_rec_kanal2.wav)")
     ap.add_argument("--seit", help="nur Clips ab diesem Zeitpunkt (JJJJMMTT_HHMMSS oder ISO)")
     args = ap.parse_args()
+    if args.export_wavs:
+        return export_wavs(args.export_wavs, args.ordner)
+    if args.speaches_lauf:
+        prompt = open(args.prompt_datei, encoding="utf-8").read().strip() if args.prompt_datei else None
+        return speaches_lauf(args.modelle[0], args.speaches_lauf, args.ordner, prompt,
+                             args.speaches_url)
+    if args.transkripte:
+        return transkripte_auswerten(args.transkripte, args.ohne_aktuator, args.json,
+                                     args.laya_url)
 
     profil = load_profile()
     base = profil.speaches_base

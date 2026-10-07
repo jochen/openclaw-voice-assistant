@@ -697,12 +697,25 @@ class RespeakerSink:
             #
             # Jetzt dient der Zustand nur noch als ANKER fuer den Startpunkt;
             # bleibt er aus, wird die gemessene Hol-/Decoder-Zeit angenommen.
+            #
+            # Bleibt der Anker aus, zaehlt die Annahme ab dem SENDEN, nicht ab
+            # dem Ende der Wartezeit. Vorher kamen beide obendrauf: 2,0 s
+            # Anker-Wartezeit + Datei + 0,6 s. Den Fall gibt es vor allem nach
+            # einem STOP (der Player bleibt im Abspiel-Zustand, kein Event) —
+            # am 2026-10-06 18:02 blockierte so der 0,3-s-Abbruch-Beep die
+            # Hauptschleife 2,9 s, und die Abbruch-Aufnahme begann entsprechend
+            # spaet. Aus demselben Grund wartet der Anker nie laenger, als die
+            # Datei unter der Annahme ohnehin dauern wuerde.
             gestartet = client.wait_player(
-                busy=True, timeout=self._START_ANKER_TIMEOUT
+                busy=True,
+                timeout=min(self._START_ANKER_TIMEOUT, dauer + self._FETCH_ANNAHME),
             )
-            self._sleep_unless_stopped(
-                dauer if gestartet else dauer + self._FETCH_ANNAHME
-            )
+            if gestartet:
+                self._sleep_unless_stopped(dauer)
+            else:
+                self._sleep_unless_stopped(
+                    t_start + self._FETCH_ANNAHME + dauer - time.monotonic()
+                )
             # Nachfrist: laeuft der Player noch (laengere Datei als gedacht,
             # langsamer Decoder), kurz zuhoeren statt sofort den naechsten Satz
             # darueber zu legen.

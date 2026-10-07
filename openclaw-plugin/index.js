@@ -351,6 +351,98 @@ export default definePluginEntry({
     });
 
     api.registerTool({
+      name: "voice_aussprache_setzen",
+      label: "Aussprache korrigieren",
+      description:
+        "Korrigiert, wie der Voice Assistant ein Wort ausspricht — sofort und dauerhaft. " +
+        "Verwenden, wenn der Nutzer sagt, ein Wort klinge falsch oder werde so und so ausgesprochen " +
+        "(\"Sauce spricht man Sohße\", \"du sagst Headset falsch\"). " +
+        "Bevorzugt `umschreibung`: die richtige Aussprache in DEUTSCHER Schreibung, so wie ein Deutscher " +
+        "sie vorlesen würde — \"Sohße\" für Sauce, \"Hätt-ßett\" für Headset, \"Wehk on Länn\" für " +
+        "Wake-on-LAN (nicht \"Weik\": ei liest Deutsch als ai), \"Ändru Dschäckßn\" für Andrew Jackson. " +
+        "Nur wenn das nicht reicht, `phoneme` in IPA angeben. Danach wird `beispielsatz` (oder das Wort) " +
+        "zur Probe vorgesprochen; frag den Nutzer, ob es jetzt passt, und versuche sonst eine andere " +
+        "Umschreibung. Gilt nur für die Sprachausgabe, nicht für Text oder Telegram.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["wort"],
+        properties: {
+          wort: { type: "string", description: "Das Wort genau so geschrieben, wie es im Text vorkommt (z. B. \"Sauce\")." },
+          umschreibung: { type: "string", description: "Aussprache in deutscher Schreibung (z. B. \"Sohße\")." },
+          phoneme: { type: "string", description: "Alternativ: Aussprache in IPA (z. B. \"ˈzoːsə\")." },
+          beispielsatz: { type: "string", description: "Kurzer Satz mit dem Wort für die Hörprobe." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        try {
+          const res = await fetch(`${SPEAK_BASE}/aussprache`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(params ?? {}),
+          });
+          const data = await res.json();
+          if (!res.ok) return textResult(`Aussprache nicht gesetzt: ${data?.error ?? res.status}`, { ok: false });
+          return textResult(`Aussprache für ${data.wort} gesetzt (${data.phoneme}); Probe wird vorgesprochen: \"${data.probe}\"`, { ok: true, ...data });
+        } catch (err) {
+          return textResult(`Aussprache nicht gesetzt: ${err.message}`, { ok: false });
+        }
+      },
+    });
+
+    api.registerTool({
+      name: "voice_aussprache_zeigen",
+      label: "Aussprache nachsehen",
+      description:
+        "Zeigt, wie ein Wort derzeit ausgesprochen wird: ob ein Eintrag gilt (quelle: eigen = vom Nutzer " +
+        "korrigiert, ergaenzt = automatisch erzeugt, grundstock = aus Wiktionary) und wie es ohne " +
+        "Eintrag klänge (espeak). Vor einer Korrektur aufrufen, wenn unklar ist, was gerade gilt.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["wort"],
+        properties: { wort: { type: "string" } },
+      },
+      async execute(_toolCallId, params) {
+        try {
+          const res = await fetch(`${SPEAK_BASE}/aussprache?wort=${encodeURIComponent(String(params?.wort ?? ""))}`);
+          const data = await res.json();
+          if (!res.ok) return textResult(`Fehler: ${data?.error ?? res.status}`, { ok: false });
+          const gilt = data.phoneme ? `${data.phoneme} (Quelle: ${data.quelle})` : "kein Eintrag";
+          return textResult(`${data.wort}: ${gilt}; ohne Eintrag: ${data.espeak}`, { ok: true, ...data });
+        } catch (err) {
+          return textResult(`Fehler: ${err.message}`, { ok: false });
+        }
+      },
+    });
+
+    api.registerTool({
+      name: "voice_aussprache_loeschen",
+      label: "Aussprache-Korrektur entfernen",
+      description: "Entfernt eine eigene Aussprache-Korrektur wieder (z. B. wenn sie schlechter klingt als vorher).",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["wort"],
+        properties: { wort: { type: "string" } },
+      },
+      async execute(_toolCallId, params) {
+        try {
+          const res = await fetch(`${SPEAK_BASE}/aussprache/loeschen`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wort: params?.wort }),
+          });
+          const data = await res.json();
+          if (!res.ok) return textResult(`Fehler: ${data?.error ?? res.status}`, { ok: false });
+          return textResult(data.geloescht ? `Korrektur für ${data.wort} entfernt.` : `Für ${data.wort} gab es keine eigene Korrektur.`, { ok: true, ...data });
+        } catch (err) {
+          return textResult(`Fehler: ${err.message}`, { ok: false });
+        }
+      },
+    });
+
+    api.registerTool({
       name: "voice_enroll_speaker",
       label: "Stimme anlernen",
       description:

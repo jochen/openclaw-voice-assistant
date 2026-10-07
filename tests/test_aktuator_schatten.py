@@ -261,5 +261,67 @@ class SchattenTest(unittest.TestCase):
         self.assertFalse(self._schatten(act, echt))
 
 
+
+def _health(caps, name="aktuator-v9"):
+    return io.BytesIO(json.dumps({"status": "ok", "checkpoint": {
+        "name": name, "capabilities": caps, "seed": 7}}).encode())
+
+
+class CheckpointAbgleichTest(unittest.TestCase):
+    """Checkpoint-Version gegen Live-Version — die Luecke, durch die v1 am
+    2026-10-01 und v3 bis 2026-10-06 still schlechter wurden."""
+
+    def _pruefe(self, act, melden, **urlopen):
+        with mock.patch("urllib.request.urlopen", **urlopen), \
+                mock.patch("builtins.print"):
+            return aktuator_schatten.pruefe_checkpoint(act, melden)
+
+    def test_passt(self) -> None:
+        melden = mock.Mock()
+        self.assertEqual(self._pruefe(_actuator(), melden, return_value=_health("test1")), "passt")
+        melden.assert_not_called()
+
+    def test_abweichung_wird_einmal_gemeldet(self) -> None:
+        act, melden = _actuator(), mock.Mock()
+        for _ in range(3):      # drei Refreshes mit derselben Lage
+            self.assertEqual(self._pruefe(act, melden, side_effect=lambda *a, **k: _health("alt")),
+                             "abweichung")
+        melden.assert_called_once()
+        self.assertIn("alt", melden.call_args.args[0])
+        self.assertIn("test1", melden.call_args.args[0])
+
+    def test_nach_passt_wird_neue_abweichung_wieder_gemeldet(self) -> None:
+        act, melden = _actuator(), mock.Mock()
+        self._pruefe(act, melden, return_value=_health("alt"))
+        self._pruefe(act, melden, return_value=_health("test1"))
+        self._pruefe(act, melden, return_value=_health("alt"))
+        self.assertEqual(melden.call_count, 2)
+
+    def test_container_ohne_checkpoint_feld_ist_unbekannt(self) -> None:
+        melden = mock.Mock()
+        alt = io.BytesIO(json.dumps({"status": "ok"}).encode())
+        self.assertEqual(self._pruefe(_actuator(), melden, return_value=alt), "unbekannt")
+        melden.assert_not_called()
+
+    def test_container_weg_ist_unbekannt_und_wirft_nicht(self) -> None:
+        melden = mock.Mock()
+        self.assertEqual(self._pruefe(_actuator(), melden, side_effect=OSError("weg")), "unbekannt")
+        melden.assert_not_called()
+
+    def test_kaputtes_melden_wirft_nicht(self) -> None:
+        melden = mock.Mock(side_effect=RuntimeError("Telegram weg"))
+        self.assertEqual(self._pruefe(_actuator(), melden, return_value=_health("alt")), "abweichung")
+
+    def test_nach_refresh_hook_laeuft(self) -> None:
+        act = _actuator()
+        hook = mock.Mock()
+        act.nach_refresh.append(hook)
+        with mock.patch.object(act, "aufwaermen"), \
+                mock.patch("voice_assistant.services.actuator.threading.Thread") as T:
+            T.side_effect = lambda target, daemon: mock.Mock(start=target)
+            self.assertTrue(act._refresh_und_aufwaermen())
+        hook.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -252,7 +252,9 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
 
         elif ev.get("result") == "outcome":
             ausgang = ev.get("ausgang")
-            if ausgang == "aktuator" and ev.get("status") in ("ausgefuehrt", "zurueckgestellt"):
+            # "bereits": gültiger, ausgeführter Befehl, Ziel war nur schon so —
+            # derselbe Beleg für einen echten Ruf wie "ausgefuehrt".
+            if ausgang == "aktuator" and ev.get("status") in ("ausgefuehrt", "bereits", "zurueckgestellt"):
                 labels[audio] = {"klasse": ECHT,
                                  "grund": f"Aktuator: {ev.get('ziel')}/{ev.get('aktion')}"}
             elif ausgang == "stopwort":

@@ -18,7 +18,7 @@ abgefangen ist, steht das dabei.
 
 | Auslöser | Warum | Heute erkannt? |
 |---|---|---|
-| capabilities-Version ändert sich (Ziel neu, umbenannt, entfernt, `namen` ergänzt) | Die ziel-Frage entsteht aus dem Digest. Ein Checkpoint kennt nur die Optionen, auf die er trainiert wurde; eine neue Option hat er nie gesehen | **Nein.** Der Checkpoint trägt seine Version (`rl_agent_config.json` → `capabilities`), das Schatten-Log die Live-Version. Verglichen wird nirgends |
+| capabilities-Version ändert sich (Ziel neu, umbenannt, entfernt, `namen` ergänzt) | Die ziel-Frage entsteht aus dem Digest. Ein Checkpoint kennt nur die Optionen, auf die er trainiert wurde; eine neue Option hat er nie gesehen | **Ja, seit 2026-10-06.** `/health` des Containers trägt `checkpoint.capabilities`; der Assistent meldet eine Abweichung, `tools/laya_nachtraining.py` trainiert nachts neu (siehe Falle 11) |
 | Neue gelabelte echte Turns (Test-Set wächst) | Lücken der Vorlagen schließen (siehe „Synthetische Lücken“) | Nein |
 | Neue Laya-Version | Basismodell, Sequenzbau oder Temperaturbehandlung können sich ändern | Nein, gepinnt auf 0.3.21 |
 
@@ -207,6 +207,21 @@ Modell etwas geändert hätte. Im Journal steht davon nichts.
   `refresh()` `capabilities` des Checkpoints (über `/health` oder eine
   eigene Abfrage) mit der Live-Version. Weichen sie ab, meldet er das und
   startet den Trainingslauf, bzw. stößt ihn an.
+- **Gebaut 2026-10-06:**
+  - `laya/serve.py` (openclaw-voice-stack) hängt `checkpoint` {name,
+    capabilities, seed} an `/health`.
+  - `aktuator_schatten.pruefe_checkpoint` vergleicht nach dem Aufwärmen und
+    nach jedem `refresh()` aus MQTT/Poll (`Actuator.nach_refresh`). Eine
+    Abweichung steht im Journal und geht einmal je (Checkpoint, Live-Version)
+    an die Argus-Gruppe. Tests: `CheckpointAbgleichTest`.
+  - `tools/laya_nachtraining.py` + `systemd/laya-nachtraining.{service,timer}`,
+    jede Nacht 3:00, endet sofort, wenn die Versionen passen. Ablauf und
+    Schranken im Docstring; Entscheidungen Jochen 2026-10-06: hier trainieren
+    (laya und Qwen aus, Gemma und Parakeet springen ein), automatisch
+    umschalten mit Schranken. Installationsspezifisches in
+    `~/.config/openclaw/laya-nachtraining.env`. Ergebnisse je Lauf:
+    `~/.openclaw/workspace/laya_nachtraining.jsonl`, Bericht leise in die
+    Argus-Gruppe.
 
 ### 12. Das Training hat Speaches den Speicher weggenommen
 
@@ -253,6 +268,20 @@ Modell etwas geändert hätte. Im Journal steht davon nichts.
     öffentliche Repo noch ins Image.
 - **Dauer:** Daten ~10 s, Training 7,5 min (2 Epochen, 3.778 Schritte),
   Image-Bau ohne Cache mehrere Minuten (6 GB, fast alles CUDA).
+
+### 14. Ein Container-Start aus der Unit stirbt mit der Unit
+
+Erster erzwungener Probelauf (2026-10-06 03:05, `--erzwingen`, transiente
+Unit): Training und Messung liefen durch (v4 351/18/2, v5a 345/21/5, v5b
+345/22/4 — korrekt **nicht** umgeschaltet). Danach starb aber, was die Unit
+gestartet hatte: rootless Podman lässt die Port-Weiterleitung
+(`rootlessport`) im cgroup des Aufrufers, die Unit lief beim Beenden in den
+Timeout, und systemd tötete per SIGKILL conmon und Weiterleitung von Laya
+und Qwen mit. Die Container liefen innen gesund weiter, 8094/8096 waren vom
+Host aus bis 18:50 tot, jeder Turn lief über Parakeet und Gemma — gemerkt
+hat es niemand. Seither startet das Werkzeug Container über
+`voice_assistant/services/container.py` (eigener Scope), und der
+Dienst-Wächter (`dienstwaechter:`) meldet und heilt einen solchen Ausfall.
 
 ## Was die Automatisierung als Ganzes leisten muss
 
@@ -403,3 +432,73 @@ Das eine FALSCH von v3: „Gastau, Lohnsimmerrolle auf 50 Prozent.“ →
 bei Einigkeit schalten, sonst nachfragen — auf diesem Set 0 FALSCH für 6
 Rückfragen mehr. Kostet einen zweiten Container (+1,4 GB VRAM) und etwas
 Latenz.
+
+**Nachtraining für einen STT-Wechsel geprüft (2026-10-05).** Frage: holt
+Laya die Lücke von Parakeet (12 statt 7 verpasst) auf, wenn es dessen
+Verhörer kennt? Vier Checkpoints für capabilities `70866bd6`, trainiert auf
+dem Fablab-Server (2× RTX 5060 Ti, ~13 min je Lauf, Speaches daheim
+unberührt): `ref` = heutiges Rezept, `pk` = zusätzlich „rollus“, „rolls“
+für „Rollos“ (belegt in Parakeet-Transkripten), je Seed 20260928 (a) und 7
+(b). Gemessen über 169 Aufnahmen mit 96 Labels (`tools/stt_vergleich.py
+--transkripte … --laya-url`), richtig / verpasst / FALSCH / FALSCH?:
+
+| Transkripte von | v3 (live) | ref-a | ref-b | pk-a | pk-b |
+|---|---|---|---|---|---|
+| medium (Speaches) | 88/7/1/0 | 87/8/1/0 | 90/6/0/0 | 87/6/3/0 | 90/4/2/0 |
+| Parakeet (NeMo) | 83/12/0/1 | 83/12/0/1 | 84/10/0/2 | 82/10/1/3 | 84/10/1/1 |
+| Parakeet (ONNX, Speaches) | 83/11/1/1 | 80/13/1/2 | 83/11/0/2 | 80/11/2/3 | 82/12/1/1 |
+| Qwen3-ASR-1.7B + Kontext | 92/3/0/1 | 88/6/1/1 | 91/3/0/2 | 89/3/2/2 | 90/3/1/2 |
+| Voxtral-Mini-3B | 90/5/0/1 | 88/7/0/1 | 91/4/0/1 | 89/5/0/2 | 91/4/0/1 |
+
+- **Die Verhörer-Ergänzung bringt nichts.** Laya erkennt „alle Rollus zu“
+  schon mit v3 richtig als `alle_rollos/zu` — die Rückfrage kommt von
+  **Regel A** (Gruppenwort exakt im Satz, `Actuator.verdict`). Dasselbe gilt
+  für medium mit „alle Wolos“. pk liegt im Rauschen der Seeds, eher mit mehr
+  FALSCH; die Ergänzung ist deshalb nicht übernommen. Wer Verhörer von
+  Gruppenwörtern durchlassen will, muss an Regel A (eine Tabelle belegter
+  Formen statt Ähnlichkeit) — das ist eine Sicherheitsentscheidung, offen.
+- **Seed-Streuung auf diesen 96 Labels:** ref-a gegen ref-b 3 Sätze auf
+  medium. Unterschiede dieser Größe zwischen Checkpoints sind nicht deutbar.
+- **Neu bei capabilities `70866bd6`:** „Badewasser“/„Brauwasser“ →
+  `regenwasser_weiche` (ref-a, pk-a); v3 kennt das Ziel nicht und fällt
+  dort nicht hinein. „Kükenarbeitsplanlicht“ → `kuechenlicht` (pk-a, pk-b).
+- **v3 ist veraltet** (Falle 11: trainiert für `e93fcc67`). ref-a/ref-b
+  lagen als `~/laya-modelle/aktuator-v4-kandidat-{a,b}` bereit.
+
+**aktuator-v4 live seit 2026-10-06 00:10** (Jochen: Kandidat b). ref-b
+heißt jetzt `~/laya-modelle/aktuator-v4`, ref-a `aktuator-v4a`. Test-Set
+(371 Sätze, mit Rückfrage-Regel, capabilities `70866bd6`):
+
+| | richtig / verpasst / FALSCH |
+|---|---|
+| v3 (kennt `70866bd6` nicht) | 340 / 28 / 3 |
+| v4a (Seed 20260928) | 347 / 21 / 3 |
+| **v4** (Seed 7) | **351 / 18 / 2** |
+
+- Label korrigiert (Jochen 2026-10-06, testsets `541961c`): „Mach die
+  Rollos bitte wieder überall auf“ ist `alle_rollos`, nicht
+  `rollos_ganzes_haus` — „im ganzen Haus“ fehlt im Satz. Das Label vom
+  2026-10-01 sagte das Gegenteil; v4 und v4a hatten recht.
+- FALSCH v4: „Wohnzimmer Rollo etwas nach unten“ → **auf** (falsche
+  Richtung), „Zwiebel-Rolo auf 50 Prozent“ → Rosazimmer (geraten). v3s
+  „Lohnsimmerrolle“ → Rosazimmer ist bei v4 weg.
+- „Braubwasser“/„Badewasser“ → `regenwasser_weiche` (v3, v4a) bleibt
+  FALSCH: Jochen meinte damals ein Gerät, das es in Node-RED nicht gab, nicht
+  die Regenwasser-Weiche. Labels unverändert.
+- **Gemessen auf der eigenen GPU:** `laya` gestoppt (Gemma entscheidet in
+  der Zeit), Kandidat als zweiter Container auf Port **8097** — nicht 8096,
+  sonst entscheidet der Assistent live mit dem Kandidaten. 30 s je Lauf.
+  Dieselbe Messung auf der CPU lief über 20 min ohne Ergebnis (die
+  ziel-Sequenz trägt alle 70 Optionen); das Kopieren zum Fablab-Server
+  kroch mit ~1 MB/s. Fürs Training gilt das nicht (Falle 12).
+- Rauchtest nach dem Umschalten: Test-Set gegen den Live-Port, 350/18/3
+  (altes Label) reproduziert, keine Ausfälle.
+
+**Abgleich und Nachtraining gebaut (2026-10-06, Falle 11).** Live-Container
+neu erzeugt (Image mit `checkpoint` in `/health`), Assistent neu gestartet:
+„Checkpoint aktuator-v4 passt zu capabilities 70866bd6“. Weil die Versionen
+passen, täte der Timer nichts — der Trainingsweg wäre bis zur nächsten
+capabilities-Änderung ungeprüft. Deshalb einmalig `laya-nachtraining-probe`
+am 2026-10-06 03:05 mit `--erzwingen` (transienter Timer, kein Repo-Stand).
+Die Unit läuft mit `HF_HUB_OFFLINE=1`: sonst zöge `snapshot_download` nachts
+still eine neue Basis-Revision (Falle 2); im Cache liegt `55cf4c4e`.

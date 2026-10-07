@@ -9,6 +9,10 @@ Endpoints:
   POST /voice/set     → Stimme (optional Tempo / pro Sprecher merken) setzen
   POST /voice/speed   → nur Sprechtempo ändern
   POST /voice/unload  → ein TTS-Modell entladen
+  GET  /aussprache?wort=X        → was gilt fuer X, woher, und wie espeak es spraeche
+  POST /aussprache               → {wort, umschreibung | phoneme, beispielsatz?}
+                                   eigene Korrektur setzen + Probe ansagen
+  POST /aussprache/loeschen      → {wort} eigene Korrektur entfernen
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from voice_assistant.state import (
     announce_queue,
     current_state,
 )
-from voice_assistant.services import telegram
+from voice_assistant.services import aussprache, telegram
 from voice_assistant.services.tts import ReplySpeaker
 
 # Vom start_speak_server() gesetzt, damit der Request-Handler ihn erreicht
@@ -72,6 +76,16 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/analyze-last":
             self._handle_analyze_last()
+            return
+        if path == "/aussprache":
+            wort = (urllib.parse.parse_qs(parsed.query).get("wort", [""])[0]).strip()
+            a = aussprache.aktiv()
+            if a is None:
+                self._send_json(503, {"error": "Aussprache-Liste ist nicht aktiv"})
+            elif not wort:
+                self._send_json(400, {"error": "wort fehlt"})
+            else:
+                self._send_json(200, a.auskunft(wort))
             return
         if path == "/voices":
             query = urllib.parse.parse_qs(parsed.query)
@@ -268,7 +282,43 @@ class _Handler(BaseHTTPRequestHandler):
         report.setdefault("intended", intended)
         self._send_json(200, report)
 
+    def _handle_aussprache_setzen(self) -> None:
+        a = aussprache.aktiv()
+        if a is None:
+            self._send_json(503, {"error": "Aussprache-Liste ist nicht aktiv"})
+            return
+        body = self._read_json_body()
+        wort = str(body.get("wort", "")).strip()
+        umschreibung = str(body.get("umschreibung", "")).strip()
+        roh = str(body.get("phoneme", "")).strip()
+        if not wort or not (umschreibung or roh):
+            self._send_json(400, {"error": "wort und umschreibung (oder phoneme) noetig"})
+            return
+        phoneme = aussprache.aus_umschreibung(umschreibung) if umschreibung else aussprache.piper_phoneme(roh)
+        if not phoneme:
+            self._send_json(400, {"error": "daraus entstehen keine Phoneme"})
+            return
+        a.eigen_setzen(wort, phoneme)
+        satz = str(body.get("beispielsatz", "")).strip() or f"{wort}."
+        announce_queue.put(satz)
+        print(f"[speak-server] Aussprache: {wort} -> {phoneme} (Probe: '{satz[:60]}')")
+        self._send_json(200, {"wort": wort, "phoneme": phoneme, "probe": satz})
+
+    def _handle_aussprache_loeschen(self) -> None:
+        a = aussprache.aktiv()
+        wort = str(self._read_json_body().get("wort", "")).strip()
+        if a is None or not wort:
+            self._send_json(400, {"error": "Aussprache nicht aktiv oder wort fehlt"})
+            return
+        self._send_json(200, {"wort": wort, "geloescht": a.eigen_loeschen(wort)})
+
     def do_POST(self) -> None:
+        if self.path == "/aussprache":
+            self._handle_aussprache_setzen()
+            return
+        if self.path == "/aussprache/loeschen":
+            self._handle_aussprache_loeschen()
+            return
         if self.path == "/voice/set":
             self._handle_voice_set()
             return

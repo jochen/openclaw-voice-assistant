@@ -45,7 +45,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from voice_assistant import config as cfg  # noqa: E402
-from voice_assistant.assistant import _is_stop_command  # noqa: E402
+from voice_assistant.assistant import _is_stop_command, _ist_stiller_abbruch  # noqa: E402
 from voice_assistant.bargein import (  # noqa: E402
     BargeInDetector,
     BargeInHit,
@@ -369,6 +369,28 @@ class StoppWortImBargeInTest(unittest.TestCase):
         self.assertFalse(
             _is_stop_command("Schalt das Küchenlicht bitte aus", 0)
         )
+
+
+class StillerAbbruchTest(unittest.TestCase):
+    """Barge-in, nach dessen Trigger nichts mehr kommt, endet nach dem Nachlauf.
+
+    Bis 2026-10-06 wartete die Aufnahme dann auf Sprache: das "Stopp" stand
+    ganz im Pre-Roll, den der VAD nie sieht, und die Aufnahme blieb offen, bis
+    der Nutzer noch einmal "Stopp" sagte (alle drei Abbrueche im Archiv;
+    gemessen mit tools/endpoint_replay.py --bargein).
+    """
+
+    def test_stille_nach_bargein_endet_nach_dem_nachlauf(self) -> None:
+        self.assertFalse(_ist_stiller_abbruch(1, False, 24, 25))
+        self.assertTrue(_ist_stiller_abbruch(1, False, 25, 25))
+
+    def test_gesprochen_nach_bargein_ist_kein_stiller_abbruch(self) -> None:
+        # Neuer Auftrag: das normale Endpointing entscheidet.
+        self.assertFalse(_ist_stiller_abbruch(1, True, 60, 25))
+
+    def test_nach_normalem_ruf_wird_auf_den_auftrag_gewartet(self) -> None:
+        # Gegenprobe: dort ist Schweigen das Warten auf das "Ja?".
+        self.assertFalse(_ist_stiller_abbruch(0, False, 60, 25))
 
 
 class TtsLockWettlaufTest(unittest.TestCase):

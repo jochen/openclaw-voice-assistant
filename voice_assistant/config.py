@@ -91,12 +91,28 @@ _DEFAULT_VOICE_INSTRUCTION = (
 )
 
 
+# Hinter das Transkript gehängt, wenn anrede.anrede_im_text() nein sagt und der
+# Sprecher nicht bekannt ist — nur im Erst-Turn nach dem Wakewort. Ein Beleg,
+# keine Anweisung zum Schweigen: echte Befehle mit verhörtem Wakewort ("Das Tor,
+# schalt das Tischlicht aus") tragen denselben Hinweis, und der Inhalt zeigt,
+# dass sie gemeint sind.
+_DEFAULT_ANREDE_HINWEIS = (
+    "[Hinweis zur Aufnahme: Das Wakewort kommt in dieser Transkription nicht vor, "
+    "und der Sprecher ist nicht bekannt. Bisher war das fast immer eine "
+    "Fehlauslösung — Fernseher, Radio, Hörspiel oder ein Gespräch im Raum, das "
+    "nicht dir galt. Ist der Text erkennbar an dich gerichtet (eine Frage oder ein "
+    "Auftrag an den Assistenten), antworte normal. Sonst antworte ausschließlich "
+    "mit NO_REPLY.]"
+)
+
+
 @dataclass
 class LocaleConfig:
     wakeword_ack: str = "Ja?"
     confirmation_prefix: str = "Ich habe verstanden: "
     no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten."
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
+    anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     thinking_phrases: list = field(default_factory=lambda: [
         "Einen Moment bitte.",
         "Ich schaue kurz nach.",
@@ -345,6 +361,49 @@ class WatcherConfig:
 
 
 @dataclass
+class DienstWaechterConfig:
+    """Dienst-Waechter (services/dienstwaechter.py): merkt, wenn STT, Laya,
+    Klassifikations-LLM oder Speaches wegbleiben, meldet es an die Gruppe des
+    Ueberwachers (watcher.chat_id) und startet lokale Container neu.
+
+    Default enabled=False: ohne den Block laeuft nichts. Die Dienste stehen
+    nicht hier, sie kommen aus dem Profil (jede gesetzte URL, die der
+    Assistent benutzt); ``dienste`` ergaenzt weitere als {name, url}.
+    """
+    enabled: bool = False
+    intervall: float = 60.0
+    # So lange darf ein Dienst weg sein, bevor gemeldet und geheilt wird —
+    # ein Container-Neustart von Hand oder ein Modell-Laden soll nicht melden.
+    gnadenfrist: float = 180.0
+    heilen: bool = True
+    max_heilversuche: int = 3
+    heil_abstand: float = 1800.0
+    # systemd-User-Units, waehrend derer Ausfaelle geplant sind (z.B. ein
+    # Training, das Container stoppt, um die GPU frei zu haben).
+    ruhe_units: tuple[str, ...] = ()
+    dienste: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass
+class AusspracheConfig:
+    """Aussprache-Liste fuer Piper-Stimmen (services/aussprache.py).
+
+    Default enabled=False. Die Liste ist sprachgebunden (``sprache``): der
+    Grundstock liegt als ``data/aussprache/<sprache>_*.tsv`` im Repo, eigene
+    und neu erzeugte Eintraege im Workspace. Das LLM fuer den
+    Ergaenzungslauf (tools/aussprache_ergaenzen.py) ist irgendein
+    OpenAI-kompatibler Endpunkt; ohne ``llm_url`` wird nur gesammelt.
+    """
+    enabled: bool = False
+    sprache: str = "de"
+    llm_url: str = ""
+    llm_model: str = ""
+    llm_api_key: str = ""
+    # Ab so vielen gesammelten Faellen laeuft ein Ergaenzungslauf.
+    min_faelle: int = 50
+
+
+@dataclass
 class BargeInConfig:
     """Abbruch mitten im Turn ("Stopp Gaston"), optional pro Profil.
 
@@ -444,6 +503,28 @@ class Profile:
     # Speaches
     speaches_base: str = ""
     speaches_stt_model: str = ""
+    # STT im eigenen Prozess (onnx-asr, CPU) VOR Speaches, z. B.
+    # "istupakov/parakeet-tdt-0.6b-v3-onnx". Leer = aus, Speaches zuerst wie
+    # bisher. speaches_stt_model bleibt dann Rückfall und das Modell der
+    # Messwerkzeuge. Siehe services/stt.OnnxAsrStt.
+    stt_onnx_model: str = ""
+    stt_onnx_threads: int = 8
+    # STT über einen llama-server mit Audio-Modell (Qwen3-ASR), VOR onnx-asr
+    # und Speaches. Leer = aus. Mit stt_llamacpp_kontext bekommt das Modell
+    # Wakewort + Gerätenamen aus /capabilities mit (gemessen deutlich besser
+    # bei Gerätenamen). Siehe services/stt.LlamaCppAsrStt.
+    stt_llamacpp_url: str = ""
+    stt_llamacpp_kontext: bool = True
+    # Sprechererkennung per Stimm-Fingerabdruck auf der CPU statt Diarization
+    # über Speaches (services/sprecher_verifikation.py). Default aus. Schwelle
+    # und Abstand nur gegen tools/sprecher_verifikation_test.py ändern.
+    sprecher_verifikation: bool = False
+    sprecher_schwelle: float = 0.40
+    sprecher_abstand: float = 0.15
+    # Fingerabdruck auf einem anderen Rechner rechnen lassen (voice-analysis
+    # /fingerabdruck, openclaw-voice-stack) — fuer schwache Hardware wie den
+    # Pi 4 (2,8 s statt 50 ms). Leer = lokal.
+    sprecher_verifikation_url: str = ""
     speaches_tts_model: str = ""
     speaches_tts_voice: str = ""
 
@@ -453,6 +534,10 @@ class Profile:
     # Streaming-Antwort (/v1/responses mit stream=true): Sätze werden gesprochen,
     # sobald sie generiert sind. Bei Fehler automatischer Fallback auf non-streaming.
     openclaw_stream: bool = True
+    # Hinweis an den Brain, wenn im Erst-Turn das Wakewort im Transkript fehlt
+    # und der Sprecher nicht bekannt ist (voice_assistant/anrede.py). Der Text
+    # steht in locale.anrede_hinweis. Default aus.
+    anrede_hinweis: bool = False
 
     # Telegram
     telegram_bot_token: str = ""
@@ -517,6 +602,12 @@ class Profile:
 
     # Überwacher Stufe 1 — fehlt der Block: kein Watcher-Thread.
     watcher: WatcherConfig = field(default_factory=WatcherConfig)
+
+    # Aussprache-Liste — fehlt der Block: Piper spricht wie bisher.
+    aussprache: AusspracheConfig = field(default_factory=AusspracheConfig)
+
+    # Dienst-Waechter — fehlt der Block: kein Waechter-Thread.
+    dienstwaechter: DienstWaechterConfig = field(default_factory=DienstWaechterConfig)
 
     # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
     rewind: RewindConfig = field(default_factory=RewindConfig)
@@ -775,6 +866,30 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         haus_mcp_token=str(watcher_raw.get("haus_mcp_token", _dw.haus_mcp_token)),
     )
 
+    dw_raw = raw.get("dienstwaechter") or {}
+    _ddw = DienstWaechterConfig()
+    dienstwaechter = DienstWaechterConfig(
+        enabled=bool(dw_raw.get("enabled", _ddw.enabled)),
+        intervall=max(10.0, float(dw_raw.get("intervall", _ddw.intervall))),
+        gnadenfrist=float(dw_raw.get("gnadenfrist", _ddw.gnadenfrist)),
+        heilen=bool(dw_raw.get("heilen", _ddw.heilen)),
+        max_heilversuche=int(dw_raw.get("max_heilversuche", _ddw.max_heilversuche)),
+        heil_abstand=float(dw_raw.get("heil_abstand", _ddw.heil_abstand)),
+        ruhe_units=tuple(str(u) for u in dw_raw.get("ruhe_units") or ()),
+        dienste=tuple((str(d["name"]), str(d["url"])) for d in dw_raw.get("dienste") or ()),
+    )
+
+    as_raw = raw.get("aussprache") or {}
+    _das = AusspracheConfig()
+    aussprache = AusspracheConfig(
+        enabled=bool(as_raw.get("enabled", _das.enabled)),
+        sprache=str(as_raw.get("sprache", _das.sprache)),
+        llm_url=str(as_raw.get("llm_url", _das.llm_url)),
+        llm_model=str(as_raw.get("llm_model", _das.llm_model)),
+        llm_api_key=str(as_raw.get("llm_api_key", _das.llm_api_key)),
+        min_faelle=int(as_raw.get("min_faelle", _das.min_faelle)),
+    )
+
     rewind_raw = raw.get("rewind") or {}
     _drw = RewindConfig()
     rewind = RewindConfig(
@@ -795,6 +910,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         confirmation_prefix=str(locale_raw.get("confirmation_prefix", _dloc.confirmation_prefix)),
         no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
+        anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
 
@@ -821,11 +937,20 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         leds=leds,
         speaches_base=str(raw.get("speaches_base", "")),
         speaches_stt_model=str(raw.get("speaches_stt_model", "")),
+        stt_onnx_model=str(raw.get("stt_onnx_model", "") or ""),
+        stt_onnx_threads=int(raw.get("stt_onnx_threads", 8)),
+        stt_llamacpp_url=str(raw.get("stt_llamacpp_url", "") or ""),
+        stt_llamacpp_kontext=bool(raw.get("stt_llamacpp_kontext", True)),
+        sprecher_verifikation=bool(raw.get("sprecher_verifikation", False)),
+        sprecher_schwelle=float(raw.get("sprecher_schwelle", 0.40)),
+        sprecher_abstand=float(raw.get("sprecher_abstand", 0.15)),
+        sprecher_verifikation_url=str(raw.get("sprecher_verifikation_url", "") or ""),
         speaches_tts_model=str(raw.get("speaches_tts_model", "")),
         speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
         openclaw_token=str(raw.get("openclaw_token", "")),
         openclaw_session=str(raw.get("openclaw_session", "")),
         openclaw_stream=bool(raw.get("openclaw_stream", True)),
+        anrede_hinweis=bool(raw.get("anrede_hinweis", False)),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),
@@ -840,6 +965,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         locale=locale,
         actuator=actuator,
         watcher=watcher,
+        dienstwaechter=dienstwaechter,
+        aussprache=aussprache,
         rewind=rewind,
         wakewords=wakewords,
         barge_in=barge_in,

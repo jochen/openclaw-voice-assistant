@@ -14,7 +14,10 @@
       "voice_list_voices",
       "voice_set_voice",
       "voice_set_speed",
-      "voice_analyze_last_output"
+      "voice_analyze_last_output",
+      "voice_aussprache_setzen",
+      "voice_aussprache_zeigen",
+      "voice_aussprache_loeschen"
     ]
   },
   "configSchema": {

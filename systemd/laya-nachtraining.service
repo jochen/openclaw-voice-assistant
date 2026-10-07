@@ -1,0 +1,20 @@
+[Unit]
+Description=Laya-Aktuator nachtrainieren, wenn der Checkpoint nicht zu den capabilities passt
+# tools/laya_nachtraining.py — Ablauf und Schranken im Docstring, Hintergrund
+# in LAYA_TRAINING.md. Endet sofort, wenn die Versionen passen.
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/openclaw_voice_assist
+Environment="PYTHONUNBUFFERED=1"
+# Basismodell nur aus dem Cache: sonst zieht snapshot_download nachts still
+# eine neue Hub-Revision, und eine neue Basis ist ein eigener Lauf mit eigenem
+# Vergleich (LAYA_TRAINING.md, Falle 2).
+Environment="HF_HUB_OFFLINE=1"
+Environment="PATH=%h/openclaw_voice_assist/ow-venv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+# Installationsspezifisch, nicht im Repo:
+#   LAYA_COMPOSE=…/compose.<host>.yml   LAYA_MASSIVE=…/de-DE.jsonl
+#   LAYA_GPU_WEICHEN="<container> …"    (optional: LAYA_MODELLE, LAYA_TRAIN_PYTHON, …)
+EnvironmentFile=%h/.config/openclaw/laya-nachtraining.env
+ExecStart=%h/openclaw_voice_assist/ow-venv/bin/python -u -m tools.laya_nachtraining
+TimeoutStartSec=2h

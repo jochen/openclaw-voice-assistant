@@ -5,6 +5,10 @@ from __future__ import annotations
 import queue
 import threading
 
+import numpy as np
+
+from voice_assistant.services import aussprache
+from voice_assistant.config import RATE_OW
 from voice_assistant.services import openclaw, telegram
 from voice_assistant.services.diarization import (
     STATUS_NICHT_EINGERICHTET,
@@ -25,6 +29,11 @@ from voice_assistant.state import (
     turn_control,
     turn_stopped,
 )
+
+
+# Stimmungsanalyse bekommt höchstens so viel vom Anfang der Aufnahme
+# (siehe _mood_worker).
+_MOOD_MAX_SEC = 10.0
 
 
 class Workers:
@@ -130,12 +139,20 @@ class Workers:
         return t
 
     def _mood_worker(self, audio_chunks: list, out_q: queue.Queue) -> None:
-        wav_bytes = chunks_to_wav_bytes(audio_chunks)
+        # Nur die ersten _MOOD_MAX_SEC: seit ser auf der CPU rechnet (2026-10-05)
+        # waechst die Zeit linear mit der Laenge — 31,6 s Aufnahme 5,3 s, auf
+        # 10 s gekuerzt 1,6 s, unter DIARIZATION_JOIN_TIMEOUT. Vorn spricht der
+        # Rufende Gaston an; lange Aufnahmen sind meist Hintergrund, der die
+        # Aufnahme bis zum Deckel offen hielt. 90 % der Aufnahmen sind kuerzer.
+        audio = np.concatenate(audio_chunks)[: int(_MOOD_MAX_SEC * RATE_OW)]
+        wav_bytes = chunks_to_wav_bytes([audio])
         run_mood(self.mood_analyzer, wav_bytes, out_q)
 
     def start_confirmation(self, recognized_text: str, turn: int | None = None) -> threading.Thread:
         t = threading.Thread(
-            target=self.speaker.speak,
+            # Ohne Fall-Sammeln: das rohe Transkript enthaelt Verhoerer,
+            # keine Aussprache-Faelle (services/aussprache.py).
+            target=aussprache.ohne_sammeln(self.speaker.speak),
             args=(f"{self.confirmation_prefix}{recognized_text}",),
             kwargs={"restore_leds": False, "turn": turn},
             daemon=True,
@@ -150,6 +167,7 @@ class Workers:
         mood: dict | None = None,
         session: str | None = None,
         turn: int | None = None,
+        hinweis: str | None = None,
     ) -> threading.Thread:
         """session: Routing-Ziel des getriggerten Wakewords (x-openclaw-session-key).
         None → Fallback auf self.openclaw_session (Profil-Default).
@@ -160,7 +178,7 @@ class Workers:
             speaker = verdict_from_speaker(speaker)
         t = threading.Thread(
             target=self._openclaw_turn,
-            args=(user_text, speaker, mood, session, turn),
+            args=(user_text, speaker, mood, session, turn, hinweis),
             daemon=True,
         )
         t.start()
@@ -170,10 +188,10 @@ class Workers:
     def _openclaw_turn(
         self, user_text: str, speaker: SpeakerVerdict | None = None,
         mood: dict | None = None, session: str | None = None,
-        turn: int | None = None,
+        turn: int | None = None, hinweis: str | None = None,
     ) -> None:
         try:
-            self._run_openclaw_turn(user_text, speaker, mood, session, turn)
+            self._run_openclaw_turn(user_text, speaker, mood, session, turn, hinweis)
         finally:
             # Hat die Hauptschleife den Turn per Overall-Timeout schon verlassen,
             # setzt niemand mehr die LED nach dem (verspäteten) Sprechen zurück —
@@ -215,7 +233,7 @@ class Workers:
     def _run_openclaw_turn(
         self, user_text: str, speaker: SpeakerVerdict | None = None,
         mood: dict | None = None, session: str | None = None,
-        turn: int | None = None,
+        turn: int | None = None, hinweis: str | None = None,
     ) -> None:
         # Wakeword-Routing: session_key kommt vom getriggerten Wakeword
         # (assistant.py); None (z.B. altes Aufruf-Schema) fällt auf den
@@ -270,6 +288,7 @@ class Workers:
                 speaker=verdict.name,
                 speaker_label=speaker_label,
                 mood=mood,
+                hinweis=hinweis,
                 on_sentence=guarded_feed,
                 on_first_text=self.thinking.stop,
                 control=turn_control,
@@ -339,6 +358,7 @@ class Workers:
                 speaker=verdict.name,
                 speaker_label=speaker_label,
                 mood=mood,
+                hinweis=hinweis,
                 on_done=self.thinking.stop,
             )
 

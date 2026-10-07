@@ -277,7 +277,10 @@ def run_diarization(
 ) -> None:
     try:
         verdict = diarizer.diarize(wav_bytes)
-        print(f"🎙  [Diarization] Sprecher: {verdict.label}")
+        # Neutral beschriftet: dasselbe Urteil kommt von der Diarization ODER
+        # der Sprecher-Verifikation (die ihre Werte vorher selbst druckt).
+        # "Sprecher: " bleibt — Journal-Auswertungen suchen danach.
+        print(f"🎙  Sprecher: {verdict.label}")
         out.put(verdict)
     except Exception as e:
         # Auch ein Absturz des Workers ist ein Ausfall der Erkennung, kein

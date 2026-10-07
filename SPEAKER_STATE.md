@@ -79,6 +79,32 @@ oder schlimmer als „egal" behandeln.
   Netzproblem, abgestürzter Worker, oder das Ergebnis kam nicht rechtzeitig.
 - **`nicht_eingerichtet`** — Das Profil hat gar keine Diarization konfiguriert.
 
+### Zwei Wege, die vier Status zu ermitteln
+
+- **Diarization über Speaches** (Default): Segmentierung, Fingerabdruck,
+  Clustering, dann Abgleich mit den Referenzen. Bei kurzen Sätzen findet der
+  erste Durchlauf oft niemanden; dann wird die Aufnahme gekachelt und ein
+  zweites Mal geschickt. Live ~2 s.
+- **Sprecher-Verifikation** (`sprecher_verifikation: true`,
+  `services/sprecher_verifikation.py`, seit 2026-10-05): ein Fingerabdruck der
+  ganzen Aufnahme auf der CPU, Abgleich per Kosinus. `bekannt` nur, wenn die
+  beste Referenz über `sprecher_schwelle` (0,40) liegt **und** mindestens
+  `sprecher_abstand` (0,15) vor der zweitbesten. ~50 ms. Gemessen gegen
+  gehörte Labels: keine falsche Zuordnung, Jochen deutlich öfter erkannt als
+  von der Diarization (Messreihe in `tools/sprecher_verifikation_test.py`).
+  Auf schwacher Hardware rechnet ein anderer Rechner nur den Fingerabdruck
+  (`sprecher_verifikation_url`, voice-analysis `/fingerabdruck`); Referenzen
+  und Urteil bleiben beim Assistenten, und ein Ausfall der Gegenstelle ist
+  `ausgefallen` wie jeder andere Fehler.
+
+Für beide gilt derselbe Vertrag: jeder Fehlerweg ist `ausgefallen` — bei der
+Verifikation auch der Fall „Referenz-Dateien da, aber keine berechenbar“, der
+sonst wie `nicht_eingerichtet` aussähe. Beide lesen dieselben Referenzen
+(`voice/speakers/<name>.wav`), die das Anlernen über den Brain schreibt; die
+Verifikation rechnet einen Fingerabdruck neu, sobald sich die Datei ändert.
+Eine Schwelle wird nur gegen das Messwerkzeug geändert: FALSCH (einer
+angelernten Stimme zugeordnet, die es nicht war) muss 0 bleiben.
+
 ## Wie ein Leser das benutzt
 
 Die Regel, die aus dem Vorfall folgt:
@@ -133,7 +159,8 @@ Voice-Assistant darf nicht den Chat lahmlegen.
 
 1. Per Stimme etwas Folgenreiches auslösen, während man selbst enrolled ist →
    läuft durch, `status` in der Datei ist `bekannt`.
-2. Speaches-Diarization abschalten, dasselbe nochmal → **abgelehnt**, und die
+2. Die Erkennung abschalten (Speaches-Diarization stoppen bzw. bei der
+   Verifikation das Modell unlesbar machen), dasselbe nochmal → **abgelehnt**, und die
    Ablehnung sagt „Erkennung war ausgefallen", nicht „unbekannter Sprecher".
    Das ist der Fablab-Fall vom 2026-09-18.
 3. Dieselbe Aktion per Chat auslösen, mehr als `FENSTER` Sekunden später →

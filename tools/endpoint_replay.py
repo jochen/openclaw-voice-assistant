@@ -133,6 +133,7 @@ def _schnitt(
     dialog_deckel_sec: float,
     rms_min: float,
     vorlauf_sec: float,
+    still_abbruch_sec: float = 0.0,
 ) -> tuple[float | None, float, float]:
     """(Schnittzeitpunkt in s oder None, Gesamtdauer in s, letzte Sprache in s).
 
@@ -154,6 +155,10 @@ def _schnitt(
     ihn nie. Ohne dieses Überspringen zählt das Wakeword selbst als Sprache,
     und jede Sperre, die sich auf gesprochene Menge stützt, misst sich blind.
     Auch der Deckel läuft ab dem Trigger, nicht ab Dateibeginn.
+
+    still_abbruch_sec: wie nach einem Barge-in im Betrieb — kommt so lange
+    nach dem Trigger keine Sprache, endet die Aufnahme dort (reiner Abbruch).
+    0 = aus.
 
     None = die Aufnahme wäre bis zum Deckel bzw. Dateiende gelaufen.
     """
@@ -185,6 +190,10 @@ def _schnitt(
         if schnitt is not None:
             continue
         if seit_trigger > (deckel_sec if scharf else dialog_deckel_sec):
+            schnitt = t
+            continue
+        if still_abbruch_sec > 0 and not sprache and not ist_sprache \
+                and seit_trigger >= still_abbruch_sec:
             schnitt = t
             continue
         if ist_sprache:
@@ -234,6 +243,9 @@ def main() -> int:
                          "Auswertung woanders hier umbiegen)")
     ap.add_argument("--nur-kommandos", action="store_true",
                     help="nur Turns, aus denen ein ausgeführter Schaltbefehl wurde")
+    ap.add_argument("--bargein", action="store_true",
+                    help="nur Aufnahmen nach einem Barge-in, mit dessen Regeln "
+                         "(keine Sperre, stiller Abbruch nach dem Kommando-Nachlauf)")
     ap.add_argument("--nur-ein-satz", action="store_true",
                     help="nur Turns, die damals als Ein-Satz eingestuft wurden — "
                          "NUR die bekommen im Betrieb das Kommando-Endpointing. "
@@ -291,6 +303,11 @@ def main() -> int:
         if len(audio) < RATE_OW // 4:
             continue
         wake_name = name.replace("_rec.wav", "_wake.wav")
+        if args.bargein:
+            # Nach einem Barge-in haengen Ausgang und Transkript am Abbruch-Clip.
+            wake_name = name.replace("_rec.wav", "_bargein.wav")
+            if not os.path.exists(os.path.join(TRIGGER_AUDIO_DIR, wake_name)):
+                continue
         info = infos.get(wake_name, {})
         transcript = (info.get("transcript") or "").strip()
         ist_kommando = transcript in akt_tx and bool(transcript)
@@ -309,11 +326,12 @@ def main() -> int:
             chunk,
             nachlauf_chunks=max(1, round(nachlauf / chunk_sec)),
             dialog_nachlauf_chunks=max(1, round(profil.silence_seconds / chunk_sec)),
-            min_sprach_chunks=max(1, round(min_sprache / chunk_sec)),
+            min_sprach_chunks=0 if args.bargein else max(1, round(min_sprache / chunk_sec)),
             deckel_sec=deckel,
             dialog_deckel_sec=RECORDING_MAX_SEC,
             rms_min=rms_min,
             vorlauf_sec=_PRE_ROLL_SEC,
+            still_abbruch_sec=nachlauf if args.bargein else 0.0,
         )
         schnitt = t if t is not None else dauer
         ergebnisse.append({

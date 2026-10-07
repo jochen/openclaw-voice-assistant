@@ -10,7 +10,7 @@ Wakeword-driven voice assistant for Raspberry Pi. Connects local speech input to
 Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
   → openWakeWord ("hey jarvis")
   → WebRTC VAD + recording (max 30 s)
-  → STT: Speaches /v1/audio/transcriptions  (fallback: faster-whisper local)
+  → STT: [llama.cpp audio model →] [onnx-asr →] Speaches  (fallback: faster-whisper local)
   → Diarization (parallel): Speaches /v1/audio/diarization with known speakers
   → Voice actuator (optional): a switching command? → run locally (~0.5 s), skip the rest
   → Confirmation TTS ("I understood…") — parallel thread
@@ -451,6 +451,18 @@ after the abort stayed open for 18.2 seconds and picked up a *bystander's*
 question, which was then answered as a new request. Command endpointing (1 s,
 8 s) is the right setting for this state.
 
+**And end it when nothing follows the trigger.** "Stop Gaston" and even a fast
+"Gaston stop" are complete *before* the wake word fires, so the stop word sits
+entirely in the pre-roll — which the VAD never sees. "End after silence that
+follows speech" then waits for speech that never comes: in all three aborts in
+our archive the recording stayed open (LED still showing "listening") until the
+user said "stop" again. Our rule: after a barge-in, if one trailing-silence
+length passes with no speech, the recording ends as a plain abort and is
+**never** sent on as a request. Don't instead count the pre-roll as speech and
+let STT decide: on such a short clip it missed the stop word in one of three
+cases ("Gastvorstellung."), which would then have gone to the brain as a new
+request. Measure it with `tools/endpoint_replay.py --bargein`.
+
 **If you build something like this: re-check the abort flag after acquiring your
 audio lock.** Our first live abort still spoke one sentence, because that
 sentence had already passed the abort check and was then blocked on the playback
@@ -520,7 +532,14 @@ that would have to guess. Laya is not usable without fine-tuning: it is
 trained on sentences generated from your own capabilities
 (`tools/tor_trainset.py`, `tools/laya_aktuator_train.py`, separate venv with
 torch; procedure and pitfalls in `LAYA_TRAINING.md`). A checkpoint belongs to
-exactly one target list; when targets change, retrain. The generator's
+exactly one target list; when targets change, retrain. Nothing fails when you
+forget — Laya just answers worse. So the `laya-serve` wrapper reports the
+checkpoint's capabilities version in `/health`, the assistant compares it with
+the live version after every refresh and reports a mismatch (Telegram, the
+watcher's chat), and `tools/laya_nachtraining.py` (systemd timer, nightly)
+retrains on a mismatch: two seeds, measured against the test set next to the
+running checkpoint, switched only if it has no more wrong actions and the
+smoke test after the switch reproduces the numbers. The generator's
 templates are German.
 
 **Keep the model's output short.** The classifier answers in compact JSON,
@@ -698,6 +717,89 @@ once stage 1 has proven reliable over weeks.
 
 ## OpenClaw Integration
 
+### Pronunciation list (optional, `aussprache:`)
+
+Piper sends every word through espeak-ng's rules for the voice's language, so
+loanwords and names come out wrong ("Sauce" as *Sau-ke*, "Andrew Jackson" as
+*Andreef Jakson*); switching voices doesn't help, they all share that front end.
+Piper reads text in `[[ … ]]` as phonemes, so the assistant replaces known
+problem words right before synthesis (Telegram and the brain still see plain text):
+
+1. **Base list from Wiktionary** (`data/aussprache/de_wiktionary.tsv`, ~19 000
+   words, CC BY-SA): the German Wiktionary gives loanwords their *usual German*
+   pronunciation — in a blind test that version won 4 of 6. Only words where
+   espeak differs noticeably are kept; homographs (incl. across case, "Seine"
+   the river vs. "seine"), function words and words under 4 letters are left
+   out — measured on what the assistant actually said, without these rules the
+   two most frequent words ("der", "Die") got wrong entries. IPA is mapped onto
+   the symbols espeak itself produces, because that's all the voice ever heard
+   (Wiktionary's ʁ, ̯, ʔ never occur in espeak output).
+   Build it: `tools/aussprache_grundstock.py <dewiktionary dump>`.
+2. **Cases are collected automatically**: spoken words that are neither in the
+   list nor in the Wiktionary vocabulary (names, new anglicisms).
+3. **Once there are enough (`min_faelle`, 50)**, a timer runs
+   `tools/aussprache_ergaenzen.py`: any OpenAI-compatible LLM (`llm_url`,
+   `llm_model`) proposes a German respelling and an IPA per word; each is
+   synthesised and run back through STT, and only a version that brings the
+   word back is kept — no listening needed. If today's pronunciation already
+   comes back, no entry is made.
+4. **Direct correction via the brain** (`voice_aussprache_setzen`): the user
+   says how it should sound in German spelling ("*Sohße*"), it applies at once
+   and a sample is spoken.
+
+Generated entries stay private; `tools/aussprache_veroeffentlichen.py` copies
+the public ones into `data/aussprache/de_ergaenzt.tsv` (with hard filters for
+speaker names and device-name parts — the LLM's own "public" flag wasn't
+reliable). Only for Piper voices; for another language add its list and
+set `sprache`.
+
+**Speaches with piper-tts 1.3.0 (e.g. `speaches 0.9.0-rc.3`) needs a patch.**
+There, text after a `[[ … ]]` block becomes a sentence of its own; when the
+word ends the sentence, an empty sentence is left over and the voice turns it
+into a loud noise (a "*hiss*" after the word, inaudible mid-sentence).
+piper-tts 1.4.1 fixed this; for older versions the fix is
+`patches/piper_voice.py` in [openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack),
+mounted over `piper/voice.py` in the container.
+
+```yaml
+    aussprache:
+      enabled: true
+      sprache: de
+      llm_url: http://<llm-host>:<port>   # optional; without it cases are only collected
+      llm_model: <model>
+      min_faelle: 50
+```
+
+### Service watchdog (optional, `dienstwaechter:`)
+
+The fallback chains (STT stage after stage, Gemma instead of Laya) have a
+downside: a dead service becomes **invisible**. Ours lost Qwen-STT and Laya for
+15 hours — the containers were healthy inside, but their host port forwarding
+had died — and every turn quietly ran on the next stage. Nobody noticed.
+
+The watchdog checks `/health` of every service URL the profile uses (Speaches,
+llama.cpp STT, classification LLM, Laya — taken from the profile, nothing
+hard-coded) once a minute. A service that stays down past a grace period is
+reported to the overseer's chat, and if a **local Podman container** publishes
+that port, it is stopped and started again (a limited number of times, with a
+gap between attempts); the result goes into the same message. Recovery is
+reported too. Quiet hours: it heals but collects the messages.
+
+```yaml
+    dienstwaechter:
+      enabled: true
+      ruhe_units: [laya-nachtraining.service]   # planned downtime: no alarm, no healing
+      # gnadenfrist: 180   intervall: 60   heilen: true   max_heilversuche: 3
+      # dienste: [{name: "My service", url: "http://127.0.0.1:9000/health"}]
+```
+
+**If you run rootless Podman: never start a container from inside a systemd
+unit with a plain `podman start`.** The port forwarder (`rootlessport`) stays
+in the caller's cgroup, and when that unit ends, systemd kills it — the
+container keeps running, its port is dead. That is exactly what happened to
+us. `voice_assistant/services/container.py` starts containers in their own
+transient scope (`systemd-run --user --scope`); use that.
+
 ### Session Key
 
 `openclaw_session` determines which session voice requests land in. For voice and Telegram chat to share context, this key must match the Telegram session key.
@@ -752,6 +854,10 @@ This prompt directive is guidance, not enforcement. The enforcement lives in the
 
 Some 🎤 messages carry a line with `arousal` / `valence` / `dominance` values (0–1, ~0.5 neutral) measured from the voice — the *tone*, not the content. Let it inform your picture of the person and how you act, naturally, like a human picking up on someone's tone. It's rough; interpret in context, don't over-read, and don't usually name it out loud.
 
+### Recording hint (false trigger)
+
+Some 🎤 messages carry a **[recording hint …]** block: the wake word is missing from the transcript and the speaker is not known. That is evidence, not an order to stay silent — usually it was a false trigger (TV, radio, a conversation in the room), sometimes a real call with a misheard wake word. Decide on the content: if the text is clearly addressed to you, answer normally; otherwise reply with exactly `NO_REPLY` — the channel then stays silent.
+
 ### Voice & speaking rate
 
 You can freely choose and switch your own voice and speaking rate (`voice_list_voices`, `voice_set_voice`, `voice_set_speed`); pass a speaker's name as `for_speaker` to remember a preferred voice per person.
@@ -761,6 +867,8 @@ The deployed `AGENTS.md` holds the full version (incl. voice → chat continuati
 
 With the [voice actuator](#voice-actuator-optional) enabled, one more point belongs here: clean switching commands are handled by the actuator itself and never reach the brain. A switching sentence that arrives there anyway was **not** recognised as a command by the guarded path, or that path was unavailable — a reason for more caution, not more ambition. Switching therefore goes through [that same guarded path](#the-same-path-for-the-brain-mcp) rather than the raw home automation API: standing later in the chain gives the brain no more powerful route, only the same one.
 
+The **recording hint** block is produced by code, not by the model: with `anrede_hinweis: true` in the profile (default off), `voice_assistant/anrede.py` checks, in the first turn after the wake word, whether the wake word (or a mishearing of it, derived from the bundle name) is among the first four words. If it is missing and the speaker is not known, `locale.anrede_hinweis` is appended to the transcript — never in follow-ups or after the acknowledgement, where the wake word is rightly absent. Measured over 169 archived recordings: none of the 11 false triggers from TV or room conversation contained the wake word, while 60 of 69 executed switch commands did. Deliberately not a filter: a false trigger reaches the brain anyway, and it judges the content better than any rule. The default hint text is German; replace `locale.anrede_hinweis` for other languages.
+
 ## Speaker Recognition & Enrolment
 
 Each recording runs through Speaches diarization in parallel to STT. The dominant speaker is forwarded to OpenClaw in the wrapper prefix:
@@ -769,6 +877,8 @@ Each recording runs through Speaches diarization in parallel to STT. The dominan
 🎤 [Sprecher: jochen] How is the weather?
 🎤 [Sprecher: unbekannt] How is the weather?
 ```
+
+**Faster alternative: speaker verification** (`sprecher_verifikation: true`). Instead of a full diarization per turn (segmentation, embedding, clustering — around 2 s live, and short sentences often need a second pass), one voice embedding of the whole recording is compared with the enrolled references on the CPU (~50 ms, same WeSpeaker model). A speaker counts as known only above `sprecher_schwelle` **and** with `sprecher_abstand` ahead of the next-best reference. Enrolment via the brain works unchanged; a changed reference file is picked up without a restart. The default threshold (0.40) was chosen against blind, ear-checked labels so that no recording was attributed to the wrong person — measure again with `tools/sprecher_verifikation_test.py` for your own voices before trusting it; the speaker gate depends on it. On weak hardware (a Raspberry Pi 4 needs about 0.37 s per second of audio, longer than the assistant waits for the speaker) another machine can compute the embedding: `sprecher_verifikation_url: http://<host>:8001` points to `voice-analysis` from [openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack) (endpoint `/fingerabdruck`). The audio samples themselves are sent, so the result is bit-identical to the local computation; references and the verdict stay on the assistant, and if the service fails the speaker counts as `ausgefallen` (failed).
 
 ### Workspace layout
 
@@ -822,6 +932,7 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | manage known speakers |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (also per speaker via `for_speaker`) |
 | `voice_analyze_last_output(…)` | re-analyse the assistant's own last spoken reply (text fidelity, timing, prosody) |
+| `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | fix how a word is pronounced, at once ("Sauce is said *Sohße*"); see *Pronunciation list* |
 
 Install / register:
 
@@ -854,6 +965,21 @@ Diarization: `POST {speaches_base}/v1/audio/diarization` — models `Wespeaker/w
 - STT fallback: `faster-whisper` (model `small`, runs on the Pi)
 - TTS fallback: Piper (`~/.local/share/piper/de_DE-thorsten-low.onnx`)
 - Diarization has no local fallback — falls through to "speaker: unknown"
+
+### Other STT engines (optional)
+
+Speaches only serves Whisper-family models well. Two profile options put another engine **in front of** it; each falls through to the next stage on an error, an empty result means "no speech":
+
+```yaml
+stt_llamacpp_url: http://127.0.0.1:8094          # llama-server with an audio model, e.g.
+                                                 #   ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0
+stt_llamacpp_kontext: true                       # send wake word + device names as context
+stt_onnx_model: istupakov/parakeet-tdt-0.6b-v3-onnx   # onnx-asr, in-process, CPU
+```
+
+Order: llama.cpp → onnx-asr → Speaches → local faster-whisper. With the actuator enabled, the context is the wake word plus the first name of every target from `/capabilities`; the model then spells device names correctly instead of guessing. If it copies the context instead of transcribing (it happens, rarely), the same recording is transcribed again without it. Neither engine reports `no_speech_prob`, so the Whisper hallucination filter does not apply; false triggers reach the brain with a hint instead (`anrede_hinweis`).
+
+**Choose by measurement, not by leaderboard.** Without reference transcripts, an STT model can still be judged by its *effect*: run its transcripts through the actuator and compare with labelled intents (`tools/stt_vergleich.py --transkripte`, candidates on another GPU via `tools/stt_kandidaten.py`). For plain text quality you need a few dozen sentences checked by ear — blind, without model names, and not only the ones where models disagree (that selection made one model look ten times better than it was). Run the Whisper baseline through the same Speaches you use live: the same model in another faster-whisper/ctranslate2 version, or on another GPU generation, produces different wording.
 
 ### Piper TTS (local fallback)
 

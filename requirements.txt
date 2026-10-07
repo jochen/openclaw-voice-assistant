@@ -24,4 +24,10 @@ pathvalidate==3.3.1
 num2words>=0.5.14
 
 # ReSpeaker — ESPHome Native API Client (nur für mode: respeaker)
-aioesphomeapi>=44.16.1
+aioesphomeapi>=45.7.0
+
+# Sprecher-Verifikation (sprecher_verifikation: true) — Fbank wie onnx_diarization
+kaldi-native-fbank==1.22.3
+
+# Parakeet als STT-Stufe auf der CPU (nur mit stt_onnx_model)
+onnx-asr==0.12.0

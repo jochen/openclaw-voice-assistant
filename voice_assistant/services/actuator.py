@@ -424,6 +424,11 @@ class Actuator:
         # (mit `mitglieder`) mit nicht-leerer Menge. Siehe verdict().
         self.gruppen_beleg: dict[str, set[str]] = {}
         self.version: str | None = None
+        # Wird nach jedem refresh() aus start()/MQTT/Poll gerufen, jeweils im
+        # eigenen Thread — z. B. der Abgleich der Laya-Checkpoint-Version
+        # (aktuator_schatten.pruefe_checkpoint). Nicht aus refresh() selbst,
+        # aus demselben Grund wie aufwaermen().
+        self.nach_refresh: list = []
         # Letzte classify()-Latenz in ms — fürs Logging in assistant.py.
         self.last_latency_ms: float = 0.0
 
@@ -563,6 +568,8 @@ class Actuator:
         ok = self.refresh()
         if ok:
             threading.Thread(target=self.aufwaermen, daemon=True).start()
+            for f in list(self.nach_refresh):
+                threading.Thread(target=f, daemon=True).start()
         return ok
 
     def aufwaermen(self) -> None:
