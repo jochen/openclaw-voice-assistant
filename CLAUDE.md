@@ -402,6 +402,10 @@ Wiederholen kurzer Aufnahmen (der Diarization-Trick) hilft hier nicht —
 gemessen. Anlernen über den Brain (`voice_enroll_speaker`) bleibt; eine
 geänderte Referenz wird ohne Neustart neu berechnet. **Schwelle nur gegen
 `tools/sprecher_verifikation_test.py` ändern**, FALSCH muss 0 bleiben.
+`sprecher_verifikation_url` (seit 2026-10-07, für den Fablab-Pi: 2,8 s →
+0,1 s) lässt voice-analysis `/fingerabdruck` (openclaw-voice-stack) den
+Vektor rechnen; dessen `_fbank` ist eine wörtliche Kopie — **wer die Rechnung
+hier ändert, ändert sie dort mit**. Gemessen bitgleich (`--url` am Werkzeug).
 Tests: `tests/test_sprecher_verifikation.py`.
 
 **Aenderungen hier nur gegen `tests/test_speaker_verdict.py`** (14 Tests, ohne

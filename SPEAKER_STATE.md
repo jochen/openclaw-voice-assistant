@@ -92,6 +92,10 @@ oder schlimmer als „egal" behandeln.
   `sprecher_abstand` (0,15) vor der zweitbesten. ~50 ms. Gemessen gegen
   gehörte Labels: keine falsche Zuordnung, Jochen deutlich öfter erkannt als
   von der Diarization (Messreihe in `tools/sprecher_verifikation_test.py`).
+  Auf schwacher Hardware rechnet ein anderer Rechner nur den Fingerabdruck
+  (`sprecher_verifikation_url`, voice-analysis `/fingerabdruck`); Referenzen
+  und Urteil bleiben beim Assistenten, und ein Ausfall der Gegenstelle ist
+  `ausgefallen` wie jeder andere Fehler.
 
 Für beide gilt derselbe Vertrag: jeder Fehlerweg ist `ausgefallen` — bei der
 Verifikation auch der Fall „Referenz-Dateien da, aber keine berechenbar“, der
