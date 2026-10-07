@@ -310,7 +310,11 @@ Nur bei Piper-Modellen. Schichten, spätere gewinnen: Repo
 Werkzeug `voice_aussprache_setzen`, Endpunkt `POST /aussprache` am
 Sprech-Server). Fälle: `de_faelle.jsonl` (nicht aus der Bestätigung, siehe
 `ohne_sammeln`); Timer `aussprache-ergaenzen.timer` 05:15 läuft erst ab 50.
-Übernahme ohne Anhören, Prüfung per STT-Rückprobe (Jochen). Die Lehren beim
+Übernahme ohne Anhören, Prüfung per STT-Rückprobe (Jochen).
+**Speaches braucht den piper-Patch** (`openclaw-voice-stack`
+`patches/piper_voice.py`, seit 2026-10-07 auf beiden Hosts): piper 1.3.0
+machte aus dem Rest hinter einem Block am Satzende einen leeren Satz → lautes
+„zischd" (im Fablab gehört, Ursache im Container gelesen). Die Lehren beim
 Bau, alle gemessen: Homographen über Groß/klein, Funktionswörter, und die
 Abbildung auf espeaks Zeichenvorrat (Docstrings von
 `tools/aussprache_grundstock.py` und `piper_phoneme`). Jochens Hinweis dazu:

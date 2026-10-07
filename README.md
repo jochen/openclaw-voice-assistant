@@ -753,6 +753,14 @@ speaker names and device-name parts — the LLM's own "public" flag wasn't
 reliable). Only for Piper voices; for another language add its list and
 set `sprache`.
 
+**Speaches with piper-tts 1.3.0 (e.g. `speaches 0.9.0-rc.3`) needs a patch.**
+There, text after a `[[ … ]]` block becomes a sentence of its own; when the
+word ends the sentence, an empty sentence is left over and the voice turns it
+into a loud noise (a "*hiss*" after the word, inaudible mid-sentence).
+piper-tts 1.4.1 fixed this; for older versions the fix is
+`patches/piper_voice.py` in [openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack),
+mounted over `piper/voice.py` in the container.
+
 ```yaml
     aussprache:
       enabled: true

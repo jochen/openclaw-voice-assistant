@@ -774,6 +774,14 @@ Filtern für Sprechernamen und Bestandteile von Gerätenamen — die
 „öffentlich"-Markierung des LLM war nicht zuverlässig). Nur für Piper-Stimmen;
 für eine andere Sprache deren Liste anlegen und `sprache` setzen.
 
+**Speaches mit piper-tts 1.3.0 (z. B. `speaches 0.9.0-rc.3`) braucht einen
+Patch.** Dort wird Text nach einem `[[ … ]]`-Block zum eigenen Satz; steht das
+Wort am Satzende, bleibt ein leerer Satz übrig, aus dem die Stimme ein lautes
+Geräusch macht („*zischd*" nach dem Wort, mitten im Satz unhörbar). piper-tts
+1.4.1 hat das behoben; für ältere Fassungen liegt die Korrektur als
+`patches/piper_voice.py` in [openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack)
+und wird über `piper/voice.py` im Container gelegt.
+
 ```yaml
     aussprache:
       enabled: true
