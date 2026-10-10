@@ -22,6 +22,8 @@ from voice_assistant.config import (
     ACTUATOR_TOR_LOG_PATH,
     DIARIZATION_JOIN_TIMEOUT,
     ABORT_BEEP_PATH,
+    TIMER_KLINGEL_PATH,
+    TIMER_STATE_PATH,
     ENDPOINT_LOG_PATH,
     FOLLOWUP_BEEP_PATH,
     LAST_RECORDING_PATH,
@@ -91,6 +93,7 @@ from voice_assistant.state import (
     STATE_PROCESSING,
     STATE_RECORDING,
     STATE_WAITING,
+    announce_queue,
     current_state,
     pending_reply_text,
     reply_done_event,
@@ -814,6 +817,48 @@ def _format_wake_scores(scores: deque, threshold: float) -> str:
     return " ".join(parts)
 
 
+def _start_kuechentimer(profile: Profile, audio_sink):
+    """Küchentimer starten (services/kuechentimer.py). Fehler dürfen den
+    Start nie verhindern — ohne Timer gehen Timer-Sätze an den Brain."""
+    tc = profile.timer
+    if not tc.enabled:
+        return None
+    try:
+        from voice_assistant.services.kuechentimer import KuechenTimer, Senke, klingel_wav
+
+        klingel_wav(TIMER_KLINGEL_PATH)
+
+        def lautsprecher_klingeln(anzahl: int, still) -> None:
+            # Je Folge kurz den tts_lock nehmen: eine laufende Antwort wird
+            # nicht überfahren, sie verzögert das Klingeln nur.
+            for _ in range(anzahl):
+                if still():
+                    return
+                start = time.monotonic()
+                with tts_lock:
+                    if still():
+                        return
+                    audio_sink.play_wav(TIMER_KLINGEL_PATH)
+                time.sleep(max(0.0, tc.klingel_abstand_s - (time.monotonic() - start)))
+
+        kt = KuechenTimer(
+            TIMER_STATE_PATH,
+            [Senke(s.name, s.url, s.token) for s in tc.senken],
+            klingeln=tc.klingeln,
+            klingel_abstand_s=tc.klingel_abstand_s,
+            nachlauf_max_s=tc.nachlauf_max_s,
+            ansage=(lambda text: announce_queue.put((text, False))) if tc.ansage else None,
+            lautsprecher_klingeln=lautsprecher_klingeln if tc.lautsprecher_rueckfall else None,
+        )
+        kt.start()
+        print(f"⏲️  Küchentimer aktiv, Senken: "
+              f"{', '.join(s.name for s in tc.senken) or '(keine, nur Lautsprecher)'}")
+        return kt
+    except Exception as e:
+        print(f"⚠️  Küchentimer nicht gestartet: {e}")
+        return None
+
+
 def run() -> None:
     profile = load_profile()
 
@@ -1022,9 +1067,12 @@ def run() -> None:
         voice_controller=voice_controller,
     )
 
+    # --- Küchentimer (Zustand hier, Anzeige/Klingeln auf Senken) ---
+    kuechentimer = _start_kuechentimer(profile, audio_sink)
+
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
-    start_speak_server(voice_controller=voice_controller)
+    start_speak_server(voice_controller=voice_controller, kuechentimer=kuechentimer)
     start_announce_worker(
         speaker,
         telegram_bot_token=profile.telegram_bot_token,

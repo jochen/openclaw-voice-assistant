@@ -128,6 +128,8 @@ voice_assistant/
     openclaw.py          /v1/responses Client
     dienstwaechter.py    Ausfall der Dienste melden, lokale Container neu starten
     container.py         Podman-Container im eigenen Scope starten (rootlessport-Falle)
+    timer_parser.py      Timer-Befehle fest aus dem Transkript (ohne Modell)
+    kuechentimer.py      Küchentimer: Zustand, Ablauf, Senken (TIMER_INTERFACE.md)
 ```
 
 ### Wakeword-Studio-CLI (`wakeword_studio/`)
@@ -322,6 +324,22 @@ Abbildung auf espeaks Zeichenvorrat (Docstrings von
 beobachten, dann nachbessern. Offen: ASCII-Umlaute aus Brain-Antworten
 („fuenf") gehören eigentlich in die Textaufbereitung. Tests:
 `tests/test_aussprache.py`.
+
+### Küchentimer (`timer:`, im Bau seit 2026-10-10, Branch `feature/kuechentimer`)
+
+Ablösung des Alexa-Timers. Der Zustand liegt im Assistenten
+(`services/kuechentimer.py`, `~/.openclaw/workspace/timer.json`, überlebt
+Neustarts). Anzeige und Klingeln übernehmen generische **Senken** über HTTP
+(hier der Küchen-Tablet-Viewer). Vertrag, Mindest-Senke und Abnahme stehen in
+**`TIMER_INTERFACE.md`**. Bestätigt keine Senke das Klingeln, klingelt der
+Lautsprecher. Ein Timer klingelt `klingeln`-mal und hört von selbst auf
+(Jochen: Alexas Abstellzwang ist „quatsch“). Danach zählt er sichtbar ins
+Negative bis `nachlauf_max_s`. Eingänge: der feste Parser
+`services/timer_parser.py`, gemessen mit `tools/timer_parser_test.py`
+(FALSCH muss 0 bleiben, Aufnahmen privat in `testsets/timer/`), und
+`POST :18792/timer` für den Brain. **Noch nicht verdrahtet:** Parser vor dem
+Tor, „Gaston, stopp“ → `klingeln_aus()`, MCP-Werkzeug, Senke im
+tabletviewer. Tests: `tests/test_kuechentimer.py`, `tests/test_timer_parser.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 

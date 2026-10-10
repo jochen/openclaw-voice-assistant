@@ -220,6 +220,7 @@ pending_reply_text: list[str | None] = [None]
 # eins versetzt, sodass jeder Turn das Transkript des vorherigen verarbeitet.
 
 # Extern angefragte Ansagen (speak_server → announce_worker)
-announce_queue: "queue.Queue[str]" = queue.Queue()
+# Einträge: Text, oder (Text, False) für "nicht nach Telegram spiegeln".
+announce_queue: "queue.Queue[str | tuple[str, bool]]" = queue.Queue()
 # Aktueller State der Hauptschleife — wird von assistant.py gesetzt
 current_state: list[int] = [STATE_LISTENING]

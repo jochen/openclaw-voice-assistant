@@ -385,6 +385,30 @@ class DienstWaechterConfig:
 
 
 @dataclass
+class TimerSenkeConfig:
+    name: str
+    url: str
+    token: str = ""
+
+
+@dataclass
+class TimerConfig:
+    """Küchentimer (services/kuechentimer.py, Vertrag TIMER_INTERFACE.md).
+
+    Default enabled=False. ``senken`` sind Anzeigen, die den Zustand
+    bekommen und klingeln (z. B. ein Tablet-Viewer); ohne Senke oder wenn
+    keine das Klingeln bestätigt, klingelt der Lautsprecher des Assistenten.
+    """
+    enabled: bool = False
+    klingeln: int = 3                 # Klingel-Folgen je Ablauf (Default)
+    klingel_abstand_s: float = 5.0    # Abstand der Folgen
+    nachlauf_max_s: float = 1800.0    # so lange bleibt ein abgelaufener sichtbar
+    ansage: bool = True               # "Der Timer ist abgelaufen." am Lautsprecher
+    lautsprecher_rueckfall: bool = True
+    senken: tuple[TimerSenkeConfig, ...] = ()
+
+
+@dataclass
 class AusspracheConfig:
     """Aussprache-Liste fuer Piper-Stimmen (services/aussprache.py).
 
@@ -605,6 +629,9 @@ class Profile:
 
     # Aussprache-Liste — fehlt der Block: Piper spricht wie bisher.
     aussprache: AusspracheConfig = field(default_factory=AusspracheConfig)
+
+    # Küchentimer — fehlt der Block: kein Timer, Timer-Sätze gehen an den Brain.
+    timer: TimerConfig = field(default_factory=TimerConfig)
 
     # Dienst-Waechter — fehlt der Block: kein Waechter-Thread.
     dienstwaechter: DienstWaechterConfig = field(default_factory=DienstWaechterConfig)
@@ -879,6 +906,20 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         dienste=tuple((str(d["name"]), str(d["url"])) for d in dw_raw.get("dienste") or ()),
     )
 
+    tm_raw = raw.get("timer") or {}
+    _dtm = TimerConfig()
+    timer = TimerConfig(
+        enabled=bool(tm_raw.get("enabled", _dtm.enabled)),
+        klingeln=max(1, int(tm_raw.get("klingeln", _dtm.klingeln))),
+        klingel_abstand_s=max(1.0, float(tm_raw.get("klingel_abstand_s", _dtm.klingel_abstand_s))),
+        nachlauf_max_s=max(0.0, float(tm_raw.get("nachlauf_max_s", _dtm.nachlauf_max_s))),
+        ansage=bool(tm_raw.get("ansage", _dtm.ansage)),
+        lautsprecher_rueckfall=bool(tm_raw.get("lautsprecher_rueckfall",
+                                               _dtm.lautsprecher_rueckfall)),
+        senken=tuple(TimerSenkeConfig(str(s["name"]), str(s["url"]), str(s.get("token") or ""))
+                     for s in tm_raw.get("senken") or ()),
+    )
+
     as_raw = raw.get("aussprache") or {}
     _das = AusspracheConfig()
     aussprache = AusspracheConfig(
@@ -966,6 +1007,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         actuator=actuator,
         watcher=watcher,
         dienstwaechter=dienstwaechter,
+        timer=timer,
         aussprache=aussprache,
         rewind=rewind,
         wakewords=wakewords,
@@ -1033,6 +1075,9 @@ FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
 # steigenden Follow-up-Beep hoerbar unterscheidet — "ich habe aufgehoert"
 # gegen "ich hoere jetzt zu".
 ABORT_BEEP_PATH = os.path.join(WORKSPACE, "abort_beep.wav")
+# Küchentimer: Zustand (überlebt Neustarts) und Klingelton für den Lautsprecher
+TIMER_STATE_PATH = os.path.join(WORKSPACE, "timer.json")
+TIMER_KLINGEL_PATH = os.path.join(WORKSPACE, "timer_klingel.wav")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
 
