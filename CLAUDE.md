@@ -232,7 +232,15 @@ Live-Version (seit 2026-10-06):** `/health` des Containers trägt
 `checkpoint.capabilities`, `aktuator_schatten.pruefe_checkpoint` meldet eine
 Abweichung (Journal + Argus-Gruppe), `tools/laya_nachtraining.py`
 (`laya-nachtraining.timer`, 3:00) trainiert dann neu und schaltet nur hinter
-Schranken um. `schatten_url` (der Name vom
+Schranken um. **Seit 2026-10-10 zuerst auf einem
+Fern-Rechner** (`LAYA_FERN`, `tools/laya_fern.py`,
+`laya-nachtraining-fern.timer` alle 5 min, startet erst nach 10 min Ruhe der
+capabilities): daheim fällt dabei nichts aus, die Basis-Revision von daheim
+wird mitgegeben, das LLM dort darf bei Platzmangel weichen, und die Daten
+dort werden nach dem Lauf gelöscht. Der 3:00-Lauf daheim bleibt der
+Rückfall. Gut zu wissen: neue `namen` wirken bei Laya sofort, auch ohne
+Nachtraining, weil sie bei jeder Anfrage als Optionen mitgehen
+(`laya_intent.ziel_frage`). `schatten_url` (der Name vom
 2026-09-29) wird als alter Name von `laya_url` weiter gelesen.
 **Wer das Training anfasst oder automatisiert, liest `LAYA_TRAINING.md`** —
 Ablauf, die Fallen der ersten Läufe (OOM, Training verdrängt Speaches, torch-CPU-Fassung, HTTP 500

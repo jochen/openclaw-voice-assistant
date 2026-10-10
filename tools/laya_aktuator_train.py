@@ -374,7 +374,10 @@ def train(args) -> int:
                              "sequenzen": zaehl, "epochen": args.epochen, "seed": args.seed,
                              "lr_encoder": args.lr_encoder, "lr_kopf": args.lr_kopf,
                              "einbettungen": "eingefroren", "loss": "kreuzentropie",
-                             "dauer_s": round(time.time() - t0)}})
+                             "dauer_s": round(time.time() - t0),
+                             # Hub-Revision der Basis (Snapshot-Verzeichnis): ein
+                             # Lauf auf einem anderen Rechner muss dieselbe nehmen.
+                             "basis_revision": os.path.basename(os.path.dirname(basis))}})
     cfg.pop("temperature_by_options", None)
     json.dump(cfg, open(os.path.join(args.aus, "rl_agent_config.json"), "w"), indent=2, ensure_ascii=False)
     print(f"gespeichert: {args.aus}")

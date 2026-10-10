@@ -1,0 +1,16 @@
+[Unit]
+Description=Laya-Aktuator auf dem Fern-Rechner nachtrainieren, sobald die capabilities ruhen
+# tools/laya_nachtraining.py --nur-fern: endet sofort, wenn die Versionen
+# passen, die neue Version jünger als LAYA_RUHE_MIN ist, sie schon versucht
+# wurde oder der Fern-Rechner (LAYA_FERN) nicht bereit ist — dann bleibt es
+# beim Nachtlauf (laya-nachtraining.timer). Daheim wird nichts gestoppt.
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/openclaw_voice_assist
+Environment="PYTHONUNBUFFERED=1"
+Environment="HF_HUB_OFFLINE=1"
+Environment="PATH=%h/openclaw_voice_assist/ow-venv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=%h/.config/openclaw/laya-nachtraining.env
+ExecStart=%h/openclaw_voice_assist/ow-venv/bin/python -u -m tools.laya_nachtraining --nur-fern
+TimeoutStartSec=2h

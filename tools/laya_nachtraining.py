@@ -7,6 +7,18 @@ Aufruf (Projekt-venv wird selbst gesucht; im Betrieb per laya-nachtraining.timer
     ow-venv/bin/python -m tools.laya_nachtraining --trocken       # nur sagen, was passieren wuerde
     ow-venv/bin/python -m tools.laya_nachtraining --erzwingen     # auch bei passender Version
     ow-venv/bin/python -m tools.laya_nachtraining --ohne-umschalten
+    ow-venv/bin/python -m tools.laya_nachtraining --nur-fern      # nur auf dem Fern-Rechner, entprellt
+
+Zwei Wege (seit 2026-10-10). Mit LAYA_FERN=<user@host> trainiert zuerst ein
+anderer Rechner (tools/laya_fern.py): daheim fällt dabei nichts aus, deshalb
+läuft das tagsüber, sobald sich die capabilities geändert haben und
+--ruhe-min lang keine neue Version kam (laya-nachtraining-fern.timer, alle
+5 min, `--nur-fern`; eine Version wird dort nur einmal versucht). Ist der
+Rechner nicht da oder scheitert der Lauf dort, bleibt es beim Nachtlauf um
+3:00 daheim (laya-nachtraining.timer, versucht ebenfalls zuerst den
+Fern-Rechner). Schritte 2–5 unten gelten für den Weg daheim; fern wird der
+laufende Checkpoint am Live-Port gemessen (er läuft ja weiter) und die
+Kandidaten dort mit demselben Server.
 
 Was einen Lauf ausloest: die capabilities-Version im /health des laufenden
 Laya-Containers (`checkpoint.capabilities`, laya/serve.py im Stack) weicht
@@ -71,6 +83,7 @@ from voice_assistant.services import container, telegram  # noqa: E402
 from voice_assistant.services.actuator import Actuator  # noqa: E402
 from voice_assistant.services.aktuator_schatten import laya_checkpoint  # noqa: E402
 from tools import aktuator_vergleich  # noqa: E402
+from tools.laya_fern import Fern, basis_revision_daheim  # noqa: E402
 
 _TESTSETS = os.path.join(_REPO, "testsets")
 _BERICHT = os.path.join(WORKSPACE, "laya_nachtraining.jsonl")
@@ -132,6 +145,19 @@ def zeile(name: str, z: dict | None) -> str:
         return f"{name}: nicht gemessen"
     return f"{name}: {z['richtig']}/{z['verpasst']}/{z['FALSCH']}" + (
         f" ({z['Ausfall']} Ausfälle!)" if z["Ausfall"] else "")
+
+
+def stand_lesen(modelle: str) -> dict:
+    try:
+        return json.load(open(os.path.join(modelle, ".nachtraining_stand.json")))
+    except (OSError, ValueError):
+        return {}
+
+
+def stand_schreiben(modelle: str, stand: dict) -> None:
+    pfad = os.path.join(modelle, ".nachtraining_stand.json")
+    json.dump(stand, open(pfad + ".tmp", "w"))
+    os.replace(pfad + ".tmp", pfad)
 
 
 class Lauf:
@@ -247,12 +273,20 @@ class Lauf:
                         f"({self.cfg_url_live}/health) — kein Lauf")
             return 2
         log(f"Checkpoint {ck['name']} ist fuer {ck.get('capabilities')}, live {live} -> Nachtraining")
+        if self.a.nur_fern and not self.entprellt(live):
+            return 0
         n = naechste_version(self.a.modelle)
         kandidaten = [(f"aktuator-v{n}{s}", seed) for s, seed in _SEEDS]
+        fern = self.fern_bereit()
+        if self.a.nur_fern and fern is None:
+            return 0                         # Grund steht im Log; nachts daheim
         if self.a.trocken:
-            log(f"trocken: wuerde {', '.join(k for k, _ in kandidaten)} trainieren, "
-                f"stoppen: {self.a.container} {' '.join(self.a.weichen)}")
+            wo = (f"auf {self.a.fern}" if fern else
+                  f"daheim, stoppen: {self.a.container} {' '.join(self.a.weichen)}")
+            log(f"trocken: wuerde {', '.join(k for k, _ in kandidaten)} trainieren, {wo}")
             return 0
+        if self.a.nur_fern:
+            self.versucht(live)              # eine Version tagsueber nur einmal
 
         # 1. Daten
         r = sh(sys.executable, "-m", "tools.tor_trainset", "--massive", self.a.massive, cwd=_REPO)
@@ -266,12 +300,27 @@ class Lauf:
         sh("git", "commit", "-q", "-m", f"Trainingsdaten capabilities {live} (laya_nachtraining)",
            cwd=_TESTSETS, check=False)
 
+        gemessen = self.fern_lauf(fern, ck, kandidaten) if fern else None
+        if gemessen is None:
+            if self.a.nur_fern:
+                self.melden(f"⚠️ Laya-Nachtraining auf {self.a.fern} gescheitert "
+                            f"({self.bericht.get('fern_fehler')}) — nachts um 3:00 daheim")
+                return 1
+            gemessen = self.lokal_lauf(ck, kandidaten)
+            if gemessen is None:
+                return 1
+        self.bericht["gemessen"] = gemessen
+        return self.entscheiden(ck, live, kandidaten, gemessen)
+
+    def lokal_lauf(self, ck: dict, kandidaten: list) -> dict | None:
+        """Schritte 2–5 daheim: laya und die weichenden Container stoppen."""
+        self.bericht["weg"] = "daheim"
         r = sh(self.a.trainer_python, "-c", "import torch; print(torch.cuda.is_available())",
                check=False)
         if r.stdout.strip() != "True":
             self.melden(f"⚠️ Laya-Nachtraining: torch im Trainings-venv sieht keine GPU "
                         f"({self.a.trainer_python}) — kein Training (LAYA_TRAINING.md Falle 1)")
-            return 1
+            return None
         self.image = sh("podman", "inspect", self.a.container, "--format",
                         "{{.ImageName}}").stdout.strip()
 
@@ -288,7 +337,7 @@ class Lauf:
             if frei < self.a.min_frei_mib:
                 self.melden(f"⚠️ Laya-Nachtraining: nur {frei} MiB Grafikspeicher frei "
                             f"(mindestens {self.a.min_frei_mib}) — kein Training")
-                return 1
+                return None
 
             # 3. Training
             fertig = [(k, seed) for k, seed in kandidaten
@@ -307,14 +356,98 @@ class Lauf:
                     # starb sonst mit dieser Unit (2026-10-06 03:31, Qwen und
                     # Laya einen Tag lang vom Host aus tot).
                     container.starten(name)
-        self.bericht["gemessen"] = gemessen
         self.qwen_pruefen()
+        return gemessen
 
+    # --- Fern -----------------------------------------------------------
+    def fern_bereit(self) -> Fern | None:
+        if not self.a.fern:
+            return None
+        f = Fern(self.a.fern, self.a.fern_verz, self.a.fern_llm, self.a.fern_min_frei_mib, log)
+        grund = f.bereit(basis_revision_daheim())
+        if grund:
+            log(f"fern {self.a.fern}: {grund}")
+            self.bericht["fern_fehler"] = grund
+            return None
+        return f
+
+    def fern_lauf(self, f: Fern, ck: dict, kandidaten: list) -> dict | None:
+        """Training und Messung auf dem Fern-Rechner; daheim laeuft alles weiter.
+        None = gescheitert, dann entscheidet der Aufrufer ueber den Weg daheim."""
+        self.bericht["weg"] = f"fern {self.a.fern}"
+        gemessen: dict[str, dict | None] = {}
+        try:
+            f.vorbereiten(_TESTSETS, os.path.join(os.path.dirname(os.path.abspath(
+                self.a.compose)), "laya", "serve.py"))
+            fertig = f.alle_trainieren(kandidaten)
+            if not fertig:
+                raise RuntimeError("kein Kandidat trainiert")
+            # Der laufende wird live gemessen — er laeuft hier weiter.
+            gemessen[ck["name"]] = self.messen(self.cfg_url_live)
+            gpu = f.gpus()[0][0]
+            for k in fertig:
+                p = f.pruef_server(k, self.a.pruef_port, gpu)
+                try:
+                    url = f"http://127.0.0.1:{self.a.pruef_port}"
+                    h = warte_health(url)
+                    if not h or (h.get("checkpoint") or {}).get("name") != k:
+                        log(f"fern: Pruef-Server fuer {k} kam nicht hoch: {h}")
+                        gemessen[k] = None
+                    else:
+                        gemessen[k] = self.messen(url)
+                finally:
+                    f.pruef_server_stoppen(p)
+            # Nur den besten holen (gleiche Wahl wie entscheiden()); die
+            # Leitung ist langsam, und der andere würde nie geschaltet.
+            gueltig = {k: gemessen[k] for k in fertig if gemessen.get(k)
+                       and gemessen[k]["Ausfall"] == 0}
+            if gueltig:
+                best = min(gueltig, key=lambda k: (gueltig[k]["FALSCH"], -gueltig[k]["richtig"]))
+                t0 = time.time()
+                f.holen(best, self.a.modelle, os.path.join(self.a.modelle, ck["name"]))
+                log(f"fern: {best} geholt in {(time.time() - t0) / 60:.1f} min")
+            return gemessen
+        except Exception as exc:
+            self.bericht["fern_fehler"] = str(exc)[-300:]
+            log(f"fern: gescheitert: {exc}")
+            return None
+        finally:
+            fehler = f.llm_starten()
+            if fehler:
+                self.melden(f"⚠️ Laya-Nachtraining: {self.a.fern_llm} auf {self.a.fern} "
+                            f"startet nicht wieder: {fehler}")
+            f.aufraeumen()
+
+    def entprellt(self, live: str) -> bool:
+        """--nur-fern: erst --ruhe-min nach der letzten neuen Version, und je
+        Version nur einmal (sonst trainierte ein abgelehnter Kandidat alle 5 min neu)."""
+        st = stand_lesen(self.a.modelle)
+        jetzt = time.time()
+        if st.get("version") != live:
+            st.update(version=live, seit=jetzt)
+            stand_schreiben(self.a.modelle, st)
+            log(f"neue capabilities {live} — warte {self.a.ruhe_min} min auf Ruhe")
+            return False
+        if jetzt - st.get("seit", jetzt) < self.a.ruhe_min * 60:
+            log(f"capabilities {live} erst {(jetzt - st['seit']) / 60:.0f} min alt — warte")
+            return False
+        if live in st.get("versucht", []):
+            log(f"capabilities {live} wurde schon versucht — naechster Versuch nachts")
+            return False
+        return True
+
+    def versucht(self, live: str) -> None:
+        st = stand_lesen(self.a.modelle)
+        st["versucht"] = (st.get("versucht", []) + [live])[-20:]
+        stand_schreiben(self.a.modelle, st)
+
+    def entscheiden(self, ck: dict, live: str, kandidaten: list, gemessen: dict) -> int:
         # 6. Schranke
         alt = gemessen.get(ck["name"])
         gueltig = {k: z for k, z in gemessen.items()
                    if k != ck["name"] and z and z["Ausfall"] == 0}
-        text = [f"Laya-Nachtraining capabilities {live} (bisher {ck['name']} für {ck.get('capabilities')})",
+        text = [f"Laya-Nachtraining capabilities {live} (bisher {ck['name']} für "
+                f"{ck.get('capabilities')}, {self.bericht.get('weg', 'daheim')})",
                 "Test-Set richtig/verpasst/FALSCH:", zeile(ck["name"], alt)]
         text += [zeile(k, gemessen.get(k)) for k, _ in kandidaten]
         if not gueltig:
@@ -396,6 +529,19 @@ def main() -> int:
                     help="weitere Container, die waehrend des Trainings aus sind (Leerzeichen-getrennt)")
     ap.add_argument("--pruef-port", type=int, default=int(env("LAYA_PRUEF_PORT", "8097")))
     ap.add_argument("--min-frei-mib", type=int, default=int(env("LAYA_MIN_FREI_MIB", "4500")))
+    ap.add_argument("--fern", default=env("LAYA_FERN", ""),
+                    help="user@host, auf dem zuerst trainiert wird (env LAYA_FERN; leer = nur daheim)")
+    ap.add_argument("--fern-verz", default=env("LAYA_FERN_VERZ", "laya-train"),
+                    help="Verzeichnis dort (relativ zum Home), darin venv/")
+    ap.add_argument("--fern-llm", default=env("LAYA_FERN_LLM", ""),
+                    help="Container dort, der bei Platzmangel gestoppt werden darf (leer = nie)")
+    ap.add_argument("--fern-min-frei-mib", type=int,
+                    default=int(env("LAYA_FERN_MIN_FREI_MIB", "3200")),
+                    help="je Kandidat und Karte (Trainingsspitze ~2,9 GB)")
+    ap.add_argument("--nur-fern", action="store_true",
+                    help="nur auf dem Fern-Rechner, entprellt (laya-nachtraining-fern.timer)")
+    ap.add_argument("--ruhe-min", type=int, default=int(env("LAYA_RUHE_MIN", "10")),
+                    help="--nur-fern: so lange keine neue capabilities-Version")
     ap.add_argument("--erzwingen", action="store_true")
     ap.add_argument("--ohne-umschalten", action="store_true")
     ap.add_argument("--trocken", action="store_true")

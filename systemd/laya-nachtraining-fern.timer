@@ -1,0 +1,9 @@
+[Unit]
+Description=Laya-Nachtraining auf dem Fern-Rechner (alle 5 min prüfen, entprellt)
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=false
+
+[Install]
+WantedBy=timers.target

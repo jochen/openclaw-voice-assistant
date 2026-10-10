@@ -69,8 +69,11 @@ Betrieb importieren dieselbe Datei, damit beide garantiert dasselbe fragen.
   ein eigener Lauf mit eigenem Vergleich, weil Sequenzbau und Temperaturen
   sich zwischen Versionen geändert haben (siehe Laya-README „Calibration“).
   Das Basismodell kommt vom Hub (`convaiinnovations/laya`, Unterordner
-  `multilingual`). Die Revision muss mit in den Checkpoint
-  (`--revision`, heute nicht gespeichert).
+  `multilingual`). Die Revision muss mit in den Checkpoint. Seit
+  2026-10-10 steht sie dort (`training.basis_revision`). Anlass war das
+  Fern-Training: Der Hub-Cache des Fablab-Servers hatte eine andere Revision
+  (7b928d8) als daheim (55cf4c4). `tools/laya_fern.py` übergibt deshalb die
+  Revision von daheim.
 
 ### 3. Der Speicher reicht nur knapp — und die Grenze wandert mit der Zielliste
 
@@ -306,7 +309,13 @@ Offene Entscheidungen dafür (nicht von der Automatisierung zu treffen):
 
 - Gehen echte Turns ins Training (Punkt 10)?
 - Welche Turns werden zur Kalibrierungsmenge (Punkt 8)?
-- Wo und wann läuft das Training (GPU-Platz, Punkt 3)?
+- ~~Wo und wann läuft das Training (GPU-Platz, Punkt 3)?~~ Entschieden
+  2026-10-10 (Jochen): zuerst auf einem Fern-Rechner mit freier GPU, sobald
+  die capabilities 10 min ruhen (`laya-nachtraining-fern.timer`,
+  `LAYA_FERN`). Daheim fällt dabei nichts aus. Ist der Rechner nicht da,
+  läuft es nachts um 3:00 daheim wie bisher. Das LLM dort darf bei
+  Platzmangel gestoppt werden. Die Trainingsdaten werden dort nach jedem
+  Lauf gelöscht. Siehe Docstring von `tools/laya_fern.py`.
 - Soll „Tor ja, aber ziel keins“ eine Rückfrage auslösen statt den Brain?
   Heute geht es an den Brain, wie Gemmas Regel „Rollo ohne Raum“. Siehe
   Schatten-Turn „Lohnsimmerrolle“ unten: Gemma fragte zurück, und das war
