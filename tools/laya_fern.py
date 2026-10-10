@@ -31,6 +31,21 @@ Drei Fallen, gemessen beim Bau:
   hängt (services/container.py, dieselbe Falle wie daheim).
 - **Ein Prozess ohne Terminal stirbt nicht mit ssh.** Der Prüf-Server
   schreibt seine PID und wird ausdrücklich beendet.
+
+Messreihe (Fablab-Server, 2× RTX 5060 Ti, LLM belegt 12–13 GB je Karte):
+
+    2026-10-10 18:46  v7a 11,5 min auf Karte 0 (3,4 GB frei, Spitze 3,3 GB);
+                      v7b OOM — die Meldung stand nicht in den letzten 600
+                      Zeichen des Logs und wurde übersehen (seither grep über
+                      das ganze Log). Holen 647 MB in ~13 min (~0,85 MB/s).
+                      Umgeschaltet auf v7a: 349/21/1 statt 346/23/2,
+                      Rauchtest daheim mit denselben Zahlen (andere GPU-
+                      Generation, gleiche Ergebnisse).
+    2026-10-10 19:20  Probelauf --erzwingen --ohne-umschalten: v8b OOM ->
+                      LLM gestoppt, v8b neu, LLM danach im eigenen Scope
+                      wieder an (healthy). Nur der beste geholt, mit Vorlage
+                      in 4,4 min. Schranke hielt: v8a 350/18/3, v8b
+                      337/24/10 — nicht umgeschaltet.
 """
 
 from __future__ import annotations
