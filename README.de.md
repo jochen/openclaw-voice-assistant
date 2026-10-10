@@ -519,6 +519,16 @@ gesamten Kalender sperren" kam aus der Spracherkennung als Kauderwelsch und
 wurde als „Rollostop starten" ausgeführt). Solche Sätze gehen ans Backend, das
 über den MCP-Weg unten weiterhin schalten kann.
 
+**Eine Rückfrage, dann das Backend.** Ist ein Befehl nicht sicher
+ausführbar (Ziel unbekannt, Gruppe im Satz nicht belegt …), fragt der
+Aktuator einmal nach. Ist auch die Antwort nicht sicher, entscheidet das
+Backend — mit beiden Sätzen und dem Grund als Hinweis
+(`locale.unklar_hinweis`), statt dass der Nutzer mit dem Wakewort von vorn
+beginnen muss. Anlass: „den rechten Küchenrollo auf siebzig Prozent“ wurde
+zweimal abgewiesen (das Modell wählte die Gruppe beider Rollos, die
+Gruppen-Regel hielt es auf), das Backend traf danach sogar eine verstümmelte
+Fassung. Der Preis sind einige Sekunden in genau diesen Fällen.
+
 **Optionale Torfrage (`actuator.tor_enabled`).** Die Klassifikation muss sich
 auf ein Ziel festlegen, auch wenn keines gemeint ist. Mit Torfrage beantwortet
 dasselbe kleine Modell zuerst nur „will der Sprecher etwas schalten? ja/nein";

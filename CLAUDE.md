@@ -184,6 +184,15 @@ einer Brain-Antwort (`followup_round > 0`) und **nie per Barge-in**
 2026-09-23: in einer Follow-up-Runde wurde „…den gesamten Kalender bitte
 komplett sperren" (STT: „Callsender") als `rollostop/starten` ausgeführt.
 
+**Eine Rückfrage, dann der Brain (seit 2026-10-10).** Ist die Antwort auf
+die Rückfrage wieder unklar oder gar kein Befehl, geht sie an den Brain, mit
+erstem Satz und Grund als Hinweis (`locale.unklar_hinweis`). Vorher endete es
+mit „wieder nicht verstanden“. Achtung im Code: der Unklar-Zweig darf den
+Sprecher dann NICHT per `_sprecher_nachtragen` abholen, die Queue gibt ihn nur
+einmal her, und der Brain-Weg wartet selbst darauf. Regel A vergleicht nach
+Kürzen von Buchstaben-Dreiern („Küchenrolllos“ aus der STT). Tests:
+`tests/test_unklar_brain.py`, `tests/test_actuator_verdict.py`.
+
 **Torfrage davor (`tor_enabled`, seit 2026-09-23 im Live-Test).** Dasselbe
 Gemma beantwortet zuerst nur „will der Sprecher etwas schalten? ja/nein"
 (`Actuator.tor()`, Prompt `config._DEFAULT_ACTUATOR_TOR_PROMPT`). Nein oder

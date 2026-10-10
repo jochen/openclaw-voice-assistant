@@ -1330,6 +1330,10 @@ def run() -> None:
     # Wie oft in diesem Wake-Zyklus schon wegen VERDICT_UNKLAR nachgefragt
     # wurde. Deckelt die Klärungsschleife (siehe MAX_UNKLAR_ROUNDS).
     unklar_round = 0
+    # Satz vor dieser Rückfrage — geht mit, wenn auch die Antwort unklar ist
+    # und der Brain entscheidet.
+    unklar_erst_text = ""
+    unklar_erst_grund = None
 
     # Ein-Satz-Kommando: "Ja?" wird verzögert gespielt. ack_pending=True nach
     # dem Trigger, ack_deadline = Triggerzeit + _ACK_DELAY_SEC. Im
@@ -2252,6 +2256,8 @@ def run() -> None:
                         # zum Schalten (Jochen, 2026-09-23).
                         intent = None
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
+                        unklar_an_brain = None   # Hinweis-Block, wenn die Rückfrage-Antwort zum Brain geht
+                        unklar_brain_log = None  # ihre actuator_turns-Zeile, mit Sprecher nachgetragen
                         aktuator_gesperrt = followup_round > 0 or bool(war_bargein)
                         # Erst-Turn: diese Aufnahme beginnt mit dem Wakewort im
                         # Pre-Roll (auch ein Barge-in). Nach "Ja?", in Follow-ups
@@ -2415,17 +2421,20 @@ def run() -> None:
                                     state_start = time.time()
                         elif verdict == VERDICT_UNKLAR:
                             # Schaltbefehl erkannt, aber nicht sicher ausführbar.
-                            # Weder ausführen noch an den Brain geben —
-                            # nachfragen. Begründung: actuator.verdict().
-                            # Sprecher wie beim Schalten erst danach, im
-                            # Hintergrund — die Rückfrage soll nicht warten.
+                            # Nicht ausführen — nachfragen, und ist auch die
+                            # Antwort unklar, entscheidet der Brain.
+                            # Begründung: actuator.verdict(). Sprecher wie
+                            # beim Schalten erst danach, im Hintergrund — die
+                            # Rückfrage soll nicht warten.
+                            zum_brain = unklar_round >= MAX_UNKLAR_ROUNDS
                             turn_epoch = time.time()
-                            _save_last_recording(recorded_chunks)
-                            _flush_endpoint(text, ausgang="unklar")
+                            if not zum_brain:   # der Brain-Weg macht beides selbst
+                                _save_last_recording(recorded_chunks)
+                                _flush_endpoint(text, ausgang="unklar")
                             print(
                                 f"[{now:.1f}s] 🔌 Aktuator: unklar "
                                 f"({akt_wer} {akt_ms:.0f} ms) — {unklar_grund} "
-                                f"→ Rückfrage (nicht an den Brain)"
+                                + ("→ Brain" if zum_brain else "→ Rückfrage")
                             )
                             unklar_log = {
                                 "phase": "abgewiesen",
@@ -2441,15 +2450,22 @@ def run() -> None:
                                 "grund": unklar_grund,
                                 "runde": unklar_round,
                             }
-                            _sprecher_nachtragen(
-                                turn_spk_q, turn_mood_q, current_wakeword.bundle, turn_epoch,
-                                lambda v, unklar_log=unklar_log: _log_actuator_turn(
-                                    {**unklar_log, "speaker": v.name, "speaker_status": v.status}))
-                            _log_outcome("unklar", transcript=text, grund=unklar_grund)
-                            if unklar_round < MAX_UNKLAR_ROUNDS:
-                                # Eine Rückfrage, dann Schluss. Zweimal nach
+                            if zum_brain:
+                                # Den Sprecher wartet der Brain-Weg ab (die Queue
+                                # gibt ihn nur einmal her) — die Zeile kommt dort.
+                                unklar_log["ausgang"] = "brain"
+                                unklar_brain_log = unklar_log
+                            else:
+                                _sprecher_nachtragen(
+                                    turn_spk_q, turn_mood_q, current_wakeword.bundle, turn_epoch,
+                                    lambda v, unklar_log=unklar_log: _log_actuator_turn(
+                                        {**unklar_log, "speaker": v.name, "speaker_status": v.status}))
+                                _log_outcome("unklar", transcript=text, grund=unklar_grund)
+                            if not zum_brain:
+                                # Eine Rückfrage, dann der Brain. Zweimal nach
                                 # demselben verhörten Wort zu fragen hilft
                                 # nicht — die STT hört es wieder gleich falsch.
+                                unklar_erst_text, unklar_erst_grund = text, unklar_grund
                                 unklar_round += 1
                                 speaker.speak(
                                     "Das habe ich nicht sicher verstanden. "
@@ -2472,15 +2488,34 @@ def run() -> None:
                                 followup_rms_count = 0
                                 followup_vad_speech = 0
                             else:
+                                # Auch die Antwort auf die Rückfrage ist unklar:
+                                # der Brain entscheidet, mit beiden Sätzen und
+                                # dem Grund (Jochen 2026-10-10 — vorher endete
+                                # es mit "wieder nicht verstanden", und der
+                                # Nutzer begann mit dem Wakewort von vorn).
+                                # Die Antwort ist bewusst gesprochen, kein
+                                # Fehltrigger; Regel A schützt den SCHNELLEN
+                                # Weg vor dem Raten, der Brain urteilt selbst.
+                                unklar_an_brain = profile.locale.unklar_hinweis_fuer(
+                                    unklar_erst_text, unklar_erst_grund)
                                 unklar_round = 0
-                                speaker.speak("Das habe ich wieder nicht verstanden.")
-                                leds.set_phase(LED_IDLE)
-                                followup_round = 0
-                                pending_reply_text[0] = None
-                                state = STATE_PAUSE
-                                state_start = time.time()
-                        else:
-                            if actuator is not None and actuator.ready and aktuator_gesperrt:
+                                unklar_erst_text = ""
+                        elif (unklar_round and verdict == VERDICT_KEIN_KOMMANDO
+                                and not aktuator_gesperrt and unklar_erst_text):
+                            # Die Antwort auf die Rückfrage ist für den
+                            # Klassifikator gar kein Befehl (am 2026-10-10:
+                            # "Die Küche nur mal los auf siebzig Prozent") —
+                            # sie ging schon immer an den Brain, aber ohne den
+                            # ersten Satz, der zeigt, was gemeint war.
+                            unklar_an_brain = profile.locale.unklar_hinweis_fuer(
+                                unklar_erst_text, unklar_erst_grund)
+                            unklar_round = 0
+                            unklar_erst_text = ""
+                        if verdict != VERDICT_AUSFUEHRBAR and (
+                                verdict != VERDICT_UNKLAR or unklar_an_brain):
+                            if unklar_an_brain:
+                                print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage-Antwort ohne sicheren Befehl → Brain (mit erstem Satz)")
+                            elif actuator is not None and actuator.ready and aktuator_gesperrt:
                                 print(
                                     f"[{now:.1f}s] 🔌 Aktuator übersprungen ("
                                     + ("Barge-in" if war_bargein else f"Follow-up-Runde {followup_round}")
@@ -2508,6 +2543,9 @@ def run() -> None:
                                 print(f"[{now:.1f}s] ⚠️  Diarization timeout — Erkennung ausgefallen")
                                 spk_verdict = SpeakerVerdict(None, STATUS_AUSGEFALLEN)
                             write_current_speaker(spk_verdict, current_wakeword.bundle)
+                            if unklar_brain_log is not None:
+                                _log_actuator_turn({**unklar_brain_log, "speaker": spk_verdict.name,
+                                                    "speaker_status": spk_verdict.status})
                             spk = spk_verdict.name
                             try:
                                 mood = turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
@@ -2524,15 +2562,16 @@ def run() -> None:
                             # Fehltrigger-Hinweis (voice_assistant/anrede.py): kein
                             # Filter, nur ein Beleg für den Brain, der am Inhalt
                             # entscheidet, ob er gemeint ist.
-                            hinweis = None
-                            if (profile.anrede_hinweis and erst_turn
+                            hinweis = unklar_an_brain
+                            if (hinweis is None and profile.anrede_hinweis and erst_turn
                                     and spk_verdict.status != STATUS_BEKANNT
                                     and not anrede_im_text(text, current_wakeword.bundle)):
                                 hinweis = profile.locale.anrede_hinweis
                                 print(f"[{now:.1f}s] 🗯️  Wakewort fehlt im Transkript, Sprecher "
                                       f"{spk_label} → Hinweis an den Brain")
                             _log_outcome("brain", transcript=text,
-                                         **({"anrede_hinweis": True} if hinweis else {}))
+                                         **({"unklar_an_brain": True} if unklar_an_brain
+                                            else {"anrede_hinweis": True} if hinweis else {}))
                             # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
                             # last_speaker nur bei positiver ID überschreiben — ein
                             # nicht zuordenbarer Kurz-Follow-up (spk=None) soll den

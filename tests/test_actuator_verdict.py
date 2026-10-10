@@ -34,6 +34,7 @@ from voice_assistant.services.actuator import (  # noqa: E402
     VERDICT_KEIN_KOMMANDO,
     VERDICT_UNKLAR,
     Actuator,
+    _gruppe_im_satz,
     _gruppen_beleg,
 )
 
@@ -238,6 +239,26 @@ class TestRegelAGruppenbeleg(unittest.TestCase):
         self.assertEqual(
             self.act.verdict(intent, "Rollo auf 70%")[0], VERDICT_UNKLAR
         )
+
+    def test_dreifacher_buchstabe_aus_der_stt_belegt_die_gruppe(self) -> None:
+        """Live 2026-10-10: Qwen schrieb "Küchenrolllos" (drei l), Regel A
+        lehnte die richtig erkannte Gruppe ab. Beide Seiten werden auf zwei
+        gleiche Buchstaben gekürzt — die Einzahl bleibt trotzdem kein Beleg."""
+        intent = {"ist_kommando": True, "ziel": "alle_rollos",
+                  "aktion": "setzen", "wert": 70, "einheit": "prozent"}
+        self.assertEqual(
+            self.act.verdict(intent, "schalte die Rolllos auf siebzig Prozent")[0],
+            VERDICT_AUSFUEHRBAR)
+        self.assertEqual(
+            self.act.verdict(intent, "Rolllo auf 70%")[0], VERDICT_UNKLAR)
+
+    def test_dreier_im_gruppennamen_wird_gleich_gekuerzt(self) -> None:
+        """Ein echtes Wort mit drei gleichen Buchstaben ("Rollläden") belegt
+        sich weiter selbst, auch in der Schreibweise mit zweien."""
+        beleg = _gruppen_beleg({"namen": ["Rollläden"]})
+        self.assertEqual(beleg, {"rolläden"})
+        self.assertTrue(_gruppe_im_satz("die Rollläden zu", beleg))
+        self.assertTrue(_gruppe_im_satz("die Rolläden zu", beleg))
 
     def test_mehrzahl_pfad_wird_nicht_gebrochen(self) -> None:
         """Die lokale Mehrzahl-Regel (_mehrzahl_gruppe) baut ihr Intent aus

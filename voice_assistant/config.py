@@ -105,6 +105,22 @@ _DEFAULT_ANREDE_HINWEIS = (
     "mit NO_REPLY.]"
 )
 
+# Hinter der Antwort auf die Klärungs-Rückfrage des Aktuators, wenn auch sie
+# nicht sicher ausführbar war oder gar nicht als Befehl erkannt wurde: dann
+# entscheidet der Brain mit beiden Sätzen, statt dass der
+# Nutzer mit dem Wakewort von vorn beginnen muss (Anlass 2026-10-10: "den
+# rechten Küchenrollo auf siebzig Prozent" zweimal abgewiesen, der Brain traf
+# es danach sogar aus "Die Küche nur mal los auf siebzig Prozent").
+# Platzhalter: {erst} (Satz vor der Rückfrage), {grund} (warum unklar).
+_DEFAULT_UNKLAR_HINWEIS = (
+    "[Hinweis zur Aufnahme: Das ist die Antwort auf die Rückfrage \"Sag noch "
+    "einmal, was ich schalten soll\". Der schnelle Schaltweg konnte schon den "
+    "ersten Satz nicht sicher zuordnen und auch diese Antwort nicht; geschaltet "
+    "wurde nichts. Erster Satz: \"{erst}\". Grund beim ersten Satz: {grund}. "
+    "Führe den gemeinten Schaltbefehl aus, wenn er aus beiden Sätzen klar wird; "
+    "sonst frag kurz nach.]"
+)
+
 
 @dataclass
 class LocaleConfig:
@@ -113,6 +129,7 @@ class LocaleConfig:
     no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten."
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
+    unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
     thinking_phrases: list = field(default_factory=lambda: [
         "Einen Moment bitte.",
         "Ich schaue kurz nach.",
@@ -120,6 +137,11 @@ class LocaleConfig:
         "Fast fertig.",
         "Noch einen Augenblick.",
     ])
+
+    def unklar_hinweis_fuer(self, erst: str, grund: str | None) -> str:
+        # replace statt format: Transkripte dürfen geschweifte Klammern enthalten
+        return (self.unklar_hinweis.replace("{erst}", erst or "")
+                .replace("{grund}", grund or "unbekannt"))
 
 
 @dataclass
@@ -958,6 +980,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
+        unklar_hinweis=str(locale_raw.get("unklar_hinweis", _dloc.unklar_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
 

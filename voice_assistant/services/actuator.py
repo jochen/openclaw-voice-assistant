@@ -77,6 +77,15 @@ _BELEG_STOPWORTE = frozenset({
 })
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+# Drei gleiche Buchstaben in Folge → zwei, auf BEIDEN Seiten des Vergleichs.
+# Die STT schreibt "Küchenrolllos" (live 2026-10-10, Qwen), umgekehrt hat
+# ein echtes Wort wie "Rollladen" drei — beide Seiten gleich zu kürzen hält
+# den Vergleich exakt, ohne ein Wort zu raten.
+_DREIER_RE = re.compile(r"(\w)\1\1+", re.UNICODE)
+
+
+def _beleg_tokens(text: str) -> list[str]:
+    return _TOKEN_RE.findall(_DREIER_RE.sub(r"\1\1", text.lower()))
 
 
 def _gruppen_beleg(ziel: dict) -> set[str]:
@@ -92,7 +101,7 @@ def _gruppen_beleg(ziel: dict) -> set[str]:
     """
     tokens: set[str] = set()
     for name in (ziel.get("namen") or []):
-        for tok in _TOKEN_RE.findall(name.lower()):
+        for tok in _beleg_tokens(name):
             if len(tok) < 4:
                 continue
             if tok in _BELEG_STOPWORTE:
@@ -104,14 +113,14 @@ def _gruppen_beleg(ziel: dict) -> set[str]:
 def _gruppe_im_satz(transcript: str, beleg: set[str]) -> bool:
     """True, sobald ein Beleg-Token der Gruppe im Transkript vorkommt.
 
-    Vergleich EXAKT auf Token-Ebene, nicht per Stamm/Präfix: ein Präfix wie
+    Vergleich EXAKT auf Token-Ebene (nach _beleg_tokens), nicht per Stamm/Präfix: ein Präfix wie
     "roll" ließe die Einzahl ("Rollo auf 70%") als Beleg für alle_rollos
     durchgehen — genau der teure Fehler, den die ROLLO-OHNE-RAUM-Regel im Prompt
     verhindert. Lieber einmal zu viel nachfragen.
     """
     if not transcript:
         return False
-    satz_tokens = set(_TOKEN_RE.findall(transcript.lower()))
+    satz_tokens = set(_beleg_tokens(transcript))
     return bool(satz_tokens & beleg)
 
 

@@ -506,6 +506,15 @@ backend, and the small model readily reads a misheard sentence as a command
 was executed as "start the blind stop"). Those sentences go to the backend,
 which can still switch through the MCP path below.
 
+**One clarifying question, then the backend.** If a command is not safely
+executable (unknown target, group not named in the sentence, …), the actuator
+asks once. If the answer is not safe either, the backend decides — with both
+sentences and the reason as a hint (`locale.unklar_hinweis`), instead of the
+user starting over with the wake word. Reason: "set the right kitchen blind to
+seventy percent" was rejected twice (the model picked the group of both
+blinds, the group rule stopped it), while the backend later got even a garbled
+version right. The cost is a few seconds in exactly these cases.
+
 **Optional gate question (`actuator.tor_enabled`).** The classifier has to
 commit to one target even when none is meant. With the gate on, the same small
 model first answers only "does the speaker want to switch something? yes/no";
