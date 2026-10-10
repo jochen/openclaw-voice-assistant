@@ -881,3 +881,42 @@ Wichtig für die v3-Wette: deren Kriterium 2 (Verlustquote) wird ab heute
 durch diese Änderung mitbewegt — Zeiträume vor und nach dem 25.09. getrennt
 lesen. Offline nicht messbar (der Korpus-Scorer findet über mehrere
 Frame-Phasen immer den besten Streak).
+
+## Nachtraining Runde 5 — Schranke, formuliert VOR dem Training (2026-10-11 nachts)
+
+Anlass (Jochen, 2026-10-10): nach „Gaston“ muss man eine spürbare Lücke
+lassen, sonst kommt der Ruf nicht an. Gemessen bestätigt: von 54 flüssig
+gesprochenen Timer-Sätzen („Gaston, stell …“, Jochen, 2026-10-10) löst v4
+nur 12 aus. Die Wette v4 wird dafür vorzeitig beendet (Jochen hat ab Montag
+keine Zeit); Bezugszahlen der Wette bleiben für die Beobachtung von v5.
+
+**Labels mit weniger Hören.** Statt eines Voll-Reviews nur 50 Clips per Ohr,
+ausgewählt nach „Signale widersprechen sich und der Clip wäre wertvoll“
+(Jochen: lieber einen Clip weglassen als falsch einsortieren). Ergebnis:
+**42 von 50 waren echte Rufe**, fast alle Trigger, deren Wake-Clip die STT
+als leer oder Verhörer las („Gestalt“, „Das ist toll“, „Rastun“). Die
+STT-Triage taugt auf dem kurzen Wake-Clip also nicht als Negativ-Label für
+TRIGGER. Automatisch übernommen wurden nur Beinahe-Treffer mit Peak ≥ 0,5,
+bei denen medium UND Qwen weder im Clip noch im 6-s-Mitschnitt danach eine
+Gaston-Form hören, die Torfrage „kein Befehl“ sagt und kein Selbst-Label
+(Wiederholung) existiert: 128 Negative (7 weitere fielen durch Qwen heraus).
+Im Paket getrennt geführt (`auto_*`), in der Validierung eigene Gruppen.
+
+Paket: `wake_corpus paket`, Seed 20260916, 8 Val-Tage (die Aufteilung ist
+mit mehr Material eine andere als in Runde 4 — einige Val-Tage waren
+Trainingstage von v4, der Vergleich ist also für v5 strenger). Dazu die
+Timer-Sätze: ungerade Nummern ins Training (auf „Gaston“ geschnitten), gerade
+(27, ganz) als Prüfsatz `val/positive_timer`.
+
+| Validierung | v4 (Vorher) | v5 muss |
+|---|---|---|
+| flüssige Sätze `positive_timer` (27) | 5 | **≥ 10** |
+| echte Rufe `positive` (130) | 113 | **≥ 111** |
+| Fehltrigger `negative` + `negative_auto` (21 + 25) | 12 + 10 = 22 | **≤ 22** |
+| Studio-Takes (20) | 14 | **≥ 13** |
+| FP/h generisch (`eval_debounce.py`, 3-Frame @0,35) | 0,09 | **≤ 0,5** |
+
+**Alle erfüllt →** Deploy wie Runde 4 (Modell im `gaston`-Bundle ersetzen,
+Gate-Parameter unverändert), Korpus vorher sichern, Bericht mit
+Rollback-Befehl. **Eins verfehlt →** kein Deploy, Kandidat daneben,
+Entscheidung bei Jochen.
