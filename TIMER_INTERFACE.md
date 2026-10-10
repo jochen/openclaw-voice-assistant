@@ -33,7 +33,9 @@ steht in **Teil 2**.
       enabled: true
       klingeln: 3              # Klingel-Folgen je Ablauf (Default; per Sprache je Timer änderbar)
       klingel_abstand_s: 5     # Abstand der Folgen
-      nachlauf_max_s: 1800     # so lange bleibt ein abgelaufener Timer sichtbar
+      nachlauf_faktor: 2       # abgelaufen sichtbar: Laufzeit × Faktor,
+      nachlauf_min_s: 300      #   mindestens so lange
+      nachlauf_max_s: 1800     #   höchstens so lange
       ansage: true             # "Der Nudel-Timer ist abgelaufen." am Lautsprecher
       lautsprecher_rueckfall: true
       senken:
@@ -59,8 +61,8 @@ als Herzschlag.
   "nachlauf_max_s": 1800,
   "klingel_abstand_s": 5,
   "timer": [
-    {"id": "3f9a01c2", "name": "Nudel", "dauer_s": 480, "rest_s": 312.4, "klingeln": 3, "still": false},
-    {"id": "b7e2d410", "name": null,    "dauer_s": 300, "rest_s": -95.0, "klingeln": 3, "still": true}
+    {"id": "3f9a01c2", "name": "Nudel", "dauer_s": 480, "rest_s": 312.4, "klingeln": 3, "still": false, "nachlauf_s": 960},
+    {"id": "b7e2d410", "name": null,    "dauer_s": 300, "rest_s": -95.0, "klingeln": 3, "still": true,  "nachlauf_s": 600}
   ]
 }
 ```
@@ -75,6 +77,7 @@ als Herzschlag.
 | `rest_s` | Restzeit **in dem Moment, in dem gesendet wird**. Negativ heißt abgelaufen vor so vielen Sekunden. |
 | `klingeln` | wie viele Klingel-Folgen dieser Timer beim Ablauf bekommt |
 | `still` | `true`: nicht (mehr) klingeln, entweder ausgeklingelt oder per „Gaston, stopp“ beendet |
+| `nachlauf_s` | so lange nach dem Ablauf bleibt dieser Timer sichtbar. Fehlt das Feld (ältere Assistenten), gilt `nachlauf_max_s`. |
 
 ### Was die Senke tut
 
@@ -83,7 +86,7 @@ als Herzschlag.
    Senke wird nicht gebraucht und soll nicht benutzt werden.
 2. **Anzeigen**: Laufende Timer zählen herunter. Abgelaufene zählen weiter ins
    Negative und müssen **auf einen Blick** anders aussehen (Farbe), etwa
-   „Nudel, abgelaufen vor 2:30“. Bei `rest < −nachlauf_max_s` verschwindet
+   „Nudel, abgelaufen vor 2:30“. Bei `rest < −nachlauf_s` verschwindet
    ein Timer auch ohne neuen Stand.
 3. **Klingeln**: Sobald ein Timer mit `rest ≤ 0` und `still: false` zum ersten
    Mal gesehen wird, klingelt die Senke für diese `id` höchstens `klingeln`
@@ -212,6 +215,14 @@ Timer während eines Neustarts des Assistenten ab, wäre die Klingelzeit sonst
 schon vorbei, bevor zum ersten Mal geklingelt wird. Ist der Ablauf länger als
 60 s her, wird gar nicht mehr geklingelt, sondern nur angezeigt. Sonst klingelt
 die Küche am Morgen für die Nudeln vom Vorabend.
+
+**Der Nachlauf hängt an der Laufzeit.** Doppelte Laufzeit, mindestens 5
+und höchstens 30 Minuten: Ein Eier-Timer über eine Minute muss nicht eine
+halbe Stunde rot dastehen, beim Braten über 15 Minuten will man dagegen auch
+nach 20 Minuten noch sehen, wie lange es her ist (Jochen 2026-10-10).
+Deshalb steht der Wert je Timer im Zustand. So muss keine Anzeige die Regel
+kennen, und ein Assistent kann sie ändern, ohne dass sich eine Anzeige
+ändert.
 
 **Ein namenloser Timer ersetzt den namenlosen.** Wer zweimal „Timer fünf
 Minuten“ sagt, hat sich verbessert und will keine zwei Timer. Gleiches gilt für

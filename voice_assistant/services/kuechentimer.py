@@ -12,7 +12,9 @@ Was hier bewusst anders ist als bei Alexa (Jochen, 2026-10-10):
 - Ein Timer klingelt ``klingeln``-mal und hört **von selbst** auf. "Gaston,
   stopp" beendet nur das Klingeln; nötig sein soll es nicht.
 - Nach dem Ablauf bleibt er sichtbar und zählt weiter ins Negative
-  ("abgelaufen vor 2:30"), bis ``nachlauf_max_s`` erreicht ist.
+  ("abgelaufen vor 2:30"). Wie lange, hängt an der Laufzeit (``nachlauf_s``):
+  doppelte Laufzeit, mindestens 5, höchstens 30 Minuten (Jochen) — ein
+  Eier-Timer muss nicht eine halbe Stunde rot dastehen.
 - Ein neuer Timer ohne Namen ersetzt den alten ohne Namen; gleiches gilt
   für denselben Namen ("Nudeln" = "Nudel", siehe ``schluessel``).
 - "lösch den Timer" ohne Namen bei mehreren → Rückfrage, nicht raten.
@@ -145,6 +147,8 @@ class KuechenTimer:
         klingeln: int = 3,
         klingel_abstand_s: float = 5.0,
         nachlauf_max_s: float = 1800.0,
+        nachlauf_min_s: float = 300.0,
+        nachlauf_faktor: float = 2.0,
         ansage: Callable[[str], None] | None = None,
         lautsprecher_klingeln: Callable[[int, Callable[[], bool]], None] | None = None,
         uhr: Callable[[], float] = time.time,
@@ -157,6 +161,8 @@ class KuechenTimer:
         self.klingeln_default = max(1, int(klingeln))
         self.klingel_abstand_s = klingel_abstand_s
         self.nachlauf_max_s = nachlauf_max_s
+        self.nachlauf_min_s = min(nachlauf_min_s, nachlauf_max_s)
+        self.nachlauf_faktor = nachlauf_faktor
         self.ansage = ansage
         self.lautsprecher_klingeln = lautsprecher_klingeln
         self.uhr = uhr
@@ -190,7 +196,7 @@ class KuechenTimer:
             except TypeError:
                 continue
             vorbei = jetzt - timer.ende
-            if vorbei > self.nachlauf_max_s:
+            if vorbei > self.nachlauf_s(timer):
                 continue
             if vorbei > _SPAET_KLINGELN_S and not timer.abgelaufen:
                 timer.abgelaufen = timer.still = True   # zu spät zum Klingeln, nur anzeigen
@@ -210,6 +216,12 @@ class KuechenTimer:
             print(f"⚠️  Timer: speichern fehlgeschlagen ({e})")
 
     # -- Zustand für Senken -------------------------------------------------
+
+    def nachlauf_s(self, t: Timer) -> float:
+        """So lange bleibt ein abgelaufener Timer sichtbar: Laufzeit ×
+        Faktor, begrenzt auf [min, max]. 1 min → 5, 3 → 6, 15 → 30, 2 h → 30."""
+        return max(self.nachlauf_min_s,
+                   min(self.nachlauf_max_s, self.nachlauf_faktor * t.dauer_s))
 
     def _klingelt(self, t: Timer, jetzt: float) -> bool:
         return (t.abgelaufen and not t.still
@@ -232,6 +244,7 @@ class KuechenTimer:
                     "rest_s": round(t.ende - jetzt, 1),
                     "klingeln": t.klingeln,
                     "still": t.still,
+                    "nachlauf_s": self.nachlauf_s(t),
                 } for t in timer],
             }
 
@@ -435,7 +448,7 @@ class KuechenTimer:
         faellig: list[Timer] = []
         with self._lock:
             jetzt = self.uhr()
-            alt = [k for k, t in self._timer.items() if jetzt - t.ende > self.nachlauf_max_s]
+            alt = [k for k, t in self._timer.items() if jetzt - t.ende > self.nachlauf_s(t)]
             for k in alt:
                 del self._timer[k]
             ausgeklingelt = False

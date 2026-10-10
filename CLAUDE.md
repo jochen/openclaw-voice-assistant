@@ -356,7 +356,8 @@ Neustarts). Anzeige und Klingeln übernehmen generische **Senken** über HTTP
 **`TIMER_INTERFACE.md`**. Bestätigt keine Senke das Klingeln, klingelt der
 Lautsprecher. Ein Timer klingelt `klingeln`-mal und hört von selbst auf
 (Jochen: Alexas Abstellzwang ist „quatsch“). Danach zählt er sichtbar ins
-Negative bis `nachlauf_max_s`. Eingänge: der feste Parser
+Negative, je Timer `nachlauf_s` = doppelte Laufzeit, begrenzt auf 5–30 min
+(Jochen). Eingänge: der feste Parser
 `services/timer_parser.py`, gemessen mit `tools/timer_parser_test.py`
 (FALSCH muss 0 bleiben, Aufnahmen privat in `testsets/timer/`), und
 das MCP-Werkzeug `kuechentimer` (`mcp_actuator.py` → `POST :18792/timer`).

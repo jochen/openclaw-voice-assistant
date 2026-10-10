@@ -863,6 +863,8 @@ def _start_kuechentimer(profile: Profile, audio_sink):
             klingeln=tc.klingeln,
             klingel_abstand_s=tc.klingel_abstand_s,
             nachlauf_max_s=tc.nachlauf_max_s,
+            nachlauf_min_s=tc.nachlauf_min_s,
+            nachlauf_faktor=tc.nachlauf_faktor,
             ansage=(lambda text: announce_queue.put((text, False))) if tc.ansage else None,
             lautsprecher_klingeln=lautsprecher_klingeln if tc.lautsprecher_rueckfall else None,
         )

@@ -41,7 +41,7 @@ class Grundlage(unittest.TestCase):
             self.lautsprecher.append(n)
 
         return KuechenTimer(self.pfad, [Senke("test", "http://x")] if senken else [],
-                            klingeln=3, klingel_abstand_s=5, nachlauf_max_s=600,
+                            klingeln=3, klingel_abstand_s=5, nachlauf_max_s=1800,
                             ansage=self.ansagen.append, lautsprecher_klingeln=klingeln,
                             uhr=self.uhr, senden=senden)
 
@@ -178,11 +178,26 @@ class AblaufTest(Grundlage):
         self.assertFalse(self.timer.klingeln_aus())   # nichts klingelt mehr
         self.assertEqual(len(self.timer.schnappschuss()["timer"]), 1)
 
-    def test_nachlauf_max_entfernt(self):
+    def test_nachlauf_haengt_an_der_laufzeit(self):
+        # Jochen 2026-10-10: 1 min → 5, 3 → 6, 5 → 10, 15 → 30, 30 → 30
+        for dauer, nachlauf in ((60, 300), (120, 300), (180, 360), (300, 600),
+                                (900, 1800), (1800, 1800), (7200, 1800)):
+            self.timer.stellen(None, dauer)
+            self.assertEqual(self.timer.schnappschuss()["timer"][0]["nachlauf_s"], nachlauf, dauer)
+
+    def test_nachlauf_entfernt(self):
         self.sag("Gaston, Timer fünf Minuten.")
-        self.uhr.t += 300 + 601
+        self.uhr.t += 300 + 599
+        self.timer.tick()
+        self.assertEqual(len(self.timer.schnappschuss()["timer"]), 1)
+        self.uhr.t += 2                            # 10 min nach Ablauf
         self.timer.tick()
         self.assertEqual(self.timer.schnappschuss()["timer"], [])
+
+    def test_nachlauf_nach_verlaengern(self):
+        self.sag("Gaston, Timer fünf Minuten.")
+        self.sag("Gaston, Timer plus drei Minuten.")
+        self.assertEqual(self.timer.schnappschuss()["timer"][0]["nachlauf_s"], 960)
 
     def test_ohne_senken_klingelt_lautsprecher(self):
         self.timer = self._neu(senken=False)
@@ -215,7 +230,7 @@ class NeustartTest(Grundlage):
         # wäre sie nach 30 s Neustart schon vorbei, bevor es klingelt.
         self.assertTrue(neu.klingelt_gerade())
         self.ansagen.clear()
-        self.uhr.t += 300                          # lange vorbei: nur anzeigen
+        self.uhr.t += 150                          # lange vorbei: nur anzeigen
         spaet = self._neu()
         spaet.tick()
         self.assertEqual(self.ansagen, [])

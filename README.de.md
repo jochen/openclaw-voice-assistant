@@ -748,7 +748,9 @@ Klingeln, klingelt der Lautsprecher des Assistenten.
       enabled: true
       klingeln: 3              # Klingel-Folgen je Ablauf (Default; je Timer per Sprache)
       klingel_abstand_s: 5
-      nachlauf_max_s: 1800     # so lange bleibt ein abgelaufener Timer sichtbar
+      nachlauf_faktor: 2       # abgelaufen sichtbar: Laufzeit × Faktor,
+      nachlauf_min_s: 300      #   mindestens so lange
+      nachlauf_max_s: 1800     #   höchstens so lange
       ansage: true             # "Nudel-Timer ist abgelaufen." am Lautsprecher
       lautsprecher_rueckfall: true
       senken:
@@ -761,7 +763,8 @@ Bewusst anders als beim üblichen Smart-Speaker-Timer:
 - **Er hört von selbst auf** nach `klingeln` Folgen, wie jeder Küchenwecker.
   „Stopp“ beendet nur das Klingeln früher, und der Timer bleibt sichtbar.
 - **Er zählt nach dem Ablauf weiter**, in anderer Farbe („Nudel −2:30“), bis
-  `nachlauf_max_s`.
+  zur doppelten Laufzeit, mindestens 5 und höchstens 30 Minuten. Ein
+  Eier-Timer muss nicht eine halbe Stunde rot dastehen.
 - Ein neuer Timer ohne Namen ersetzt den alten ohne Namen. „Lösch den Timer“
   ohne Namen fragt nach, wenn mehrere laufen.
 

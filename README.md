@@ -729,7 +729,9 @@ ringing, the assistant's own speaker rings.
       enabled: true
       klingeln: 3              # rings per expiry (default; per timer by voice)
       klingel_abstand_s: 5
-      nachlauf_max_s: 1800     # expired timers stay visible this long
+      nachlauf_faktor: 2       # expired timers stay visible for runtime × factor,
+      nachlauf_min_s: 300      #   at least this long
+      nachlauf_max_s: 1800     #   at most this long
       ansage: true             # "Nudel-Timer ist abgelaufen." on the speaker
       lautsprecher_rueckfall: true
       senken:
@@ -742,7 +744,8 @@ Deliberate differences from the usual smart-speaker timer:
 - **It stops ringing by itself** after `klingeln` rings, like any kitchen
   timer. "Stop" only ends the ringing early, and the timer stays visible.
 - **It keeps counting after expiry**, shown in a different colour
-  ("Nudel −2:30"), until `nachlauf_max_s`.
+  ("Nudel −2:30"), for twice its runtime, clamped to 5–30 minutes (an egg
+  timer does not need to stand there red for half an hour).
 - A new unnamed timer replaces the old unnamed one. "Delete the timer"
   without a name asks back when several exist.
 

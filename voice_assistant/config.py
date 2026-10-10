@@ -402,7 +402,11 @@ class TimerConfig:
     enabled: bool = False
     klingeln: int = 3                 # Klingel-Folgen je Ablauf (Default)
     klingel_abstand_s: float = 5.0    # Abstand der Folgen
-    nachlauf_max_s: float = 1800.0    # so lange bleibt ein abgelaufener sichtbar
+    # So lange bleibt ein abgelaufener Timer sichtbar: Laufzeit × Faktor,
+    # begrenzt auf [nachlauf_min_s, nachlauf_max_s].
+    nachlauf_faktor: float = 2.0
+    nachlauf_min_s: float = 300.0
+    nachlauf_max_s: float = 1800.0
     ansage: bool = True               # "Der Timer ist abgelaufen." am Lautsprecher
     lautsprecher_rueckfall: bool = True
     senken: tuple[TimerSenkeConfig, ...] = ()
@@ -913,6 +917,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         klingeln=max(1, int(tm_raw.get("klingeln", _dtm.klingeln))),
         klingel_abstand_s=max(1.0, float(tm_raw.get("klingel_abstand_s", _dtm.klingel_abstand_s))),
         nachlauf_max_s=max(0.0, float(tm_raw.get("nachlauf_max_s", _dtm.nachlauf_max_s))),
+        nachlauf_min_s=max(0.0, float(tm_raw.get("nachlauf_min_s", _dtm.nachlauf_min_s))),
+        nachlauf_faktor=max(0.0, float(tm_raw.get("nachlauf_faktor", _dtm.nachlauf_faktor))),
         ansage=bool(tm_raw.get("ansage", _dtm.ansage)),
         lautsprecher_rueckfall=bool(tm_raw.get("lautsprecher_rueckfall",
                                                _dtm.lautsprecher_rueckfall)),
