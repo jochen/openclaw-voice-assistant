@@ -920,3 +920,40 @@ Timer-Sätze: ungerade Nummern ins Training (auf „Gaston“ geschnitten), gera
 Gate-Parameter unverändert), Korpus vorher sichern, Bericht mit
 Rollback-Befehl. **Eins verfehlt →** kein Deploy, Kandidat daneben,
 Entscheidung bei Jochen.
+
+### Ergebnis Runde 5 (2026-10-11 01:05) — alle fünf erfüllt, deployt
+
+Training im Fablab 00:24–01:03 (Augment 27 min, Training 11 min; `llm`
+gestoppt und per `trap` im eigenen Scope wieder gestartet; tflite wie in
+Runde 4 separat per `onnx2tf -kat x`, float32). Eingespeist: 300
+Positiv-Stücke (davon 26 Timer-Sätze, 14 auto) + 175 Negative (davon 103
+auto), je ×10. Runde-4-Clips samt v4-Modell in
+`train_out/backup_r4_20261011/`.
+
+| Validierung | v4 | v5 | gepaart | Schranke |
+|---|---|---|---|---|
+| flüssige Sätze (27) | 5 | **10** | +5 / −0 | ≥ 10 ✓ |
+| echte Rufe (130) | 113 | **116** | +8 / −5 | ≥ 111 ✓ |
+| Fehltrigger (21 + 25) | 22 | **16** | 2 neu / 8 weg | ≤ 22 ✓ |
+| Studio (20) | 14 | **19** | +5 | ≥ 13 ✓ |
+| FP/h generisch | 0,09 | **0,09** | | ≤ 0,5 ✓ |
+
+Alle 54 Timer-Sätze (Hälfte im Training): v4 12, v5 25. **Ehrlich gelesen:
+die Lücke ist kleiner, nicht weg** — 17 von 27 ungesehenen flüssigen Sätzen
+lösen weiter nicht aus. Material dafür ist jetzt leicht zu bekommen:
+flüssige Sätze wie die Timer-Aufnahmen, auch von anderen Stimmen.
+
+**Rollback:** `git checkout 42797ef^ -- models/wakewords/gaston/` und
+`systemctl --user restart openclaw-voice-assist`.
+
+### Beobachtungswette v5 (formuliert VOR den Daten)
+
+Bezug ist die (vorläufige, STT-gelesene) Zwischenzählung v4 vom 07.10.:
+~3 Fehltrigger/Tag, ~37 % Verlust — gelesen wird v5 genauso, damit der
+Vergleich gleich schief ist. Nach ~2 Wochen:
+
+1. **Fehltrigger/Tag** nicht über dem v4-Wert. Deutlich darüber → Rollback prüfen.
+2. **Verlustquote** soll fallen; steigt sie, war der Gewinn bei den flüssigen
+   Sätzen ein Artefakt des einen Sprechers.
+3. **Ein-Satz-Anteil** der Trigger (`ack`-Entscheidung im `wake_events.log`)
+   soll steigen — das ist die Wirkung, um die es ging.
