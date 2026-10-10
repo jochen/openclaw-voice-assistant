@@ -715,6 +715,46 @@ correction, physically in the house, possibly at night. Later stages
 (group completion, proactive follow-up on objective signals) build on this
 once stage 1 has proven reliable over weeks.
 
+## Kitchen timer (optional, `timer:`)
+
+"Gaston, Nudeltimer eight minutes": the assistant owns the timers
+(`services/kuechentimer.py`, state in `~/.openclaw/workspace/timer.json`,
+survives restarts). Displaying and ringing are done by **sinks**: any HTTP
+endpoint that fulfils the contract in **`TIMER_INTERFACE.md`** (a wall
+tablet, a kiosk monitor, an ESP display). If no sink confirms that it is
+ringing, the assistant's own speaker rings.
+
+```yaml
+    timer:
+      enabled: true
+      klingeln: 3              # rings per expiry (default; per timer by voice)
+      klingel_abstand_s: 5
+      nachlauf_max_s: 1800     # expired timers stay visible this long
+      ansage: true             # "Nudel-Timer ist abgelaufen." on the speaker
+      lautsprecher_rueckfall: true
+      senken:
+        - name: kitchen
+          url: "http://<host>:<port>/api/timer"
+```
+
+Deliberate differences from the usual smart-speaker timer:
+
+- **It stops ringing by itself** after `klingeln` rings, like any kitchen
+  timer. "Stop" only ends the ringing early, and the timer stays visible.
+- **It keeps counting after expiry**, shown in a different colour
+  ("Nudel −2:30"), until `nachlauf_max_s`.
+- A new unnamed timer replaces the old unnamed one. "Delete the timer"
+  without a name asks back when several exist.
+
+Two inputs: a **fixed parser** (`services/timer_parser.py`, no model) runs
+before the actuator, with the same restrictions (first turn only, never a
+follow-up or barge-in). What it cannot read unambiguously goes to the brain,
+which has the MCP tool `kuechentimer` (same server as `haus_schalten`).
+The parser is German, like the actuator prompt. Measure changes with
+`tools/timer_parser_test.py`: FALSCH must stay 0. On recorded kitchen
+sentences, 31 of 40 commands took the fast path, and all misses were STT
+mishearing "Timer".
+
 ## OpenClaw Integration
 
 ### Pronunciation list (optional, `aussprache:`)

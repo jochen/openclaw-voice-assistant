@@ -99,12 +99,27 @@ class BefehleTest(Grundlage):
         self.sag("Gaston, alle Timer löschen.")
         self.assertEqual(self.timer.schnappschuss()["timer"], [])
 
-    def test_loeschen_namenlos_nimmt_den_namenlosen(self):
+    def test_loeschen_namenlos_fragt_auch_mit_namenlosem(self):
         self.sag("Gaston, stell einen Nudeltimer auf acht Minuten.")
         self.sag("Gaston, Timer fünf Minuten.")
         e = self.timer.loeschen(None)
+        self.assertTrue(e.rueckfrage)
+        self.assertEqual(e.text, "Welchen Timer? den ohne Namen oder Nudel?")
+        e = self.timer.antwort_auf_rueckfrage(parse("Gaston, lösch den Timer"), "den ohne Namen")
         self.assertEqual(e.text, "Der Timer ist gelöscht.")
         self.assertEqual([t["name"] for t in self.timer.schnappschuss()["timer"]], ["Nudel"])
+
+    def test_antwort_auf_rueckfrage(self):
+        self.sag("Gaston, stell einen Nudeltimer auf acht Minuten.")
+        self.sag("Gaston, stell einen Timer für die Pizza auf zwölf Minuten.")
+        b = parse("Gaston, verlängere den Timer um zwei Minuten.")
+        self.assertTrue(self.timer.ausfuehren(b).rueckfrage)
+        self.assertEqual(self.timer.antwort_auf_rueckfrage(b, "Den Pizzatimer.").text,
+                         "Pizza-Timer läuft noch vierzehn Minuten.")
+        e = self.timer.antwort_auf_rueckfrage(b, "Ähm, den Kuchen.")
+        self.assertFalse(e.ok)
+        e = self.timer.antwort_auf_rueckfrage(parse("Gaston, lösch den Timer"), "Alle.")
+        self.assertEqual(self.timer.schnappschuss()["timer"], [])
 
     def test_klingelanzahl_nur_fuer_diesen_timer(self):
         self.sag("Gaston, Timer fünf Minuten.")
@@ -205,6 +220,27 @@ class NeustartTest(Grundlage):
         spaet.tick()
         self.assertEqual(self.ansagen, [])
         self.assertEqual(len(spaet.schnappschuss()["timer"]), 2)
+
+
+class StoppTest(Grundlage):
+    def test_ist_stopp(self):
+        from voice_assistant.services.kuechentimer import ist_stopp
+        for t in ("Gaston, stopp.", "Gastostop.", "Okay, danke.", "Stopp, stopp.", "Ruhe!"):
+            self.assertTrue(ist_stopp(t), t)
+        for t in ("Gaston, stopp den Pizzatimer.", "Gaston, mach das Küchenlicht aus.",
+                  "Gaston, wie spät ist es?", ""):
+            self.assertFalse(ist_stopp(t), t)
+
+    def test_stopp_kurz_nach_dem_klingeln(self):
+        self.sag("Gaston, Timer fünf Minuten.")
+        self.uhr.t += 300
+        self.timer.tick()
+        self.uhr.t += 20                           # 3 x 5 s vorbei, 5 s danach
+        self.timer.tick()
+        self.assertFalse(self.timer.klingeln_aus())
+        self.assertTrue(self.timer.klingeln_aus(nachlauf_s=15))
+        self.uhr.t += 60
+        self.assertFalse(self.timer.klingeln_aus(nachlauf_s=15))
 
 
 class TextTest(unittest.TestCase):

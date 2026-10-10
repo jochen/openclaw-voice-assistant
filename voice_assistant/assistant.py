@@ -23,6 +23,7 @@ from voice_assistant.config import (
     DIARIZATION_JOIN_TIMEOUT,
     ABORT_BEEP_PATH,
     TIMER_KLINGEL_PATH,
+    TIMER_LOG_PATH,
     TIMER_STATE_PATH,
     ENDPOINT_LOG_PATH,
     FOLLOWUP_BEEP_PATH,
@@ -67,6 +68,9 @@ from voice_assistant.services.sprecher_verifikation import SprecherVerifikation
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
+from voice_assistant.services import timer_parser
+from voice_assistant.services.kuechentimer import STOPP_NACHLAUF_S as TIMER_STOPP_NACHLAUF_S
+from voice_assistant.services.kuechentimer import ist_stopp as ist_timer_stopp
 from voice_assistant.services.voice_control import VoiceController
 from voice_assistant.services.leds import (
     LED_BOOT, LED_IDLE, LED_WAKEWORD, LED_RECORDING,
@@ -396,6 +400,18 @@ def _log_tor(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:  # Logging darf den Loop nie crashen
         print(f"⚠️  tor-log: {exc}")
+
+
+def _log_timer_turn(meta: dict) -> None:
+    """Eine JSONL-Zeile je Timer-Befehl, den der Schnellweg selbst erledigt
+    hat (timer_turns.log). Eigene Datei: der Überwacher meldet in
+    actuator_turns.log jede Zeile, die kein Schaltbefehl ist. Best-effort."""
+    try:
+        meta = {"ts": datetime.now().isoformat(timespec="seconds"), **meta}
+        with open(TIMER_LOG_PATH, "a") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        print(f"⚠️  timer-log: {exc}")
 
 
 def _log_actuator_turn(meta: dict) -> None:
@@ -1306,6 +1322,9 @@ def run() -> None:
     # Handshake ins Leere läuft, wieder auf None zurückgesetzt werden — sonst
     # sickert er in einen späteren Turn durch.
     pending_confirm: dict | None = None
+    # Küchentimer: Befehl, zu dem gerade "Welchen Timer?" gefragt wurde. Wird
+    # an denselben Stellen zurückgesetzt wie pending_confirm.
+    pending_timer = None
     # Wie oft in diesem Wake-Zyklus schon wegen VERDICT_UNKLAR nachgefragt
     # wurde. Deckelt die Klärungsschleife (siehe MAX_UNKLAR_ROUNDS).
     unklar_round = 0
@@ -1970,6 +1989,7 @@ def run() -> None:
                             "gesprochen": (confirm_resp or {}).get("gesprochen"),
                         })
                         pending_confirm = None
+                        pending_timer = None
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         # Über PAUSE zurück: speaker.speak() blockiert die
@@ -1978,6 +1998,48 @@ def run() -> None:
                         # wakeword.reset(), sonst läuft der TTS-Nachhall in die
                         # Wakeword-Erkennung. pending_reply_text leeren, damit
                         # PAUSE keine Follow-up-Runde startet.
+                        pending_reply_text[0] = None
+                        state = STATE_PAUSE
+                        state_start = time.time()
+                    elif (kuechentimer is not None and ist_timer_stopp(text)
+                          and kuechentimer.klingeln_aus(nachlauf_s=TIMER_STOPP_NACHLAUF_S)):
+                        # "Gaston, stopp" während ein Timer klingelt (oder kurz
+                        # danach): beendet NUR das Klingeln, der Timer bleibt
+                        # sichtbar (Jochen 2026-10-10). Vor dem allgemeinen
+                        # Stopp-Muster, das im Erst-Turn zwei Wörter verlangt.
+                        print(f"[{now:.1f}s] ⏰ Timer: Klingeln beendet ('{text}')")
+                        _log_outcome("timer", aktion="klingeln_aus", transcript=text)
+                        _flush_endpoint(text, ausgang="timer_stopp")
+                        _sprecher_nachtragen(
+                            turn_spk_q, turn_mood_q, current_wakeword.bundle, time.time(),
+                            lambda v, text=text: _log_timer_turn({
+                                "transcript": text, "aktion": "klingeln_aus",
+                                "speaker": v.name, "speaker_status": v.status}))
+                        speaker.speak("Okay.")
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        unklar_round = 0
+                        pending_reply_text[0] = None
+                        state = STATE_PAUSE
+                        state_start = time.time()
+                    elif pending_timer is not None:
+                        # Antwort auf "Welchen Timer? Nudel oder Pizza?"
+                        timer_befehl, pending_timer = pending_timer, None
+                        _flush_endpoint(text, ausgang="timer_rueckfrage")
+                        if _is_stop_command(text, 1):
+                            antwort = "Okay, dann nicht."
+                        else:
+                            antwort = kuechentimer.antwort_auf_rueckfrage(timer_befehl, text).text
+                        print(f"[{now:.1f}s] ⏰ Timer-Rückfrage: '{text}' → {antwort}")
+                        _sprecher_nachtragen(
+                            turn_spk_q, turn_mood_q, current_wakeword.bundle, time.time(),
+                            lambda v, text=text, antwort=antwort, b=timer_befehl: _log_timer_turn({
+                                "phase": "rueckfrage", "transcript": text, "aktion": b.aktion,
+                                "gesprochen": antwort,
+                                "speaker": v.name, "speaker_status": v.status}))
+                        speaker.speak(antwort)
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
                         pending_reply_text[0] = None
                         state = STATE_PAUSE
                         state_start = time.time()
@@ -2112,6 +2174,63 @@ def run() -> None:
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         state = STATE_LISTENING
+                    elif (kuechentimer is not None and text and followup_round == 0
+                          and not war_bargein
+                          and (timer_befehl := timer_parser.parse(text)) is not None):
+                        # --- Küchentimer-Schnellweg: fester Parser, kein Modell ---
+                        # Vor dem Aktuator und mit denselben Sperren (nur
+                        # Erstansprache oder Antwort auf eine eigene Rückfrage,
+                        # nie Follow-up, nie Barge-in). Was der Parser nicht
+                        # eindeutig liest, geht unverändert weiter und landet
+                        # beim Brain, der ein Timer-Werkzeug hat.
+                        bargein_abgebrochen_audio = None
+                        turn_epoch = time.time()
+                        _save_last_recording(recorded_chunks)
+                        _flush_endpoint(text, ausgang="timer")
+                        erg = kuechentimer.ausfuehren(timer_befehl)
+                        print(f"[{now:.1f}s] ⏰ Timer: {timer_befehl} → {erg.text}")
+                        _log_outcome("timer", aktion=timer_befehl.aktion, transcript=text)
+                        timer_log = {
+                            "transcript": text,
+                            "wakeword": current_wakeword.bundle,
+                            "aktion": timer_befehl.aktion,
+                            "name": timer_befehl.name,
+                            "dauer_s": timer_befehl.dauer_s,
+                            "klingeln": timer_befehl.klingeln,
+                            "ok": erg.ok,
+                            "rueckfrage": erg.rueckfrage,
+                            "gesprochen": erg.text,
+                        }
+                        _sprecher_nachtragen(
+                            turn_spk_q, turn_mood_q, current_wakeword.bundle, turn_epoch,
+                            lambda v, timer_log=timer_log: _log_timer_turn(
+                                {**timer_log, "speaker": v.name, "speaker_status": v.status}))
+                        unklar_round = 0
+                        speaker.speak(erg.text)
+                        if erg.rueckfrage and timer_befehl.name is None:
+                            pending_timer = timer_befehl
+                            audio_source.flush()
+                            wakeword.reset()
+                            if os.path.exists(FOLLOWUP_BEEP_PATH):
+                                audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
+                            audio_source.flush()
+                            leds.set_phase(LED_FOLLOWUP)
+                            state = STATE_FOLLOWUP
+                            state_start = time.time()
+                            recorded_chunks = []
+                            pre_roll_chunks = 0
+                            silence_counter = 0
+                            max_internal_pause = 0
+                            speech_detected = False
+                            followup_rms_sum = 0.0
+                            followup_rms_count = 0
+                            followup_vad_speech = 0
+                        else:
+                            leds.set_phase(LED_IDLE)
+                            followup_round = 0
+                            pending_reply_text[0] = None
+                            state = STATE_PAUSE
+                            state_start = time.time()
                     elif text:
                         # Kein Stopp-Wort: der Barge-in war ein neuer Auftrag,
                         # kein Urteil ueber den abgebrochenen Trigger. Das
@@ -2458,6 +2577,7 @@ def run() -> None:
                         # (nun dereferenzierten) Queues — nichts sickert durch.
                         turn_stt_q = turn_spk_q = turn_mood_q = None
                         pending_confirm = None
+                        pending_timer = None
                         followup_round = 0
                         state = STATE_LISTENING
 
@@ -2583,6 +2703,7 @@ def run() -> None:
                         reply_done_event.clear()
                         pending_reply_text[0] = None
                         pending_confirm = None
+                        pending_timer = None
                         leds.set_phase(LED_RECORDING)
                         state = STATE_RECORDING
                         state_start = time.time()
@@ -2766,6 +2887,7 @@ def run() -> None:
                             _log_outcome("nur_wakewort")
                         leds.set_phase(LED_IDLE)
                         pending_confirm = None
+                        pending_timer = None
                         followup_round = 0
                         state = STATE_LISTENING
 

@@ -347,7 +347,7 @@ beobachten, dann nachbessern. Offen: ASCII-Umlaute aus Brain-Antworten
 („fuenf") gehören eigentlich in die Textaufbereitung. Tests:
 `tests/test_aussprache.py`.
 
-### Küchentimer (`timer:`, im Bau seit 2026-10-10, Branch `feature/kuechentimer`)
+### Küchentimer (`timer:`, seit 2026-10-10, Branch `feature/kuechentimer`)
 
 Ablösung des Alexa-Timers. Der Zustand liegt im Assistenten
 (`services/kuechentimer.py`, `~/.openclaw/workspace/timer.json`, überlebt
@@ -359,9 +359,21 @@ Lautsprecher. Ein Timer klingelt `klingeln`-mal und hört von selbst auf
 Negative bis `nachlauf_max_s`. Eingänge: der feste Parser
 `services/timer_parser.py`, gemessen mit `tools/timer_parser_test.py`
 (FALSCH muss 0 bleiben, Aufnahmen privat in `testsets/timer/`), und
-`POST :18792/timer` für den Brain. **Noch nicht verdrahtet:** Parser vor dem
-Tor, „Gaston, stopp“ → `klingeln_aus()`, MCP-Werkzeug, Senke im
-tabletviewer. Tests: `tests/test_kuechentimer.py`, `tests/test_timer_parser.py`.
+das MCP-Werkzeug `kuechentimer` (`mcp_actuator.py` → `POST :18792/timer`).
+In `assistant.py` stehen drei Zweige in STATE_PROCESSING:
+- Ein kurzes „Stopp“, während ein Timer klingelt oder bis 15 s danach
+  (`ist_stopp`, `klingeln_aus`), beendet nur das Klingeln. Der Zweig steht
+  **vor** dem allgemeinen Stopp-Muster, weil das im Erst-Turn zwei Wörter
+  verlangt.
+- Die Antwort auf „Welchen Timer?“ (`pending_timer`) wird wie
+  `pending_confirm` zurückgesetzt.
+- Der Parser-Schnellweg steht vor dem Aktuator, mit dessen Sperren.
+
+Die Turns stehen in `timer_turns.log`, nicht in `actuator_turns.log`, wo
+Argus jede Zeile melden würde. Senken in dieser Installation: tabletviewer
+(Küche, klingelt über WebAudio) und monitor-ctrl auf dem Wohnzimmer-Pi
+(CDP-Overlay, ohne Ton, Schirm an, solange ein Timer läuft). Tests:
+`tests/test_kuechentimer.py`, `tests/test_timer_parser.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 

@@ -734,6 +734,46 @@ ist bewusst konservativ — der teuerste Fehler des Überwachers wäre eine
 (Gruppen-Vervollständigung, proaktive Rückfrage bei objektivem Signal)
 bauen darauf auf, sobald Stufe 1 sich über Wochen bewährt hat.
 
+## Küchentimer (optional, `timer:`)
+
+„Gaston, Nudeltimer acht Minuten“: Der Assistent hält die Timer
+(`services/kuechentimer.py`, Zustand in `~/.openclaw/workspace/timer.json`,
+überlebt Neustarts). Anzeigen und Klingeln übernehmen **Senken**, also jeder
+HTTP-Endpunkt, der den Vertrag in **`TIMER_INTERFACE.md`** erfüllt (ein
+Wand-Tablet, ein Kiosk-Monitor, ein ESP-Display). Bestätigt keine Senke das
+Klingeln, klingelt der Lautsprecher des Assistenten.
+
+```yaml
+    timer:
+      enabled: true
+      klingeln: 3              # Klingel-Folgen je Ablauf (Default; je Timer per Sprache)
+      klingel_abstand_s: 5
+      nachlauf_max_s: 1800     # so lange bleibt ein abgelaufener Timer sichtbar
+      ansage: true             # "Nudel-Timer ist abgelaufen." am Lautsprecher
+      lautsprecher_rueckfall: true
+      senken:
+        - name: kueche
+          url: "http://<host>:<port>/api/timer"
+```
+
+Bewusst anders als beim üblichen Smart-Speaker-Timer:
+
+- **Er hört von selbst auf** nach `klingeln` Folgen, wie jeder Küchenwecker.
+  „Stopp“ beendet nur das Klingeln früher, und der Timer bleibt sichtbar.
+- **Er zählt nach dem Ablauf weiter**, in anderer Farbe („Nudel −2:30“), bis
+  `nachlauf_max_s`.
+- Ein neuer Timer ohne Namen ersetzt den alten ohne Namen. „Lösch den Timer“
+  ohne Namen fragt nach, wenn mehrere laufen.
+
+Zwei Eingänge: Ein **fester Parser** (`services/timer_parser.py`, ohne Modell)
+läuft vor dem Aktuator und mit denselben Sperren (nur Erstansprache, nie
+Follow-up oder Barge-in). Was er nicht eindeutig liest, geht an den Brain, und
+der hat das MCP-Werkzeug `kuechentimer` (derselbe Server wie
+`haus_schalten`). Der Parser ist deutsch wie der Aktuator-Prompt. Änderungen
+misst `tools/timer_parser_test.py`, und FALSCH muss 0 bleiben. Auf
+eingesprochenen Küchen-Sätzen nahmen 31 von 40 Befehlen den Schnellweg. Alle
+übrigen hatte die STT bei „Timer“ verhört.
+
 ## OpenClaw-Integration
 
 ### Aussprache-Liste (optional, `aussprache:`)

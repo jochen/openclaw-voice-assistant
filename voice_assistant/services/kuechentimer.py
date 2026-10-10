@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import urllib.request
@@ -43,6 +44,27 @@ from voice_assistant.services.timer_parser import (
 )
 
 VERTRAG_VERSION = 1
+
+# "Gaston, stopp" kommt oft erst, wenn das Klingeln gerade aufgehört hat.
+# So lange danach gehört ein Stopp noch dem Timer und nicht dem Brain.
+STOPP_NACHLAUF_S = 15.0
+
+# "gast…" davor: die STT zieht "Gaston stopp" gern zu "Gastostop" zusammen
+# (siehe assistant._STOP_PATTERN_FOLLOWUP).
+_STOPP = re.compile(r"\b(?:gast\w*?)?(stopp?|halt|ruhe|aus|still|ok(ay)?|danke|genug)\b",
+                    re.IGNORECASE)
+# Name für "der Timer ohne Namen" in einer Rückfrage-Antwort (None hieße
+# "kein Name genannt" und führte zur selben Rückfrage zurück).
+OHNE_NAMEN = ""
+_WORT = re.compile(r"[a-zäöüß]+", re.IGNORECASE)
+
+
+def ist_stopp(text: str) -> bool:
+    """Kurzer Satz mit einem Stopp-Wort ("Gaston, stopp", "Okay, danke").
+    Lang darf er nicht sein: "Stopp den Pizzatimer" ist ein Löschbefehl und
+    geht an den Parser, "mach das Licht aus" ist kein Timer-Stopp."""
+    worte = [w for w in _WORT.findall(text or "") if not w.lower().startswith("gast")]
+    return bool(_STOPP.search(text or "")) and len(worte) <= 3 and "timer" not in text.lower()
 
 # Ein Timer, der während eines Neustarts abgelaufen ist, klingelt beim Start
 # nur, wenn er höchstens so lange vorbei ist — sonst klingelt die Küche um
@@ -253,14 +275,16 @@ class KuechenTimer:
         return Ergebnis("Das kann ich mit dem Timer nicht.", ok=False)
 
     def _finde(self, name: str | None) -> tuple[Timer | None, Ergebnis | None]:
-        """Ohne Namen: der namenlose, sonst der einzige. Mehrere → Rückfrage."""
+        """Ohne Namen: der einzige. Mehrere → Rückfrage, auch wenn einer davon
+        namenlos ist (Jochen 2026-10-10: "Rückfrage passt")."""
+        if name == OHNE_NAMEN:
+            t = self._timer.get(None)
+            return (t, None) if t else (None, Ergebnis("Es gibt keinen Timer ohne Namen.", ok=False))
         if name is not None:
             t = self._timer.get(schluessel(name))
             if t is None:
                 return None, Ergebnis(f"Einen {name}-Timer gibt es nicht.", ok=False)
             return t, None
-        if None in self._timer:
-            return self._timer[None], None
         if len(self._timer) == 1:
             return next(iter(self._timer.values())), None
         if not self._timer:
@@ -268,7 +292,8 @@ class KuechenTimer:
         return None, self._rueckfrage()
 
     def _rueckfrage(self) -> Ergebnis:
-        namen = [t.name for t in sorted(self._timer.values(), key=lambda t: t.ende)]
+        namen = [t.name or "den ohne Namen"
+                 for t in sorted(self._timer.values(), key=lambda t: t.ende)]
         liste = ", ".join(namen[:-1]) + " oder " + namen[-1]
         return Ergebnis(f"Welchen Timer? {liste}?", ok=False, rueckfrage=True)
 
@@ -291,7 +316,7 @@ class KuechenTimer:
         with self._lock:
             t, fehler = self._finde(name)
             if t is None:
-                if neu_wenn_fehlt and not (fehler and fehler.rueckfrage):
+                if neu_wenn_fehlt and name != OHNE_NAMEN and not (fehler and fehler.rueckfrage):
                     return self.stellen(name, dauer_s, klingeln)
                 return fehler
             jetzt = self.uhr()
@@ -354,10 +379,11 @@ class KuechenTimer:
             self._geaendert()
         return Ergebnis(f"{timer_text(t.name)} klingelt {_zahl(int(anzahl), weiblich=False)}mal.")
 
-    def klingeln_aus(self) -> bool:
+    def klingeln_aus(self, nachlauf_s: float = 0.0) -> bool:
         """'Gaston, stopp' — beendet nur das Klingeln, der Timer bleibt
-        sichtbar. True, wenn gerade etwas klingelte (dann gehört das Stopp
-        dem Timer und nicht dem Turn)."""
+        sichtbar. True, wenn gerade etwas klingelte oder vor höchstens
+        ``nachlauf_s`` aufgehört hat (dann gehört das Stopp dem Timer und
+        nicht dem Turn)."""
         with self._lock:
             jetzt = self.uhr()
             klingelnd = [t for t in self._timer.values() if self._klingelt(t, jetzt)]
@@ -365,7 +391,30 @@ class KuechenTimer:
                 t.still = True
             if klingelnd:
                 self._geaendert()
-            return bool(klingelnd)
+            kuerzlich = any(
+                t.abgelaufen and jetzt - t.klingel_ab
+                < t.klingeln * self.klingel_abstand_s + nachlauf_s
+                for t in self._timer.values())
+            return bool(klingelnd) or (nachlauf_s > 0 and kuerzlich)
+
+    def antwort_auf_rueckfrage(self, b: TimerBefehl, text: str) -> Ergebnis:
+        """Antwort auf "Welchen Timer? Nudel oder Pizza?": den Namen im Satz
+        suchen ("die Nudeln", "den Pizzatimer", "alle") und den Befehl damit
+        wiederholen. Kein Treffer → nichts tun, nicht raten."""
+        with self._lock:
+            worte = [w.lower() for w in _WORT.findall(text or "")]
+            if "alle" in worte and b.aktion in (LOESCHEN, ABFRAGEN):
+                return self.ausfuehren(TimerBefehl(b.aktion, ALLE, b.dauer_s, b.klingeln))
+            namen = {schluessel(t.name): t.name for t in self._timer.values() if t.name}
+            for w in worte:
+                for k in (schluessel(w), schluessel(w.replace("timer", "")) if "timer" in w else None):
+                    if k and k in namen:
+                        return self.ausfuehren(TimerBefehl(b.aktion, namen[k], b.dauer_s,
+                                                           b.klingeln))
+            if any(w in ("ohne", "namenlos", "normale", "einfache") for w in worte) and None in self._timer:
+                return self.ausfuehren(TimerBefehl(b.aktion, OHNE_NAMEN, b.dauer_s, b.klingeln))
+        return Ergebnis("Den Timer habe ich nicht gefunden. Ich lasse alles, wie es ist.",
+                        ok=False)
 
     def _soll_still(self, t: Timer) -> bool:
         """Für den Lautsprecher: aufhören, wenn gestoppt, gelöscht, ersetzt,

@@ -1078,6 +1078,8 @@ ABORT_BEEP_PATH = os.path.join(WORKSPACE, "abort_beep.wav")
 # Küchentimer: Zustand (überlebt Neustarts) und Klingelton für den Lautsprecher
 TIMER_STATE_PATH = os.path.join(WORKSPACE, "timer.json")
 TIMER_KLINGEL_PATH = os.path.join(WORKSPACE, "timer_klingel.wav")
+# Timer-Befehle, die der Schnellweg selbst erledigt hat (der Brain sieht sie nicht)
+TIMER_LOG_PATH = os.path.join(WORKSPACE, "timer_turns.log")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
 
