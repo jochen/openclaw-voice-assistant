@@ -1,0 +1,54 @@
+{"satz": "Gaston, stell einen Timer auf fünf Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 300, "klingeln": null}}
+{"satz": "Gaston, Timer fünf Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 300, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer für zehn Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 600, "klingeln": null}}
+{"satz": "Gaston, Timer auf eine halbe Stunde.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 1800, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer auf anderthalb Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 90, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer auf eineinhalb Stunden.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 5400, "klingeln": null}}
+{"satz": "Gaston, Timer eine Viertelstunde.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 900, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer auf eine Dreiviertelstunde.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 2700, "klingeln": null}}
+{"satz": "Gaston, Timer zwei Minuten dreißig.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 150, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer auf eine Stunde und zehn Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 4200, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer auf dreißig Sekunden.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 30, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer auf fünfundvierzig Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 2700, "klingeln": null}}
+{"satz": "Gaston, Timer drei Minuten und zwanzig Sekunden.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 200, "klingeln": null}}
+{"satz": "Gaston, stell mal 'nen Timer auf sieben Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 420, "klingeln": null}}
+{"satz": "Gaston, stell eine Eieruhr auf vier Minuten.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 240, "klingeln": null}, "hinweis": "Eieruhr = Timer ohne Namen"}
+{"satz": "Gaston, stell einen Nudeltimer auf acht Minuten.", "erwartet": {"aktion": "stellen", "name": "nudel", "dauer_s": 480, "klingeln": null}}
+{"satz": "Gaston, Timer für die Nudeln, acht Minuten.", "erwartet": {"aktion": "stellen", "name": "nudel", "dauer_s": 480, "klingeln": null}, "hinweis": "gleicher Name wie 'Nudeltimer'"}
+{"satz": "Gaston, stell einen Timer für die Pizza auf zwölf Minuten.", "erwartet": {"aktion": "stellen", "name": "pizza", "dauer_s": 720, "klingeln": null}}
+{"satz": "Gaston, Eiertimer sechs Minuten.", "erwartet": {"aktion": "stellen", "name": "ei", "dauer_s": 360, "klingeln": null}}
+{"satz": "Gaston, stell den Kartoffeltimer auf zwanzig Minuten.", "erwartet": {"aktion": "stellen", "name": "kartoffel", "dauer_s": 1200, "klingeln": null}}
+{"satz": "Gaston, stell einen Timer Reis auf achtzehn Minuten.", "erwartet": {"aktion": "stellen", "name": "reis", "dauer_s": 1080, "klingeln": null}}
+{"satz": "Gaston, zwölf Minuten Timer für den Kuchen.", "erwartet": {"aktion": "stellen", "name": "kuchen", "dauer_s": 720, "klingeln": null}, "hinweis": "Dauer vor dem Timer"}
+{"satz": "Gaston, verlängere den Timer um zwei Minuten.", "erwartet": {"aktion": "verlaengern", "name": null, "dauer_s": 120, "klingeln": null}}
+{"satz": "Gaston, verlängere den Nudeltimer um eine Minute.", "erwartet": {"aktion": "verlaengern", "name": "nudel", "dauer_s": 60, "klingeln": null}}
+{"satz": "Gaston, gib dem Pizzatimer noch zwei Minuten dazu.", "erwartet": {"aktion": "verlaengern", "name": "pizza", "dauer_s": 120, "klingeln": null}}
+{"satz": "Gaston, Timer plus fünf Minuten.", "erwartet": {"aktion": "verlaengern", "name": null, "dauer_s": 300, "klingeln": null}}
+{"satz": "Gaston, Nudeltimer noch drei Minuten.", "erwartet": {"aktion": "noch", "name": "nudel", "dauer_s": 180, "klingeln": null}, "hinweis": "noch: verlaengern wenn der Timer existiert (auch abgelaufen), sonst neu stellen"}
+{"satz": "Gaston, noch fünf Minuten auf den Timer.", "erwartet": {"aktion": "noch", "name": null, "dauer_s": 300, "klingeln": null}, "hinweis": "noch: s.o."}
+{"satz": "Gaston, wie lange läuft der Timer noch?", "erwartet": {"aktion": "abfragen", "name": null, "dauer_s": null, "klingeln": null}, "hinweis": "ohne Namen: alle laufenden ansagen"}
+{"satz": "Gaston, wie lange noch beim Nudeltimer?", "erwartet": {"aktion": "abfragen", "name": "nudel", "dauer_s": null, "klingeln": null}}
+{"satz": "Gaston, welche Timer laufen?", "erwartet": {"aktion": "abfragen", "name": null, "dauer_s": null, "klingeln": null}}
+{"satz": "Gaston, wie steht der Timer?", "erwartet": {"aktion": "abfragen", "name": null, "dauer_s": null, "klingeln": null}}
+{"satz": "Gaston, lösch den Timer.", "erwartet": {"aktion": "loeschen", "name": null, "dauer_s": null, "klingeln": null}, "hinweis": "ohne Namen: nur wenn genau einer existiert, sonst Rueckfrage (Jochen 2026-10-10)"}
+{"satz": "Gaston, lösch den Nudeltimer.", "erwartet": {"aktion": "loeschen", "name": "nudel", "dauer_s": null, "klingeln": null}}
+{"satz": "Gaston, alle Timer löschen.", "erwartet": {"aktion": "loeschen", "name": "*", "dauer_s": null, "klingeln": null}, "hinweis": "* = alle"}
+{"satz": "Gaston, Timer abbrechen.", "erwartet": {"aktion": "loeschen", "name": null, "dauer_s": null, "klingeln": null}}
+{"satz": "Gaston, stopp den Pizzatimer.", "erwartet": {"aktion": "loeschen", "name": "pizza", "dauer_s": null, "klingeln": null}, "hinweis": "mit Namen = loeschen, auch wenn er gerade klingelt; nur 'Gaston, stopp' ohne Namen stellt bloss das Klingeln ab (Jochen 2026-10-10)"}
+{"satz": "Gaston, der Timer soll zehnmal klingeln.", "erwartet": {"aktion": "klingeln", "name": null, "dauer_s": null, "klingeln": 10}, "hinweis": "gilt nur fuer diesen Timer, kein neuer Standard (Jochen 2026-10-10)"}
+{"satz": "Gaston, lass den Nudeltimer nur dreimal klingeln.", "erwartet": {"aktion": "klingeln", "name": "nudel", "dauer_s": null, "klingeln": 3}}
+{"satz": "Gaston, stell einen Timer auf fünf Minuten und lass ihn zehnmal klingeln.", "erwartet": {"aktion": "stellen", "name": null, "dauer_s": 300, "klingeln": 10}}
+{"satz": "Gaston, erinner mich in fünf Minuten an die Wäsche.", "erwartet": {"aktion": null}, "hinweis": "Erinnerung, kein Timer"}
+{"satz": "Gaston, kannst du eigentlich auch einen Timer stellen?", "erwartet": {"aktion": null}, "hinweis": "Frage ueber Timer"}
+{"satz": "Gaston, wie lange müssen Nudeln kochen?", "erwartet": {"aktion": null}}
+{"satz": "Gaston, wie viel Zeit hat die Pizza noch?", "erwartet": {"aktion": null}, "hinweis": "kein Timer-Wort - Brain (kennt die Timer per Werkzeug)"}
+{"satz": "Gaston, stell den Backofen auf zweihundert Grad.", "erwartet": {"aktion": null}}
+{"satz": "Gaston, stell das Sofalicht auf fünfzehn Prozent.", "erwartet": {"aktion": null}, "hinweis": "Aktuator, nicht Timer"}
+{"satz": "Gaston, in zehn Minuten Küchenlicht aus.", "erwartet": {"aktion": null}, "hinweis": "zeitversetztes Schalten"}
+{"satz": "Gaston, stell einen Timer, so lange wie auf der Packung steht.", "erwartet": {"aktion": null}, "hinweis": "keine Dauer"}
+{"satz": "Gaston, stell einen Timer.", "erwartet": {"aktion": null}, "hinweis": "keine Dauer - Brain fragt nach"}
+{"satz": "Gaston, was ist ein guter Timer für Eier?", "erwartet": {"aktion": null}}
+{"satz": "Gaston, weck mich morgen um sieben.", "erwartet": {"aktion": null}, "hinweis": "Wecker ist kein Timer"}
+{"satz": "Gaston, stell einen Timer auf acht Uhr.", "erwartet": {"aktion": null}, "hinweis": "Uhrzeit statt Dauer"}
+{"satz": "Gaston, der Timer gestern hat nicht geklingelt.", "erwartet": {"aktion": null}}
+{"satz": "Gaston, fünf Minuten für die Nudeln und zehn Minuten für die Soße.", "erwartet": {"aktion": null}, "hinweis": "zwei Timer in einem Satz - erstmal Brain"}
