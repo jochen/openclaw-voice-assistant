@@ -22,6 +22,28 @@ Was hier **nie** hineingehört: Tokens, Ziel-ids dieser Installation
 eigenen Netzes, Familien-Stimmproben (`models/wakewords/*/samples/`, eigenes
 privates Repo).
 
+## Private Daten: ein eigenes Repo neben diesem
+
+Alles, was Stimmen, Namen oder den Alltag dieses Haushalts enthält, liegt seit
+2026-10-10 in **einem** privaten Git-Repo, `~/gaston-privat` (Remote auf dem
+eigenen GitLab, nie GitHub). Die gewohnten Pfade sind Symlinks dorthin, der
+Code merkt nichts davon:
+
+| Pfad | im Daten-Repo |
+|---|---|
+| `testsets/` | `testsets/` (gelabelte Sätze, Timer-Aufnahmen, Trainingsdaten) |
+| `models/wakewords/gaston/samples/` | `wakeword/gaston/` |
+| `~/.openclaw/workspace/voice/corpus/` | `voice/corpus/` (gesicherte Wake-Clips) |
+| `~/.openclaw/workspace/voice/corpus_sprecher/` | `voice/corpus_sprecher/` |
+| `~/.openclaw/workspace/voice/speakers/` | `voice/speakers/` (Referenzstimmen) |
+
+In `.gitignore` stehen diese Pfade deshalb **ohne** Schrägstrich am Ende: ein
+Muster `testsets/` passt nur auf echte Verzeichnisse, ein Symlink stünde sonst
+als neue Datei im öffentlichen Repo. Neues privates Material kommt dorthin und
+nicht in dieses Repo. Commits macht dort, wer etwas ändert
+(`tools/laya_nachtraining.py` committet `testsets/` selbst). Neu
+Aufgenommenes in `voice/` bleibt untracked, bis jemand es committet.
+
 ## Running the Assistant
 
 ```bash
@@ -145,8 +167,8 @@ python -m wakeword_studio score [--bundle gaston]   # Test-Set gegen Modell scor
 exklusiv), nimmt geführt Takes über den Profil-Mic-Pfad auf, scored jeden Take
 sofort mit Live-Trigger-Semantik (Streak ≥ 3 über Threshold, 1-Frame-Gap) und
 startet den Service danach wieder. Ablage in
-`models/wakewords/<bundle>/samples/<sprecher>/` — das ist ein eigenes privates
-Git-Repo (Familienstimmen, nie auf GitHub; siehe `samples/README.md` dort).
+`models/wakewords/<bundle>/samples/<sprecher>/` — ein Symlink ins private
+Daten-Repo (Familienstimmen, nie auf GitHub; siehe „Private Daten“ unten).
 
 ## Voice-Aktuator (optional, pro Profil)
 
@@ -175,7 +197,7 @@ fast alle P(ja) < 0,01). Jede Tor-Entscheidung steht in
 „ausgefuehrt" ist. Der Tor-Platz ist für ein kalibriertes Entscheidungsmodell
 gedacht (Laya o. ä., siehe MemPalace), Gemma hält ihn warm.
 Messen gegen `tools/actuator_tor_test.py` — Set (334 echte Sätze, von Hand
-gelabelt) in `testsets/`, gitignored mit eigenem privatem Git. Nulllinie
+gelabelt) in `testsets/` (Symlink ins private Daten-Repo). Nulllinie
 Gemma 2026-09-28: 305 richtig / 24 übersehen (8 mit Ziel) / 1 FALSCH, 21 der
 24 übersehenen mit P(ja) < 0,01. Das ist die Zahl, die ein Kandidat schlagen
 muss.
