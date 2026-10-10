@@ -179,8 +179,13 @@ def _is_speech_chunk(vad: webrtcvad.Vad, audio_16: np.ndarray, min_rms: float) -
     return result
 
 
-def _record_take(source, vad: webrtcvad.Vad, min_rms: float) -> tuple[np.ndarray, float] | None:
+def _record_take(source, vad: webrtcvad.Vad, min_rms: float,
+                 max_speech_sec: float = MAX_SPEECH_SEC,
+                 end_silence_sec: float = END_SILENCE_SEC) -> tuple[np.ndarray, float] | None:
     """Ein Take: auf Sprache warten, bis Stille aufnehmen, zuschneiden.
+
+    Die Fenster-Defaults passen für ein Wakewort; ganze Sätze
+    (tools/timer_aufnahme.py) geben längere mit.
 
     Startet erst bei SPEECH_START_CHUNKS Sprach-Chunks in Folge — einzelne
     Störgeräusch-Chunks (Klicken, Rascheln) lösen keinen Take aus.
@@ -240,11 +245,11 @@ def _record_take(source, vad: webrtcvad.Vad, min_rms: float) -> tuple[np.ndarray
             silence_run += 1
 
         speech_sec = speech_chunk_count * chunk_sec
-        if silence_run * chunk_sec >= END_SILENCE_SEC:
+        if silence_run * chunk_sec >= end_silence_sec:
             trim = int(max(0, silence_run * len(chunk) - TRAIL_KEEP_SEC * RATE_OW))
             samples = np.concatenate(list(preroll) + speech_chunks)
             return (samples[: len(samples) - trim] if trim else samples), speech_sec
-        if time.time() - speech_started > MAX_SPEECH_SEC:
+        if time.time() - speech_started > max_speech_sec:
             return np.concatenate(list(preroll) + speech_chunks), speech_sec
 
 

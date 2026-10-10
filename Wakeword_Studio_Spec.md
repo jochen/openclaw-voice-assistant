@@ -13,8 +13,8 @@ Stand: 2026-07-06 · Status: M1+M2 live, Phase A umgesetzt
   (`232c4dc`, `17b9569`, `ab70fdf`) — `record` (geführte Aufnahmen,
   Grundpegel-Kalibrierung, Sofort-Scoring, LED-Anzeige), `review`
   (anhören/aussortieren), `score` (Test-Set-Regression, Multi-Offset).
-  Erste 20 echte jochen-Takes als Test-Set; `samples/` ist ein eigenes
-  privates Repo (gitlab.brokenpipe.de/jochen/wakeword-samples-gaston).
+  Erste 20 echte jochen-Takes als Test-Set; `samples/` liegt im privaten
+  Daten-Repo (seit 2026-10-10 zusammen mit testsets und Korpus, siehe CLAUDE.md).
 - **Trigger-Semantik erweitert**: `min_hits` pro Wakeword (Config >
   manifest.yaml > Default 3, `badfd81`). Kurzes "Gaston" (~0.5 s ≈ 6
   Frames) steht auf 2 — FP-geprüft 0.09 FP/h auf 10.7 h Validierung;

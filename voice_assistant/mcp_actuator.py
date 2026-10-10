@@ -1,6 +1,6 @@
 """stdio-MCP-Server: gibt dem OpenClaw-Brain den Voice-Aktuator frei.
 
-Warum es diesen Server gibt — und warum er nur zwei Tools hat — steht im
+Warum es diesen Server gibt — und warum er nur enge Werkzeuge hat — steht im
 Auftrag (scratchpad/auftrag_mcp_aktuator.md) und in ACTUATOR_INTERFACE.md.
 Kurzform: am 2026-08-01 hat der Brain einen verhörten Spruch ("Türrollo" ->
 "Tyrolo") geraten und per rohem curl gegen Home Assistant alle dreizehn
@@ -19,6 +19,9 @@ Werkzeuge
 ``haus_ziele``   — read-only Digest aus /capabilities: das geschlossene
                    Vokabular. Ein Ziel, das hier nicht steht, existiert nicht.
 ``haus_schalten`` — POST /intent, Antwort-Envelope unverändert zurück.
+``kuechentimer``  — Küchentimer des laufenden Assistenten (POST :18792/timer,
+                   TIMER_INTERFACE.md). Kein Haus-Ziel, aber derselbe Gedanke:
+                   ein enges Werkzeug statt Erinnerungen oder Cron im Brain.
 
 Ausdrücklich KEIN Freitext-Tool ("mach was ich meine"): der ganze Gewinn ist
 das geschlossene Vokabular.
@@ -233,7 +236,64 @@ _TOOLS = [
             "required": ["ziel", "aktion"],
         },
     },
+    {
+        "name": "kuechentimer",
+        "description": (
+            "Küchentimer des Sprachassistenten: stellen, verlängern, abfragen, "
+            "löschen. Der Assistent hält die Uhr; angezeigt wird auf dem "
+            "Küchentablet und dem Wohnzimmer-Monitor, geklingelt wird dort bzw. "
+            "am Lautsprecher. Ein Timer klingelt einige Male und hört von selbst "
+            "auf. Für Koch-/Küchentimer (Countdown \"in X Minuten\") NUR dieses "
+            "Werkzeug, keine Erinnerung und keinen eigenen Zeitplan. NICHT für "
+            "Aufnahme-Timer am Videorekorder (VDR) — die laufen wie bisher.\n"
+            "aktion: stellen (dauer_s nötig) | verlaengern (um dauer_s) | noch "
+            "(verlängern, sonst neu stellen) | loeschen (name '*' = alle) | "
+            "abfragen | klingeln (Anzahl der Klingel-Folgen für diesen Timer).\n"
+            "name ist optional ('Nudeln', 'Pizza'). Ein neuer Timer ohne Namen "
+            "ersetzt den alten ohne Namen. Kommt rueckfrage=true zurück, fehlt "
+            "der Name: frage den Nutzer mit dem Text aus 'text' und rufe dann "
+            "erneut mit name auf. 'text' ist eine fertige kurze Ansage."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "aktion": {"type": "string",
+                           "enum": ["stellen", "verlaengern", "noch", "loeschen",
+                                    "abfragen", "klingeln"]},
+                "name": {"type": ["string", "null"],
+                         "description": "Name des Timers, '*' für alle, sonst weglassen."},
+                "dauer_s": {"type": ["integer", "null"],
+                            "description": "Dauer in Sekunden (stellen/verlaengern/noch)."},
+                "klingeln": {"type": ["integer", "null"],
+                             "description": "Anzahl Klingel-Folgen, nur für diesen Timer."},
+            },
+            "required": ["aktion"],
+        },
+    },
 ]
+
+
+def _timer_aufruf(args: dict) -> dict:
+    """POST an den Sprech-Server des laufenden Assistenten (127.0.0.1)."""
+    import urllib.error
+    import urllib.request
+
+    from voice_assistant.config import SPEAK_SERVER_HOST, SPEAK_SERVER_PORT
+
+    body = {k: args.get(k) for k in ("aktion", "name", "dauer_s", "klingeln")
+            if args.get(k) is not None}
+    req = urllib.request.Request(
+        f"http://{SPEAK_SERVER_HOST}:{SPEAK_SERVER_PORT}/timer",
+        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read() or b"{}")
+        except ValueError:
+            return {"ok": False, "text": f"Timer-Dienst HTTP {e.code}"}
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +385,20 @@ def _call_tool(server: GastonMCP, name: str, args: dict) -> dict:
         )
         return {"content": [{"type": "text",
                              "text": json.dumps(env, ensure_ascii=False, indent=2)}]}
+
+    if name == "kuechentimer":
+        try:
+            antwort = _timer_aufruf(args)
+        except Exception as e:
+            return {"content": [{"type": "text",
+                                 "text": f"Küchentimer nicht erreichbar ({e}). "
+                                         "Läuft der Sprachassistent mit timer: im Profil?"}],
+                    "isError": True}
+        if args.get("aktion") != "abfragen":
+            antwort.pop("zustand", None)       # nur beim Abfragen nützlich
+        return {"content": [{"type": "text",
+                             "text": json.dumps(antwort, ensure_ascii=False, indent=2)}],
+                "isError": not (antwort.get("ok") or antwort.get("rueckfrage"))}
 
     raise ValueError(f"unbekanntes Werkzeug: {name}")
 

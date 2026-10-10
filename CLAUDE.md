@@ -22,6 +22,28 @@ Was hier **nie** hineingehört: Tokens, Ziel-ids dieser Installation
 eigenen Netzes, Familien-Stimmproben (`models/wakewords/*/samples/`, eigenes
 privates Repo).
 
+## Private Daten: ein eigenes Repo neben diesem
+
+Alles, was Stimmen, Namen oder den Alltag dieses Haushalts enthält, liegt seit
+2026-10-10 in **einem** privaten Git-Repo, `~/gaston-privat` (Remote auf dem
+eigenen GitLab, nie GitHub). Die gewohnten Pfade sind Symlinks dorthin, der
+Code merkt nichts davon:
+
+| Pfad | im Daten-Repo |
+|---|---|
+| `testsets/` | `testsets/` (gelabelte Sätze, Timer-Aufnahmen, Trainingsdaten) |
+| `models/wakewords/gaston/samples/` | `wakeword/gaston/` |
+| `~/.openclaw/workspace/voice/corpus/` | `voice/corpus/` (gesicherte Wake-Clips) |
+| `~/.openclaw/workspace/voice/corpus_sprecher/` | `voice/corpus_sprecher/` |
+| `~/.openclaw/workspace/voice/speakers/` | `voice/speakers/` (Referenzstimmen) |
+
+In `.gitignore` stehen diese Pfade deshalb **ohne** Schrägstrich am Ende: ein
+Muster `testsets/` passt nur auf echte Verzeichnisse, ein Symlink stünde sonst
+als neue Datei im öffentlichen Repo. Neues privates Material kommt dorthin und
+nicht in dieses Repo. Commits macht dort, wer etwas ändert
+(`tools/laya_nachtraining.py` committet `testsets/` selbst). Neu
+Aufgenommenes in `voice/` bleibt untracked, bis jemand es committet.
+
 ## Running the Assistant
 
 ```bash
@@ -128,6 +150,8 @@ voice_assistant/
     openclaw.py          /v1/responses Client
     dienstwaechter.py    Ausfall der Dienste melden, lokale Container neu starten
     container.py         Podman-Container im eigenen Scope starten (rootlessport-Falle)
+    timer_parser.py      Timer-Befehle fest aus dem Transkript (ohne Modell)
+    kuechentimer.py      Küchentimer: Zustand, Ablauf, Senken (TIMER_INTERFACE.md)
 ```
 
 ### Wakeword-Studio-CLI (`wakeword_studio/`)
@@ -143,8 +167,8 @@ python -m wakeword_studio score [--bundle gaston]   # Test-Set gegen Modell scor
 exklusiv), nimmt geführt Takes über den Profil-Mic-Pfad auf, scored jeden Take
 sofort mit Live-Trigger-Semantik (Streak ≥ 3 über Threshold, 1-Frame-Gap) und
 startet den Service danach wieder. Ablage in
-`models/wakewords/<bundle>/samples/<sprecher>/` — das ist ein eigenes privates
-Git-Repo (Familienstimmen, nie auf GitHub; siehe `samples/README.md` dort).
+`models/wakewords/<bundle>/samples/<sprecher>/` — ein Symlink ins private
+Daten-Repo (Familienstimmen, nie auf GitHub; siehe „Private Daten“ unten).
 
 ## Voice-Aktuator (optional, pro Profil)
 
@@ -173,7 +197,7 @@ fast alle P(ja) < 0,01). Jede Tor-Entscheidung steht in
 „ausgefuehrt" ist. Der Tor-Platz ist für ein kalibriertes Entscheidungsmodell
 gedacht (Laya o. ä., siehe MemPalace), Gemma hält ihn warm.
 Messen gegen `tools/actuator_tor_test.py` — Set (334 echte Sätze, von Hand
-gelabelt) in `testsets/`, gitignored mit eigenem privatem Git. Nulllinie
+gelabelt) in `testsets/` (Symlink ins private Daten-Repo). Nulllinie
 Gemma 2026-09-28: 305 richtig / 24 übersehen (8 mit Ziel) / 1 FALSCH, 21 der
 24 übersehenen mit P(ja) < 0,01. Das ist die Zahl, die ein Kandidat schlagen
 muss.
@@ -322,6 +346,35 @@ Abbildung auf espeaks Zeichenvorrat (Docstrings von
 beobachten, dann nachbessern. Offen: ASCII-Umlaute aus Brain-Antworten
 („fuenf") gehören eigentlich in die Textaufbereitung. Tests:
 `tests/test_aussprache.py`.
+
+### Küchentimer (`timer:`, seit 2026-10-10, Branch `feature/kuechentimer`)
+
+Ablösung des Alexa-Timers. Der Zustand liegt im Assistenten
+(`services/kuechentimer.py`, `~/.openclaw/workspace/timer.json`, überlebt
+Neustarts). Anzeige und Klingeln übernehmen generische **Senken** über HTTP
+(hier der Küchen-Tablet-Viewer). Vertrag, Mindest-Senke und Abnahme stehen in
+**`TIMER_INTERFACE.md`**. Bestätigt keine Senke das Klingeln, klingelt der
+Lautsprecher. Ein Timer klingelt `klingeln`-mal und hört von selbst auf
+(Jochen: Alexas Abstellzwang ist „quatsch“). Danach zählt er sichtbar ins
+Negative, je Timer `nachlauf_s` = doppelte Laufzeit, begrenzt auf 5–30 min
+(Jochen). Eingänge: der feste Parser
+`services/timer_parser.py`, gemessen mit `tools/timer_parser_test.py`
+(FALSCH muss 0 bleiben, Aufnahmen privat in `testsets/timer/`), und
+das MCP-Werkzeug `kuechentimer` (`mcp_actuator.py` → `POST :18792/timer`).
+In `assistant.py` stehen drei Zweige in STATE_PROCESSING:
+- Ein kurzes „Stopp“, während ein Timer klingelt oder bis 15 s danach
+  (`ist_stopp`, `klingeln_aus`), beendet nur das Klingeln. Der Zweig steht
+  **vor** dem allgemeinen Stopp-Muster, weil das im Erst-Turn zwei Wörter
+  verlangt.
+- Die Antwort auf „Welchen Timer?“ (`pending_timer`) wird wie
+  `pending_confirm` zurückgesetzt.
+- Der Parser-Schnellweg steht vor dem Aktuator, mit dessen Sperren.
+
+Die Turns stehen in `timer_turns.log`, nicht in `actuator_turns.log`, wo
+Argus jede Zeile melden würde. Senken in dieser Installation: tabletviewer
+(Küche, klingelt über WebAudio) und monitor-ctrl auf dem Wohnzimmer-Pi
+(CDP-Overlay, ohne Ton, Schirm an, solange ein Timer läuft). Tests:
+`tests/test_kuechentimer.py`, `tests/test_timer_parser.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 

@@ -13,6 +13,11 @@ Endpoints:
   POST /aussprache               → {wort, umschreibung | phoneme, beispielsatz?}
                                    eigene Korrektur setzen + Probe ansagen
   POST /aussprache/loeschen      → {wort} eigene Korrektur entfernen
+  GET  /timer         → Zustand der Küchentimer (wie an die Senken, TIMER_INTERFACE.md)
+  POST /timer         → {aktion, name?, dauer_s?, klingeln?} → {text, ok, rueckfrage}
+                        aktion: stellen | verlaengern | noch | loeschen | abfragen | klingeln
+                        name "*" = alle; der Text ist die Ansage, gesprochen wird nicht
+  POST /timer/still   → Klingeln beenden ({"klingelte": bool})
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ from voice_assistant.services.tts import ReplySpeaker
 # Vom start_speak_server() gesetzt, damit der Request-Handler ihn erreicht
 # (gleiches Muster wie der modul-globale announce_queue-Zustand).
 _voice_controller = None
+_kuechentimer = None
 
 
 def _resolve_model_for_voice(available: list[dict], voice: str) -> str | None:
@@ -86,6 +92,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "wort fehlt"})
             else:
                 self._send_json(200, a.auskunft(wort))
+            return
+        if path == "/timer":
+            if _kuechentimer is None:
+                self._send_json(503, {"error": "Küchentimer ist nicht aktiv"})
+            else:
+                self._send_json(200, _kuechentimer.schnappschuss())
             return
         if path == "/voices":
             query = urllib.parse.parse_qs(parsed.query)
@@ -312,7 +324,39 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send_json(200, {"wort": wort, "geloescht": a.eigen_loeschen(wort)})
 
+    def _handle_timer(self) -> None:
+        from voice_assistant.services.timer_parser import TimerBefehl
+
+        if _kuechentimer is None:
+            self._send_json(503, {"error": "Küchentimer ist nicht aktiv"})
+            return
+        body = self._read_json_body()
+        try:
+            b = TimerBefehl(
+                aktion=str(body.get("aktion", "")).strip(),
+                name=(str(body["name"]).strip() or None) if body.get("name") else None,
+                dauer_s=int(body["dauer_s"]) if body.get("dauer_s") is not None else None,
+                klingeln=int(body["klingeln"]) if body.get("klingeln") is not None else None,
+            )
+        except (TypeError, ValueError) as e:
+            self._send_json(400, {"error": f"bad request: {e}"})
+            return
+        e = _kuechentimer.ausfuehren(b)
+        print(f"[speak-server] Timer {b}: {e.text}")
+        self._send_json(200 if e.ok or e.rueckfrage else 409,
+                        {"text": e.text, "ok": e.ok, "rueckfrage": e.rueckfrage,
+                         "zustand": _kuechentimer.schnappschuss()})
+
     def do_POST(self) -> None:
+        if self.path == "/timer":
+            self._handle_timer()
+            return
+        if self.path == "/timer/still":
+            if _kuechentimer is None:
+                self._send_json(503, {"error": "Küchentimer ist nicht aktiv"})
+            else:
+                self._send_json(200, {"klingelte": _kuechentimer.klingeln_aus()})
+            return
         if self.path == "/aussprache":
             self._handle_aussprache_setzen()
             return
@@ -346,9 +390,10 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(202, {"queued": True, "length": len(text)})
 
 
-def start_speak_server(voice_controller=None) -> threading.Thread:
-    global _voice_controller
+def start_speak_server(voice_controller=None, kuechentimer=None) -> threading.Thread:
+    global _voice_controller, _kuechentimer
     _voice_controller = voice_controller
+    _kuechentimer = kuechentimer
     server = HTTPServer((SPEAK_SERVER_HOST, SPEAK_SERVER_PORT), _Handler)
     t = threading.Thread(target=server.serve_forever, name="speak-server", daemon=True)
     t.start()
@@ -372,11 +417,16 @@ def start_announce_worker(
     def _run() -> None:
         while True:
             text = announce_queue.get()  # blockiert bis was da ist
+            # (text, False): nicht nach Telegram spiegeln — z. B. "Der Timer
+            # ist abgelaufen", das gehört in die Küche, nicht in den Chat.
+            spiegeln = True
+            if isinstance(text, tuple):
+                text, spiegeln = text
             # Warten bis wir im LISTENING-State sind (nicht aufnehmen, nicht antworten)
             while current_state[0] != STATE_LISTENING:
                 time.sleep(0.25)
             print(f"📢  Announcing: '{text[:80]}{'...' if len(text) > 80 else ''}'")
-            if telegram_bot_token and telegram_chat_id:
+            if spiegeln and telegram_bot_token and telegram_chat_id:
                 telegram.send(telegram_bot_token, telegram_chat_id, text, prefix="🔊 ")
             reply_speaker.speak(text)
             reply_speaker.leds.set_phase(LED_IDLE)
