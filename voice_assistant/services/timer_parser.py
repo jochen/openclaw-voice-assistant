@@ -18,6 +18,8 @@ Aufnahmen gezeigt haben und hier deshalb so steht:
   dem ersten Wort und nie aus etwas mit "stell"/"gast" darin gemacht.
 - "Viertelstunde" kommt als "vierte Stunde" oder "drei Viertelstunde" an.
 - "klingeln" schreibt Qwen als "klingen" (3 von 3).
+- Eine Zahl direkt vor "Klingeln" ist eine Anzahl ("mit einem Klingen"),
+  keine Sekunde — live 2026-10-10 als 61 s gelesen.
 - Eine Uhrzeit ("Timer auf acht Uhr") ist keine Dauer → None.
 """
 
@@ -84,11 +86,11 @@ def _zahl(tok: str) -> float | None:
 
 
 def _mal(tok: str, folgend: str | None) -> int | None:
-    """'zehnmal', '10mal', 'zehn mal' → 10."""
+    """'zehnmal', '10mal', 'zehn mal', 'einem Klingeln' → 10 bzw. 1."""
     if tok.endswith("mal") and len(tok) > 3:
         z = _zahl(tok[:-3])
         return int(z) if z else None
-    if folgend == "mal":
+    if folgend == "mal" or (folgend is not None and _KLINGEL.fullmatch(folgend)):
         z = _zahl(tok)
         return int(z) if z else None
     return None
@@ -109,7 +111,7 @@ def _dauer(toks: list[str]) -> int | None | bool:
             return False
         if _mal(t, nxt) is not None:
             zahlen = []
-            i += 2 if nxt == "mal" else 1
+            i += 1 if t.endswith("mal") and len(t) > 3 else 2  # "zehnmal" | "zehn mal", "einem Klingeln"
             continue
         if t in _VIERTEL or (t == "vierte" and nxt in ("stunde",)):
             basis = _VIERTEL.get(t, 900)

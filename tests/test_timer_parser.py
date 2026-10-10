@@ -62,6 +62,16 @@ class TranskriptTest(unittest.TestCase):
         self._gleich("Gaston, stelle den Timer auf fünf Minuten und lass ihn zehnmal klingen.",
                      STELLEN, None, 300, 10)
 
+    def test_zahl_vor_klingeln_ist_anzahl_keine_sekunde(self):
+        # Live 2026-10-10 16:37 (Qwen): wurde 61 s ohne Klingelanzahl
+        self._gleich("Gaston, stell den Timer mit einer Minute und einem Klingen.",
+                     STELLEN, None, 60, 1)
+        self._gleich("Gaston, Timer fünf Minuten mit drei Klingeln.", STELLEN, None, 300, 3)
+        self._gleich("Gaston, der Timer soll nur ein Klingeln haben.", KLINGELN, None, None, 1)
+        # die nackte Zahl hinter der Einheit bleibt Sekunden
+        self._gleich("Gaston, Timer zwei Minuten dreißig und lass ihn zehnmal klingeln.",
+                     STELLEN, None, 150, 10)
+
     def test_aktionen(self):
         self._gleich("Gaston, verlängert den Timer um zwei Minuten.", VERLAENGERN, None, 120)
         self._gleich("Gaston, Nudeltimer noch drei Minuten.", NOCH, "nudel", 180)

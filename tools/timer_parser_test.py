@@ -45,6 +45,8 @@ Messreihe (Aufnahmen 2026-10-10: Jochen, 54 Sätze, flüssig gesprochen)
                 "Timer Reiß" (Name falsch geschrieben, Dauer richtig).
                 Beim Bau korrigiert, nur an den Vorlagen sichtbar: "'nen
                 Timer" wurde zum Namen "Nen".
+    2026-10-10  Zahl vor "Klingeln" ist Anzahl (live: "mit einer Minute
+                und einem Klingen" -> 61 s). Alle Zahlen oben unverändert.
 """
 
 from __future__ import annotations
