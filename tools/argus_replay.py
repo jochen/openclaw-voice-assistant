@@ -40,6 +40,24 @@ Messreihe (glm-5-2 über ai.noris.de; gilt nur für ihre Weltmodell-Version):
                erwünscht (Jochen: "ruhig melden").
     Temperatur 0 ist nicht deterministisch: dieselben Sätze kippen
     zwischen Läufen. Einzelne Zahlen nicht überbewerten.
+
+  2026-10-11, Weltmodell 2d824300, 16 gelabelte + 202 Turns, V2 alt gegen
+  V2 neu (Hörfehler-Regel auch für Aktionen; Anlass "Wohnzimmerlicht außen"):
+    gelabelt   echt 9: alt 8, neu 9 · fehlalarm 4: alt 0, neu 0
+    ungelabelt alt 8, neu 8 — die 5 Wechsel liegen alle bei Sätzen ohne
+               Aktionsfrage, also Rauschen. Neu gemeldet und berechtigt:
+               "Fohnzimmerollo" -> felixrollo.
+    Ein Lauf entscheidet hier nichts: der Anlass selbst kam im alten
+    Lauf als "ok" durch. Deshalb je 10 Wiederholungen der Aktionsfälle:
+               "außen" (fehlalarm)        alt 4/10 meldet, neu 0/10
+               aus -> ein (echt)          alt 9/10,        neu 10/10
+               auf -> zu (echt)           alt 10/10,       neu 10/10
+               "Tisch nicht ein" (fa)     alt 1/10,        neu 2/10
+               "auch dazu" (fa)           alt 1/10,        neu 1/10
+    Für eine Prompt-Änderung zählen die Wiederholungen der betroffenen
+    Fälle, nicht die Summe eines Laufs. --ohne-v1 und --vergleich sind
+    dafür da. 429 von ai.noris.de kam in 30 von 218 Aufrufen; das
+    Werkzeug wartet seither länger.
 """
 
 from __future__ import annotations
@@ -104,14 +122,15 @@ def turns_sammeln(nur_befunde: bool) -> list[dict]:
 
 
 def urteil(system: str, user: str, wt) -> dict:
-    for versuch in (1, 2):
+    # 429 (Ratenlimit) kam am 2026-10-11 in 30 von 218 Aufrufen: länger warten.
+    for versuch in (1, 2, 3, 4):
         try:
             return watcher.llm_urteil(system, user, wt.llm_url, wt.llm_model,
                                       wt.llm_api_key, max(wt.llm_timeout, 60.0))
         except Exception as e:  # noqa: BLE001 — Messwerkzeug: Fehler zählen, weiter
-            if versuch == 2:
+            if versuch == 4:
                 return {"fehler": str(e)[:200]}
-            time.sleep(3)
+            time.sleep(20 * versuch if "429" in str(e) else 3)
     return {}
 
 
@@ -120,6 +139,10 @@ def main() -> None:
     ap.add_argument("--weltmodell-datei", help="Weltmodell als JSON-Datei statt MCP")
     ap.add_argument("--nur-befunde", action="store_true", help="nur die gelabelten Befunde")
     ap.add_argument("--out", default="argus_replay.jsonl", help="Ergebnis je Turn (JSONL)")
+    ap.add_argument("--ohne-v1", action="store_true",
+                    help="nur V2 (für V2-Änderungen: alter gegen neuer Lauf)")
+    ap.add_argument("--vergleich", metavar="ALT.jsonl",
+                    help="V2 gegen das V2 eines früheren Laufs (--out) stellen")
     args = ap.parse_args()
 
     wt = load_profile().watcher
@@ -145,7 +168,8 @@ def main() -> None:
     ergebnisse = []
     with open(args.out, "w", encoding="utf-8") as out:
         for i, t in enumerate(turns, 1):
-            u1 = urteil(watcher._PROMPT_V1, watcher.user_nachricht(t, mit_kontext=False), wt)
+            u1 = ({"fehler": "nicht gelaufen"} if args.ohne_v1 else
+                  urteil(watcher._PROMPT_V1, watcher.user_nachricht(t, mit_kontext=False), wt))
             u2 = urteil(system_v2, watcher.user_nachricht(t), wt)
             e = {"request_id": t.get("request_id"), "ts": t.get("ts"),
                  "transcript": t.get("transcript"), "intent": t.get("intent"),
@@ -160,6 +184,25 @@ def main() -> None:
                   f"{(t.get('transcript') or '')[:60]}")
 
     auswerten(ergebnisse)
+    if args.vergleich:
+        vergleichen(_jsonl(args.vergleich), ergebnisse)
+
+
+def vergleichen(alt: list[dict], neu: list[dict]) -> None:
+    """Wo hat sich das V2-Urteil gegenüber einem früheren Lauf gedreht?"""
+    alt_v2 = {e["request_id"]: e["v2"] for e in alt}
+    print("\n=== V2 gegen früheren Lauf ===")
+    for e in neu:
+        a = alt_v2.get(e["request_id"])
+        if a is None:
+            continue
+        ma, mn = _meldet(a), _meldet(e["v2"])
+        if ma is None or mn is None or ma == mn:
+            continue
+        richtung = "meldet NICHT mehr" if ma else "meldet NEU"
+        print(f"  {richtung:17} [{e['label'] or '-'}] \"{e['transcript']}\" -> "
+              f"{(e['intent'] or {}).get('ziel')}/{(e['intent'] or {}).get('aktion')}"
+              f"\n      {e['v2'].get('gedanke', '')[:220]}")
 
 
 def _meldet(u: dict) -> bool | None:
@@ -190,7 +233,8 @@ def auswerten(ergebnisse: list[dict]) -> None:
                 print(f"  {e['ts']}  \"{e['transcript']}\" -> "
                       f"{(e['intent'] or {}).get('ziel')}/{(e['intent'] or {}).get('aktion')}"
                       f"\n      {e['v2'].get('gedanke', '')[:220]}")
-    fehler = sum(1 for e in ergebnisse for k in ("v1", "v2") if "fehler" in e[k])
+    fehler = sum(1 for e in ergebnisse for k in ("v1", "v2")
+                 if "fehler" in e[k] and e[k]["fehler"] != "nicht gelaufen")
     if fehler:
         print(f"\n{fehler} Aufrufe fehlgeschlagen (nicht als Urteil gezählt)")
 
