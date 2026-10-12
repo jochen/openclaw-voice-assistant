@@ -103,6 +103,9 @@ class RespeakerClient:
         # Kanal 0 (ASR-Strahl) gegen Kanal 1 (tools/stt_vergleich.py --kanaele).
         self._kanal2_ring: collections.deque[np.ndarray] = collections.deque(maxlen=2000)
         self._in_session = False
+        # Zeitpunkt des letzten handle_audio-Pakets (monotonic). Der Watchdog in
+        # _main drueckt den Start-Button erneut, wenn der Strom ausbleibt.
+        self._last_audio = time.monotonic()
         # Zustand des Media-Players (fuer die Wiedergabe-Verfolgung, siehe
         # RespeakerSink.play_wav). Condition statt Event, weil auf einen
         # WECHSEL gewartet wird und nicht auf ein einmaliges Signal.
@@ -120,6 +123,12 @@ class RespeakerClient:
     # ------------------------------------------------------------------
 
     _RECONNECT_DELAY = 15  # Sekunden bis zum nächsten Verbindungsversuch
+    # Mic-Watchdog: so lange darf der Audiostrom ausbleiben, bevor der
+    # Start-Button erneut gedrueckt wird. Bei weiteren Fehlschlaegen verdoppelt
+    # sich die Wartezeit bis _WATCHDOG_MAX (kein Log-Spam bei totem ESP).
+    _WATCHDOG_STILLE = 10.0
+    _WATCHDOG_MAX = 300.0
+    _WATCHDOG_TAKT = 5.0
 
     def _reset_state(self) -> None:
         self._api = None
@@ -130,6 +139,7 @@ class RespeakerClient:
         self.led_phase_key = None
         self.boot_step_key = None
         self._in_session = False
+        self._last_audio = time.monotonic()
         self._buf = b""
         self._buf2 = b""
         with self._player_cv:
@@ -227,6 +237,7 @@ class RespeakerClient:
             self._audio_q.put((b"", b""))  # EOS
 
         async def handle_audio(data: bytes, data2: bytes | None = None) -> None:
+            self._last_audio = time.monotonic()
             # data ist Kanal 1 (Wakeword + STT, wie bisher). data2 ist der
             # zweite Kanal (XVF-Ausgang links), den die Firmware ab ESPHome
             # 2026.9 mitschickt — er geht nur in einen laufenden Mitschnitt.
@@ -267,9 +278,41 @@ class RespeakerClient:
         if self.led_phase_key is not None:
             self._api.number_command(self.led_phase_key, float(self._last_led_phase))
             log.info("LED phase %d restored after reconnect", self._last_led_phase)
+        self._last_audio = time.monotonic()
         await self._press_start_button()
 
-        await done  # bricht aus wenn _on_stop feuert (Verbindungsabbruch)
+        await self._watch_mic(done)  # endet, wenn _on_stop feuert (Verbindungsabbruch)
+
+    async def _watch_mic(self, done: asyncio.Future) -> None:
+        """Wartet auf das Verbindungsende und holt eine verlorene Mic-Session zurueck.
+
+        Der Start-Button wird sonst nur nach dem Connect und nach einer
+        Wiedergabe gedrueckt. Verpufft der Druck nach dem Connect (2026-10-11:
+        Pi und ESP nach Stromausfall gemeinsam gebootet, ESP-VA noch nicht
+        bereit) oder beendet der ESP die Session im Leerlauf, kam nie wieder
+        Audio — der Pi war ohne jede Meldung taub, bis zum Dienst-Neustart.
+        """
+        geduld = self._WATCHDOG_STILLE
+        versuche = 0
+        while not done.done():
+            await asyncio.wait({done}, timeout=self._WATCHDOG_TAKT)
+            if done.done():
+                break
+            stille = time.monotonic() - self._last_audio
+            if stille < geduld:
+                if versuche and stille < self._WATCHDOG_TAKT:
+                    log.info("Mic-Watchdog: Audiostrom laeuft wieder (nach %d Versuch(en))",
+                             versuche)
+                    geduld, versuche = self._WATCHDOG_STILLE, 0
+                continue
+            versuche += 1
+            log.warning("Mic-Watchdog: seit %.0f s kein Audio vom ReSpeaker "
+                        "(in_session=%s) → Start-Button, Versuch %d",
+                        stille, self._in_session, versuche)
+            await self._press_start_button()
+            self._last_audio = time.monotonic()
+            geduld = min(geduld * 2, self._WATCHDOG_MAX) if versuche > 1 else geduld
+        done.result()  # reicht den ConnectionError an _run_loop weiter
 
     async def _press_start_button(self) -> None:
         if self._api and self._button_key is not None:
