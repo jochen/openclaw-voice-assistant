@@ -277,6 +277,35 @@ Not done yet: speaker recognition thresholds were measured on the ReSpeaker
 only, and a phone microphone sounds different. Barge-in has no audio on this
 path while the phone is speaking.
 
+## Lower the music during a turn (`musik_ducking:`, optional)
+
+If music plays in the room of the main microphone, it can be turned down while
+a turn runs: from the wake word through the reply, follow-ups and clarifying
+questions, until the assistant is idle again. The other side is a small REST
+API of the music system with leases (here: a bridge in front of Lyrion Music
+Server):
+
+```
+POST {url}/api/v1/rooms/{raum}/duck    {"source", "level"?, "timeout_s"?}
+     -> {"ducked": true, "lease_id": "…"}  or  {"ducked": false, "reason": "…"}
+POST {url}/api/v1/rooms/{raum}/unduck  {"lease_id"}
+```
+
+```yaml
+musik_ducking:
+  enabled: true
+  url: http://music-bridge.local:8765
+  token_file: ~/music-bridge-token.txt   # Bearer token; not in config.yaml
+  raum: livingroom                       # room of the main microphone
+```
+
+The calls run in their own thread and never hold up the voice pipeline; if
+the bridge is unreachable, this is logged once. The music system restores the
+volume by itself after `timeout_s` (30 s) without a new `duck`, so a longer
+turn renews every 15 s, but only if the first `duck` actually lowered
+something. Otherwise the assistant would duck music it has just started in
+this very turn. Turns from a satellite (phone) have no room and duck nothing.
+
 ## Wake-word level gate (`wake_rms_min`)
 
 Besides the score gate, there is an optional **level gate**: the RMS of the

@@ -430,6 +430,23 @@ class DienstWaechterConfig:
 
 
 @dataclass
+class MusikDuckingConfig:
+    """Musik leiser waehrend eines Turns (services/musik_ducking.py).
+
+    Default enabled=False. ``raum`` ist der Raum des Haupt-Mikrofons bei der
+    Musik-Bridge; Satelliten-Turns daempfen nichts. Das Token steht in einer
+    Datei (``token_file``), nicht in der config.yaml.
+    """
+    enabled: bool = False
+    url: str = ""
+    token_file: str = ""
+    raum: str = ""
+    level: int | None = None          # None = Vorgabe der Bridge
+    lease_s: float = 30.0             # Auto-Restore der Bridge ohne Erneuerung
+    erneuern_s: float = 15.0
+
+
+@dataclass
 class TimerSenkeConfig:
     name: str
     url: str
@@ -681,6 +698,9 @@ class Profile:
 
     # Küchentimer — fehlt der Block: kein Timer, Timer-Sätze gehen an den Brain.
     timer: TimerConfig = field(default_factory=TimerConfig)
+
+    # Musik-Ducking — fehlt der Block: Musik bleibt laut.
+    musik_ducking: MusikDuckingConfig = field(default_factory=MusikDuckingConfig)
 
     # Dienst-Waechter — fehlt der Block: kein Waechter-Thread.
     dienstwaechter: DienstWaechterConfig = field(default_factory=DienstWaechterConfig)
@@ -969,6 +989,18 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         dienste=tuple((str(d["name"]), str(d["url"])) for d in dw_raw.get("dienste") or ()),
     )
 
+    md_raw = raw.get("musik_ducking") or {}
+    _dmd = MusikDuckingConfig()
+    musik_ducking = MusikDuckingConfig(
+        enabled=bool(md_raw.get("enabled", _dmd.enabled)),
+        url=str(md_raw.get("url", _dmd.url)),
+        token_file=os.path.expanduser(str(md_raw.get("token_file", _dmd.token_file))),
+        raum=str(md_raw.get("raum", _dmd.raum)),
+        level=int(md_raw["level"]) if md_raw.get("level") is not None else None,
+        lease_s=max(5.0, float(md_raw.get("lease_s", _dmd.lease_s))),
+        erneuern_s=max(2.0, float(md_raw.get("erneuern_s", _dmd.erneuern_s))),
+    )
+
     tm_raw = raw.get("timer") or {}
     _dtm = TimerConfig()
     timer = TimerConfig(
@@ -1073,6 +1105,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         actuator=actuator,
         watcher=watcher,
         dienstwaechter=dienstwaechter,
+        musik_ducking=musik_ducking,
         timer=timer,
         aussprache=aussprache,
         rewind=rewind,

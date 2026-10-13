@@ -150,6 +150,7 @@ voice_assistant/
     tts.py               SpeachesTts + Piper + ReplySpeaker + ThinkingWorker
     openclaw.py          /v1/responses Client
     dienstwaechter.py    Ausfall der Dienste melden, lokale Container neu starten
+    musik_ducking.py     Musik leiser während eines Turns (lms-voice-bridge)
     container.py         Podman-Container im eigenen Scope starten (rootlessport-Falle)
     timer_parser.py      Timer-Befehle fest aus dem Transkript (ohne Modell)
     kuechentimer.py      Küchentimer: Zustand, Ablauf, Senken (TIMER_INTERFACE.md)
@@ -434,6 +435,24 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
 Offen: Sprecher-Verifikation mit Handy-Mikro messen (Schwelle nur gegen den
 ReSpeaker gemessen; der erste Live-Turn erkannte jochen). Kein Barge-in,
 solange das Handy spricht. Tests: `tests/test_satellit.py`.
+
+### Musik-Ducking (`musik_ducking:`, seit 2026-10-13)
+
+`services/musik_ducking.py` dämpft die Musik im Raum des Haupt-Mikrofons vom
+Turn-Beginn bis zum Leerlauf, über die REST-Schnittstelle der
+lms-voice-bridge (pi51; Spezifikation und Stand im MemPalace,
+`gaston-voice-assistant/music-control`). Die Hauptschleife setzt nur den
+Wunsch (`zustand()` nach `read_chunk`, erst dann steht fest, ob ein Satellit
+den Turn eröffnet hat), die Aufrufe macht ein eigener Thread. Satelliten-Turns
+dämpfen nichts. Erneuert wird (Lease 30 s, alle 15 s) nur, wenn das erste duck
+wirklich gedämpft hat, sonst würde Musik leise, die Gaston im selben Turn
+gestartet hat. Alle erhaltenen `lease_id`s werden am Ende freigegeben: ob
+ein zweites duck eine neue Lease anlegt, war beim Bau nicht messbar (es lief
+keine Musik). Das Token liegt in einer Datei (`token_file`), nie in der
+config.yaml oder in Logs. Offen (G4): Latenz bis hörbar leiser über
+Squeezelite/Bluetooth/Echo, Wakewort bei laufender Musik, Ansagen außerhalb
+eines Turns (Timer, `voice_speak_text`) dämpfen noch nicht. Tests:
+`tests/test_musik_ducking.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 

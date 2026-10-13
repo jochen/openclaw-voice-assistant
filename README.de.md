@@ -281,6 +281,36 @@ Noch offen: Die Schwellen der Sprechererkennung sind nur am ReSpeaker
 gemessen, und ein Handy-Mikrofon klingt anders. Während das Handy spricht,
 hat das Barge-in auf diesem Weg kein Audio.
 
+## Musik leiser während eines Turns (`musik_ducking:`, optional)
+
+Läuft im Raum des Haupt-Mikrofons Musik, kann sie während eines Turns leiser
+werden: vom Wakewort über die Antwort, Follow-ups und Rückfragen, bis der
+Assistent wieder im Leerlauf ist. Die Gegenstelle ist eine kleine
+REST-Schnittstelle der Musikanlage mit Leases (hier eine Bridge vor dem Lyrion
+Music Server):
+
+```
+POST {url}/api/v1/rooms/{raum}/duck    {"source", "level"?, "timeout_s"?}
+     -> {"ducked": true, "lease_id": "…"}  oder  {"ducked": false, "reason": "…"}
+POST {url}/api/v1/rooms/{raum}/unduck  {"lease_id"}
+```
+
+```yaml
+musik_ducking:
+  enabled: true
+  url: http://musik-bridge.local:8765
+  token_file: ~/musik-bridge-token.txt   # Bearer-Token; nicht in die config.yaml
+  raum: wohnzimmer                       # Raum des Haupt-Mikrofons
+```
+
+Die Aufrufe laufen in einem eigenen Thread und halten die Sprachverarbeitung
+nie auf; ist die Bridge nicht erreichbar, steht das einmal im Log. Die
+Musikanlage stellt die Lautstärke nach `timeout_s` (30 s) ohne neues `duck`
+selbst wieder her. Ein längerer Turn erneuert deshalb alle 15 s, aber nur,
+wenn das erste `duck` wirklich etwas leiser gemacht hat. Sonst würde der
+Assistent Musik dämpfen, die er in diesem Turn gerade selbst gestartet hat.
+Turns von einem Satelliten (Handy) haben keinen Raum und dämpfen nichts.
+
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 
 Neben dem Score-Gate gibt es ein optionales **Pegel-Gate**: der RMS des

@@ -835,6 +835,28 @@ def _format_wake_scores(scores: deque, threshold: float) -> str:
     return " ".join(parts)
 
 
+def _start_musik_ducking(profile: Profile):
+    """Musik-Ducking starten (services/musik_ducking.py); Fehler starten ohne."""
+    cfg = profile.musik_ducking
+    if not cfg.enabled:
+        return None
+    if not (cfg.url and cfg.raum and cfg.token_file):
+        print("⚠️  musik_ducking: url, raum oder token_file fehlt — aus")
+        return None
+    try:
+        with open(cfg.token_file) as f:
+            token = f.read().strip()
+    except OSError as e:
+        print(f"⚠️  musik_ducking: Token nicht lesbar ({e}) — aus")
+        return None
+    from voice_assistant.services.musik_ducking import MusikDucker
+    ducker = MusikDucker(cfg.url, token, cfg.raum, level=cfg.level,
+                         lease_s=cfg.lease_s, erneuern_s=cfg.erneuern_s)
+    ducker.start()
+    print(f"🎵 Musik-Ducking: Raum {cfg.raum} während eines Turns leiser")
+    return ducker
+
+
 def _start_kuechentimer(profile: Profile, audio_sink):
     """Küchentimer starten (services/kuechentimer.py). Fehler dürfen den
     Start nie verhindern — ohne Timer gehen Timer-Sätze an den Brain."""
@@ -1089,6 +1111,7 @@ def run() -> None:
 
     # --- Küchentimer (Zustand hier, Anzeige/Klingeln auf Senken) ---
     kuechentimer = _start_kuechentimer(profile, audio_sink)
+    musik_ducker = _start_musik_ducking(profile)
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
@@ -1429,6 +1452,10 @@ def run() -> None:
             if _satellit_zustand is not None:
                 _satellit_zustand(state)
             audio_16 = audio_source.read_chunk()
+            if musik_ducker is not None:
+                # Nach read_chunk: erst dort steht fest, ob ein Satellit den
+                # Turn eroeffnet hat.
+                musik_ducker.zustand(state, _satelliten_turn())
             now = time.time()
             current_state[0] = state
             if rewind is not None:
