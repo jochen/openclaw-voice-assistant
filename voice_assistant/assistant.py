@@ -1599,6 +1599,8 @@ def run() -> None:
                         wake_announced = True
                         leds.set_phase(LED_WAKEWORD)
                         print(f"[{now:.1f}s] 🟢 Wakeword detected: {current_wakeword.bundle}")
+                        if musik_ducker is not None:
+                            musik_ducker.vorab()
                 elif wake_hits >= current_min_hits and not wake_gap_used:
                     # erste Lücke im Streak tolerieren (zählt nicht als Hit) —
                     # aber erst ab min_hits echten Hits, sonst näht die Toleranz
@@ -1635,6 +1637,8 @@ def run() -> None:
                                   f"{beam_str}")
                             leds.set_phase(LED_NEAR_MISS)
                             near_miss_until = now + 0.6
+                            if musik_ducker is not None:
+                                musik_ducker.verworfen()
                         else:
                             print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)}{beam_str}")
                             trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")

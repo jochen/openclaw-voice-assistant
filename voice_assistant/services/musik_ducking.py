@@ -13,8 +13,13 @@ Regeln:
 
 - **Nie blockieren.** Die Hauptschleife setzt nur einen Wunsch
   (``zustand()``), die Aufrufe macht ein eigener Thread.
-- **Gedaempft wird beim Turn-Beginn und bis zum Leerlauf** (Antwort, Follow-up-
-  Fenster, Rueckfragen eingeschlossen), danach unduck.
+- **Gedaempft wird ab dem Wakewort und bis zum Leerlauf** (Antwort, Follow-up-
+  Fenster, Rueckfragen eingeschlossen), danach unduck. Schon beim Ueberschreiten
+  der Schwelle (``vorab()``), nicht erst beim Turn-Beginn: der kommt erst, wenn
+  die Treffer-Serie abreisst, gemessen 0,62–0,78 s spaeter (2026-10-13, bei
+  laufender Musik). Wird der Ruf danach doch verworfen (Pegel-Gate), gibt
+  ``verworfen()`` sofort frei; jeden anderen Weg ohne Turn faengt
+  ``_VORAB_FRIST`` ab.
 - **Nur Turns des Haupt-Mikrofons.** Ein Satelliten-Turn (Handy) hat keinen
   Raum (audio/satellit.py) und daempft nichts.
 - **Erneuert wird nur, was das erste duck tatsaechlich gedaempft hat.** Lief
@@ -36,6 +41,10 @@ from voice_assistant.state import STATE_LISTENING
 
 log = logging.getLogger(__name__)
 
+# So lange darf ein vorab gedaempfter Ruf auf seinen Turn warten. Die Serie
+# nach dem Ueberschreiten der Schwelle dauerte gemessen hoechstens 0,8 s.
+_VORAB_FRIST = 3.0
+
 
 class MusikDucker:
     def __init__(self, url: str, token: str, raum: str, *, level: int | None = None,
@@ -56,9 +65,22 @@ class MusikDucker:
         self._letztes_duck = 0.0
         self._fehler_gemeldet = False
         self._zustand = STATE_LISTENING
+        self._vorab_seit: float | None = None
         self._thread: threading.Thread | None = None
 
     # --- Hauptschleife -----------------------------------------------------
+
+    def vorab(self) -> None:
+        """Wakewort ueber der Schwelle (Haupt-Mikrofon), der Turn folgt gleich."""
+        if self._zustand == STATE_LISTENING:
+            self._vorab_seit = time.monotonic()
+            self._setze(True)
+
+    def verworfen(self) -> None:
+        """Der vorab gemeldete Ruf wird doch kein Turn."""
+        if self._vorab_seit is not None and self._zustand == STATE_LISTENING:
+            self._vorab_seit = None
+            self._setze(False)
 
     def zustand(self, state: int, satellit: bool) -> None:
         """Einmal je Schleifendurchlauf; entscheidet nur, ruft nichts auf."""
@@ -66,7 +88,12 @@ class MusikDucker:
         if state == STATE_LISTENING:
             if alt != STATE_LISTENING:
                 self._setze(False)
-        elif alt == STATE_LISTENING and not satellit:
+            elif (self._vorab_seit is not None
+                  and time.monotonic() - self._vorab_seit > _VORAB_FRIST):
+                self.verworfen()
+            return
+        self._vorab_seit = None
+        if alt == STATE_LISTENING and not satellit:
             self._setze(True)
 
     def _setze(self, daempfen: bool) -> None:

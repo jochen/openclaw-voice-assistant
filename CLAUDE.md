@@ -439,19 +439,25 @@ solange das Handy spricht. Tests: `tests/test_satellit.py`.
 ### Musik-Ducking (`musik_ducking:`, seit 2026-10-13)
 
 `services/musik_ducking.py` dämpft die Musik im Raum des Haupt-Mikrofons vom
-Turn-Beginn bis zum Leerlauf, über die REST-Schnittstelle der
+Wakewort bis zum Leerlauf, über die REST-Schnittstelle der
 lms-voice-bridge (pi51; Spezifikation und Stand im MemPalace,
 `gaston-voice-assistant/music-control`). Die Hauptschleife setzt nur den
 Wunsch (`zustand()` nach `read_chunk`, erst dann steht fest, ob ein Satellit
-den Turn eröffnet hat), die Aufrufe macht ein eigener Thread. Satelliten-Turns
+den Turn eröffnet hat), die Aufrufe macht ein eigener Thread. Gedämpft wird
+schon bei „Wakeword detected“ (`vorab()`): der Turn beginnt erst, wenn die
+Treffer-Serie abreißt, gemessen 0,62–0,78 s später. Verwirft das Pegel-Gate
+den Ruf, gibt `verworfen()` sofort frei, sonst nach 3 s `_VORAB_FRIST`. Satelliten-Turns
 dämpfen nichts. Erneuert wird (Lease 30 s, alle 15 s) nur, wenn das erste duck
 wirklich gedämpft hat, sonst würde Musik leise, die Gaston im selben Turn
 gestartet hat. Alle erhaltenen `lease_id`s werden am Ende freigegeben: ob
 ein zweites duck eine neue Lease anlegt, war beim Bau nicht messbar (es lief
 keine Musik). Das Token liegt in einer Datei (`token_file`), nie in der
-config.yaml oder in Logs. Offen (G4): Latenz bis hörbar leiser über
-Squeezelite/Bluetooth/Echo, Wakewort bei laufender Musik, Ansagen außerhalb
-eines Turns (Timer, `voice_speak_text`) dämpfen noch nicht. Tests:
+config.yaml oder in Logs. Erster Test mit Musik (2026-10-13, Echo
+Studio, „Wind of Change“): 3 von 4 Rufen erkannt (der verfehlte: Spitze 0,73
+in einem Frame), Bridge antwortet in 12–16 ms, ein 106-s-Turn blieb dank
+Erneuerung durchgehend gedämpft. Offen: hörbare Latenz über
+Squeezelite/Bluetooth/Echo; Ansagen außerhalb eines Turns (Timer,
+`voice_speak_text`) dämpfen noch nicht. Tests:
 `tests/test_musik_ducking.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)

@@ -114,5 +114,44 @@ class WannGedaempftWirdTest(unittest.TestCase):
         self.assertEqual(d._leases, [])
 
 
+class VorabTest(unittest.TestCase):
+    """Daempfen schon beim Ueberschreiten der Schwelle, nicht erst beim Turn."""
+
+    def test_vorab_daempft_und_der_turn_uebernimmt(self):
+        d, bridge = _bauen()
+        d.zustand(STATE_LISTENING, False)
+        d.vorab()
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None)], "vor dem Turn-Beginn")
+        d.zustand(STATE_LISTENING, False)   # Serie laeuft noch
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None)], "kein zweites duck beim Turn")
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+
+    def test_vom_pegel_gate_verworfen_gibt_sofort_frei(self):
+        d, bridge = _bauen()
+        d.vorab()
+        _thread(d)
+        d.verworfen()
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+
+    def test_ohne_turn_greift_die_frist(self):
+        from voice_assistant.services import musik_ducking
+        d, bridge = _bauen()
+        d.vorab()
+        _thread(d)
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None)], "innerhalb der Frist warten")
+        d._vorab_seit -= musik_ducking._VORAB_FRIST + 1
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+
+
 if __name__ == "__main__":
     unittest.main()
