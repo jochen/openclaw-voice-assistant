@@ -17,6 +17,7 @@ import webrtcvad
 
 from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
+from voice_assistant.audio.satellit import mit_satelliten
 from voice_assistant.config import (
     ACTUATOR_LOG_PATH,
     ACTUATOR_TOR_LOG_PATH,
@@ -543,16 +544,17 @@ def _cleanup_trigger_audio() -> None:
 
 
 def _make_audio(profile: Profile):
-    """Baut passende AudioSource + AudioSink je nach mode."""
+    """Baut passende AudioSource + AudioSink je nach mode (plus Satelliten)."""
     if profile.mode == "respeaker":
         source = RespeakerSource(profile.respeaker)
         if profile.respeaker.use_speaker:
             sink = RespeakerSink(profile.respeaker)
         else:
             sink = AlsaSink(profile.local_audio.playback_device)
-        return source, sink
-    # mode == "local"
-    return AlsaSource(profile.local_audio), AlsaSink(profile.local_audio.playback_device)
+    else:  # mode == "local"
+        source = AlsaSource(profile.local_audio)
+        sink = AlsaSink(profile.local_audio.playback_device)
+    return mit_satelliten(profile.satelliten, source, sink)
 
 
 def _make_wakeword(profile: Profile, wakewords: list | None = None):
@@ -1367,6 +1369,14 @@ def run() -> None:
     # Trigger aufgenommen wurden) — die haben den VAD nie gesehen und dürfen
     # bei den Sprach-Gates nicht mitzählen.
     pre_roll_chunks = 0
+    # Satelliten (audio/satellit.py): die Quelle bekommt jeden Zustand mit und
+    # weiss, welchem Geraet der laufende Turn gehoert (audio_source.aktiv,
+    # None = Haupt-Mikrofon). Ein Satellit erkennt sein Wakeword selbst — im
+    # Transkript steht es nie, und es gibt keinen Wake-Clip.
+    _satellit_zustand = getattr(audio_source, "zustand", None)
+
+    def _satelliten_turn() -> bool:
+        return getattr(audio_source, "aktiv", None) is not None
 
     def _log_outcome(ausgang: str, **extra) -> None:
         """Protokolliert, was aus einem Trigger geworden ist — einmal je Trigger.
@@ -1416,6 +1426,8 @@ def run() -> None:
 
     try:
         while True:
+            if _satellit_zustand is not None:
+                _satellit_zustand(state)
             audio_16 = audio_source.read_chunk()
             now = time.time()
             current_state[0] = state
@@ -1474,6 +1486,66 @@ def run() -> None:
                 if near_miss_until > 0.0 and now >= near_miss_until:
                     leds.set_phase(LED_IDLE)
                     near_miss_until = 0.0
+
+                sat = (audio_source.satellit_trigger()
+                       if _satellit_zustand is not None else None)
+                if sat is not None:
+                    # Satellit (Handy mit Ava): das Geraet hat sein Wakeword
+                    # selbst erkannt und eine Session geoeffnet. Kein Score,
+                    # kein Gate, kein Wake-Clip — direkt in die Aufnahme. Der
+                    # aktuelle Chunk ist schon Sprache nach dem Wakeword.
+                    sat_name, sat_phrase = sat
+                    print(f"[{now:.1f}s] 📱 Satellit {sat_name}: "
+                          f"{sat_phrase or 'ohne Wakeword'} → Aufnahme")
+                    # Eigenes result: die Wake-Werkzeuge (wake_triage,
+                    # wake_corpus) zaehlen nur trigger/nearmiss mit Clip.
+                    _log_wake_event({"result": "satellit", "satellit": sat_name,
+                                     "wakeword": sat_phrase})
+                    trigger_audio_id = None
+                    turn_audio = None
+                    turn_wake_audio = None
+                    unklar_round = 0
+                    current_wakeword = profile.wakewords[0]
+                    turn_wake_rms = 0.0
+                    wake_ring.clear()
+                    wake_ring_samples = 0
+                    wakeword.reset()
+                    wake_hits = 0
+                    wake_peak = 0.0
+                    wake_announced = False
+                    wake_gap_used = False
+                    leds.set_phase(LED_RECORDING)
+                    voice_controller.set_default_voice(current_wakeword.tts_voice)
+                    near_miss_until = 0.0
+                    state = STATE_RECORDING
+                    state_start = time.time()
+                    recorded_chunks = [audio_16.copy()]
+                    pre_roll_chunks = 0
+                    silence_counter = 0
+                    max_internal_pause = 0
+                    speech_detected = False
+                    turn_mode = "dialog"
+                    turn_silence_limit = _silence_limit
+                    turn_max_sec = RECORDING_MAX_SEC
+                    turn_ein_satz = False
+                    turn_speech_chunks = 0
+                    turn_loud_chunks = 0
+                    nur_wakewort_runde = False
+                    bargein_round = 0
+                    turn_rms = []
+                    turn_frames_speech = 0
+                    turn_frames_total = 0
+                    # Kein "Ja?" und keine Ein-Satz-Entscheidung, also immer
+                    # Dialog-Nachlauf (2 s statt 1 s). Der Satellit spielt nach
+                    # dem Wakeword seinen eigenen Weck-Ton, und das Wakeword
+                    # steckt nicht in der Aufnahme: jede Aufnahme sah deshalb
+                    # "durchgesprochen" aus. Wer den Ton abwartete, wurde nach
+                    # 1 s abgeschnitten (2026-10-13 07:21:52, "Ich sage." statt
+                    # eines Schaltbefehls). Kostet bei Kommandos 1 s.
+                    ack_pending = False
+                    ack_path = ""
+                    ack_suppress = True
+                    continue
 
                 hit = wakeword.feed(audio_16)
                 if hit is not None:
@@ -2110,6 +2182,7 @@ def run() -> None:
                         and not unklar_round
                         and not war_bargein
                         and not nur_wakewort_runde
+                        and not _satelliten_turn()
                         and _ist_nur_wakewort(text, current_wakeword.bundle)
                     ):
                         # Nur "Gaston" im Transkript: der Nutzer hat auf das
@@ -2565,6 +2638,7 @@ def run() -> None:
                             hinweis = unklar_an_brain
                             if (hinweis is None and profile.anrede_hinweis and erst_turn
                                     and spk_verdict.status != STATUS_BEKANNT
+                                    and not _satelliten_turn()
                                     and not anrede_im_text(text, current_wakeword.bundle)):
                                 hinweis = profile.locale.anrede_hinweis
                                 print(f"[{now:.1f}s] 🗯️  Wakewort fehlt im Transkript, Sprecher "

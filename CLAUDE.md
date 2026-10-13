@@ -132,7 +132,8 @@ voice_assistant/
   audio/
     base.py              AudioSource/AudioSink Protocols
     alsa.py              PyAudio + aplay
-    respeaker.py         ESPHome Native API (Stub — Schritt 2)
+    respeaker.py         ESPHome Native API (ReSpeaker; mit satellit=True auch Ava)
+    satellit.py          Handy-Satelliten: Turn gehört dem Gerät, das ihn auslöst
   wakeword/
     base.py              WakewordEngine Protocol
     openwakeword_engine.py
@@ -392,6 +393,47 @@ Argus jede Zeile melden würde. Senken in dieser Installation: tabletviewer
 (Küche, klingelt über WebAudio) und monitor-ctrl auf dem Wohnzimmer-Pi
 (CDP-Overlay, ohne Ton, Schirm an, solange ein Timer läuft). Tests:
 `tests/test_kuechentimer.py`, `tests/test_timer_parser.py`.
+
+### Handy als Satellit (`satelliten:`, seit 2026-10-13, Branch `feature/ava-satellit`)
+
+Jochens Idee: in der Badewanne kein Mikro, das Handy ist aber dabei. Die App
+**Ava** (github.com/brownard/Ava) gibt sich als ESPHome-Sprachsatellit aus;
+unter jedem Satelliten steckt ein `RespeakerClient` mit `satellit=True`.
+`audio/satellit.py` legt `SatellitQuelle`/`SatellitSenke` über Haupt-Quelle
+und -Senke. **Im selben Prozess, nicht als zweiter**: ein zweiter Prozess
+hätte sich um die Ports 18791/18792/18800 gestritten und Timer, Argus und
+Dienst-Wächter doppelt geführt. Satellit `jochen` ist ortsungebunden (Jochen:
+„wo ich bin, muss ich dann ggf. sagen“).
+
+Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
+- Kein Dauerstrom, kein Start-Knopf. Ava erkennt ihr Wakewort selbst („Okay
+  Nabu“, „Hey Jarvis“; Jochen: „dann gibts schon keine Verhörer“) und öffnet
+  dann eine Session. Die Session ersetzt den Trigger (`satellit_trigger()`,
+  Zweig in STATE_LISTENING vor `wakeword.feed`). Kein Wake-Clip, kein
+  `_log_outcome`, wake_events.log bekommt `result: "satellit"` (die
+  Wake-Werkzeuge zählen nur trigger/nearmiss).
+- Die Session endet erst, wenn wir `STT_VAD_END` + `RUN_END` schicken.
+  `zustand(state)` läuft einmal je Schleifendurchlauf vor `read_chunk()` und
+  schließt sie beim Verlassen von RECORDING/FOLLOWUP, und auch jede Session, die
+  gerade niemand brauchen kann.
+- Ansagen über die Announce-API, nicht den Media-Player: Ava meldet dort das
+  Ende (0,2–0,5 s Überhang). Mit `start_conversation` hört sie danach von
+  selbst zu. Deshalb öffnet **der Follow-up-Beep am Handy das Mikro**
+  (`SatellitSenke`, nur im eigenen Turn); alle Rückfragen (Timer, Handshake,
+  unklar) laufen darüber.
+- Handy-Turns immer im Dialog-Modus (kein Ein-Satz, kein „Ja?“): Das Wakewort
+  steckt nicht in der Aufnahme, also sah jede „durchgesprochen“ aus. Wer Avas
+  Ton abwartete, wurde nach 1 s abgeschnitten (07:21:52, „Ich sage.“).
+- Kein Anrede-Hinweis und kein `_ist_nur_wakewort` für Handy-Turns
+  (`_satelliten_turn()`).
+- Der ReSpeaker-Ring läuft während eines Handy-Turns mit — gewollt (Jochen:
+  „gar nicht so verkehrt“).
+- Ansagen gehen an das Gerät des letzten Turns (`ziel`), auch spätere von außen,
+  bis das Haupt-Mikrofon (ReSpeaker, Wohnbereich) triggert oder das Handy weg ist.
+
+Offen: Sprecher-Verifikation mit Handy-Mikro messen (Schwelle nur gegen den
+ReSpeaker gemessen; der erste Live-Turn erkannte jochen). Kein Barge-in,
+solange das Handy spricht. Tests: `tests/test_satellit.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 

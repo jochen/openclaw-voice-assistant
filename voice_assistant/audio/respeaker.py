@@ -106,6 +106,12 @@ class RespeakerClient:
         # Zeitpunkt des letzten handle_audio-Pakets (monotonic). Der Watchdog in
         # _main drueckt den Start-Button erneut, wenn der Strom ausbleibt.
         self._last_audio = time.monotonic()
+        # Satellit (cfg.satellit): Wakeword-Phrase der Session, die das Geraet
+        # gerade selbst geoeffnet hat und die noch niemand abgeholt hat
+        # (sitzung_abholen). None = keine neue Session.
+        self._sitzung_neu: str | None = None
+        self._verbunden = False
+        self._fehler_gemeldet = False
         # Zustand des Media-Players (fuer die Wiedergabe-Verfolgung, siehe
         # RespeakerSink.play_wav). Condition statt Event, weil auf einen
         # WECHSEL gewartet wird und nicht auf ein einmaliges Signal.
@@ -140,6 +146,8 @@ class RespeakerClient:
         self.boot_step_key = None
         self._in_session = False
         self._last_audio = time.monotonic()
+        self._sitzung_neu = None
+        self._verbunden = False
         self._buf = b""
         self._buf2 = b""
         with self._player_cv:
@@ -158,10 +166,20 @@ class RespeakerClient:
             try:
                 self._loop.run_until_complete(self._main())
             except Exception as exc:
-                log.error(
-                    "RespeakerClient connection error: %s — retry in %ds",
-                    exc, self._RECONNECT_DELAY,
-                )
+                # Ein Satellit (Handy) ist meistens absichtlich weg. Einmal
+                # melden, dann still weiterprobieren — sonst steht alle 15 s
+                # eine Fehlerzeile im Journal.
+                if self._cfg.satellit and self._fehler_gemeldet:
+                    log.debug("Satellit %s nicht erreichbar: %s", self._cfg.host, exc)
+                elif self._cfg.satellit:
+                    log.info("Satellit %s nicht erreichbar (%s) — warte still darauf",
+                             self._cfg.host, exc)
+                    self._fehler_gemeldet = True
+                else:
+                    log.error(
+                        "RespeakerClient connection error: %s — retry in %ds",
+                        exc, self._RECONNECT_DELAY,
+                    )
             self._reset_state()
             time.sleep(self._RECONNECT_DELAY)
 
@@ -183,7 +201,10 @@ class RespeakerClient:
                 )
 
         await self._api.connect(login=True, on_stop=_on_stop)
-        log.info("ReSpeaker connected")
+        self._verbunden = True
+        self._fehler_gemeldet = False
+        log.info("%s connected (%s)", "Satellit" if self._cfg.satellit else "ReSpeaker",
+                 self._cfg.host)
 
         entities, _ = await self._api.list_entities_services()
         for e in entities:
@@ -230,6 +251,18 @@ class RespeakerClient:
             wake_word_phrase: str | None,
         ) -> int | None:
             self._in_session = True
+            if self._cfg.satellit:
+                # Das Geraet hat sein Wakeword selbst erkannt (oder nach einer
+                # Ansage mit start_conversation von sich aus zugehoert). Die
+                # Ereignisse sind die, die Home Assistant an dieser Stelle
+                # schickt; Ava zeigt damit "listening".
+                self._sitzung_neu = wake_word_phrase or ""
+                self._api.send_voice_assistant_event(
+                    aioesphomeapi.VoiceAssistantEventType.VOICE_ASSISTANT_RUN_START, None)
+                self._api.send_voice_assistant_event(
+                    aioesphomeapi.VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_START, None)
+                log.info("Satellit %s: Session offen (Wakeword %r)",
+                         self._cfg.host, wake_word_phrase)
             return 0  # API_AUDIO-Modus
 
         async def handle_stop(abort: bool) -> None:
@@ -292,6 +325,11 @@ class RespeakerClient:
         bereit) oder beendet der ESP die Session im Leerlauf, kam nie wieder
         Audio — der Pi war ohne jede Meldung taub, bis zum Dienst-Neustart.
         """
+        if self._cfg.satellit:
+            # Ein Satellit (Ava) hat keinen Dauerstrom und keinen Start-Knopf:
+            # Stille ist dort der Normalzustand, nicht ein Ausfall.
+            await done
+            return
         geduld = self._WATCHDOG_STILLE
         versuche = 0
         while not done.done():
@@ -422,6 +460,62 @@ class RespeakerClient:
 
     def in_session(self) -> bool:
         return self._in_session
+
+    # ------------------------------------------------------------------
+    # Satellit: Session und Ansage
+    # ------------------------------------------------------------------
+
+    def verbunden(self) -> bool:
+        return self._verbunden
+
+    def sitzung_abholen(self) -> str | None:
+        """Wakeword-Phrase einer neu geoeffneten Session, einmal; sonst None.
+
+        "" heisst: Session ohne Wakeword (nach start_conversation)."""
+        neu, self._sitzung_neu = self._sitzung_neu, None
+        return neu
+
+    def sitzung_beenden(self) -> None:
+        """Offene Session schliessen — das Endpointing liegt bei uns.
+
+        Ein Satellit hoert nicht von selbst auf: er streamt, bis der Client
+        STT_VAD_END + RUN_END schickt (gemessen 2026-10-13 mit Ava). Danach
+        kommt handle_stop und das Geraet geht zurueck in den Wakeword-Modus.
+        """
+        loop, api = self._loop, self._api
+        self._sitzung_neu = None
+        if loop is None or api is None or not self._in_session:
+            return
+        # Ab hier gilt die Session als geschlossen, auch wenn handle_stop erst
+        # gleich kommt — sonst schliesst die Weiche sie ein zweites Mal als
+        # "Session ohne Turn" (so im ersten Live-Lauf 2026-10-13).
+        self._in_session = False
+        def _senden() -> None:
+            api.send_voice_assistant_event(
+                aioesphomeapi.VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_END, None)
+            api.send_voice_assistant_event(
+                aioesphomeapi.VoiceAssistantEventType.VOICE_ASSISTANT_RUN_END, None)
+        try:
+            loop.call_soon_threadsafe(_senden)
+        except Exception as exc:
+            log.warning("Session-Ende nicht gesendet: %s", exc)
+
+    def ansage(self, url: str, mikro_danach: bool, timeout: float):
+        """Ansage ueber die Announce-API; liefert ein concurrent Future oder None.
+
+        Anders als beim Media-Player meldet das Geraet hier das ENDE der
+        Wiedergabe (gemessen mit Ava: 3,0 s fuer 2,6 s Audio). Mit
+        mikro_danach (start_conversation) oeffnet es danach von selbst eine
+        Session — so laufen Rueckfragen und Follow-ups ohne Wakeword.
+        """
+        loop, api = self._loop, self._api
+        if loop is None or api is None:
+            return None
+        return asyncio.run_coroutine_threadsafe(
+            api.send_voice_assistant_announcement_await_response(
+                url, timeout, text="", start_conversation=mikro_danach),
+            loop,
+        )
 
     def mitschnitt_start(self) -> None:
         with self._mitschnitt_lock:
@@ -560,7 +654,6 @@ class RespeakerSource:
 class RespeakerSink:
     """TTS via ESPHome announce API: Pi → HTTP → ESP media_player → aic3104."""
 
-    _HTTP_PORT = 18800
     # Zeit, in der der Player den Beginn des Abspielens melden DARF. Laeuft sie
     # ab, wird trotzdem weitergemacht — der Zustand ist hier nur ein Anker, um
     # den Startzeitpunkt genauer zu kennen, keine Bedingung (siehe play_wav).
@@ -637,9 +730,9 @@ class RespeakerSink:
 
     def _start_http_server(self) -> None:
         handler = _make_http_handler(self._serve_dir)
-        srv = http.server.HTTPServer(("", self._HTTP_PORT), handler)
+        srv = http.server.HTTPServer(("", self._cfg.http_port), handler)
         threading.Thread(target=srv.serve_forever, daemon=True, name="respeaker-http").start()
-        log.info("TTS HTTP server on :%d (%s)", self._HTTP_PORT, self._serve_dir)
+        log.info("TTS HTTP server on :%d (%s)", self._cfg.http_port, self._serve_dir)
 
     @staticmethod
     def _to_48k_stereo(src: str, dst: str) -> None:
@@ -698,7 +791,8 @@ class RespeakerSink:
         except Exception:
             return 0.0
 
-    def play_wav(self, path: str) -> None:
+    def play_wav(self, path: str, mikro_danach: bool = False) -> None:
+        """mikro_danach gilt nur fuer Satelliten (siehe RespeakerClient.ansage)."""
         client = self._client
         if client._loop is None or client._api is None:
             log.warning("RespeakerSink: no API client available")
@@ -714,9 +808,19 @@ class RespeakerSink:
         filename = f"{os.getpid()}_{threading.get_ident()}_{folge}.wav"
         dest = os.path.join(self._serve_dir, filename)
         self._to_48k_stereo(path, dest)
-        url = f"http://{self._pi_ip}:{self._HTTP_PORT}/{filename}"
+        url = f"http://{self._pi_ip}:{self._cfg.http_port}/{filename}"
         dauer = self._wav_seconds(dest)
         log.info("Play → %s (%.1fs)", url, dauer)
+
+        if self._cfg.satellit:
+            try:
+                self._ansage_abwarten(url, dauer, mikro_danach)
+            finally:
+                try:
+                    os.unlink(dest)
+                except OSError:
+                    pass
+            return
 
         t_start = time.monotonic()
         gestartet = None
@@ -801,6 +905,38 @@ class RespeakerSink:
         if not client.in_session():
             log.info("Keine Mic-Session nach der Wiedergabe → Start-Button")
             client.press_start_button()
+
+    # Wie lange auf das Ende einer Satelliten-Ansage gewartet wird, ueber die
+    # Dateilaenge hinaus. Gemessen 0,4 s (Holen + Decoder); WLAN am Handy
+    # schwankt mehr als am ESP.
+    _ANSAGE_NACHFRIST = 5.0
+
+    def _ansage_abwarten(self, url: str, dauer: float, mikro_danach: bool) -> None:
+        t_start = time.monotonic()
+        fut = self._client.ansage(url, mikro_danach, dauer + self._ANSAGE_NACHFRIST)
+        if fut is None:
+            log.warning("Satellit: keine Verbindung, Ansage entfaellt")
+            return
+        ende = t_start + dauer + self._ANSAGE_NACHFRIST
+        while not fut.done():
+            with self._lock:
+                if self._stopped:
+                    fut.cancel()
+                    return
+            if time.monotonic() > ende:
+                log.warning("Satellit: kein Ende der Ansage nach %.1fs (Audio %.1fs)",
+                            time.monotonic() - t_start, dauer)
+                fut.cancel()
+                return
+            time.sleep(0.05)
+        try:
+            fut.result()
+        except Exception as exc:
+            log.warning("Satellit: Ansage fehlgeschlagen: %s", exc)
+            return
+        ueberhang = time.monotonic() - t_start - dauer
+        log.info("Satellit: Ansage fertig (%.1fs Audio, %.1fs Ueberhang%s)",
+                 dauer, ueberhang, ", Mikro auf" if mikro_danach else "")
 
     def _sleep_unless_stopped(self, sekunden: float) -> None:
         ende = time.monotonic() + sekunden

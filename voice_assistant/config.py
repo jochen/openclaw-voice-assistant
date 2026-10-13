@@ -46,6 +46,29 @@ class RespeakerAudio:
     #   (Rohmikrofon). Leer = am Geraet nichts aendern.
     mitschnitt: bool = False
     kanal2_quelle: str = ""
+    # Port des kleinen HTTP-Servers, von dem das Geraet die Ansagen holt.
+    # Jedes Geraet braucht einen eigenen (siehe satelliten:).
+    http_port: int = 18800
+    # True fuer einen Satelliten (Ava auf dem Handy, audio/satellit.py): kein
+    # Dauerstrom per Start-Knopf, das Geraet erkennt sein Wakeword selbst und
+    # oeffnet erst dann eine Session. Ansagen laufen ueber die Announce-API,
+    # die das Ende genau meldet und danach das Mikrofon oeffnen kann.
+    satellit: bool = False
+
+
+@dataclass
+class SatellitConfig:
+    """Ein zusaetzliches Mikrofon mit Lautsprecher, z. B. das Handy mit Ava.
+
+    Der Turn gehoert dem Geraet, das ihn ausgeloest hat: Aufnahme von dort,
+    Antwort dorthin. Siehe audio/satellit.py.
+    """
+    name: str
+    host: str
+    port: int = 6053
+    encryption_key: str = ""
+    volume: float = 1.0
+    http_port: int = 18801
 
 
 _DEFAULT_VOICE_INSTRUCTION = (
@@ -667,6 +690,9 @@ class Profile:
 
     # Abbruch mitten im Turn ("Stopp Gaston"). Default: aus.
     barge_in: BargeInConfig = field(default_factory=BargeInConfig)
+    # Weitere Geraete neben dem Haupt-Mikrofon (audio/satellit.py). Leer =
+    # Verhalten wie vorher.
+    satelliten: list[SatellitConfig] = field(default_factory=list)
 
 
 def _load_yaml() -> dict[str, Any]:
@@ -852,6 +878,17 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         mitschnitt=bool(resp_raw.get("mitschnitt", False)),
         kanal2_quelle=str(resp_raw.get("kanal2_quelle", "") or ""),
     )
+
+    satelliten = []
+    for i, sat_raw in enumerate(raw.get("satelliten") or []):
+        satelliten.append(SatellitConfig(
+            name=str(sat_raw.get("name") or f"satellit{i + 1}"),
+            host=str(sat_raw["host"]),
+            port=int(sat_raw.get("port", 6053)),
+            encryption_key=str(sat_raw.get("encryption_key", "") or ""),
+            volume=float(sat_raw.get("volume", 1.0)),
+            http_port=int(sat_raw.get("http_port", 18801 + i)),
+        ))
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---
     leds_raw = raw.get("leds") or {}
@@ -1041,6 +1078,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         rewind=rewind,
         wakewords=wakewords,
         barge_in=barge_in,
+        satelliten=satelliten,
     )
 
 

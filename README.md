@@ -229,6 +229,54 @@ Two things to know if you build on this:
   next regression of this kind into something you read instead of something you
   hear.
 
+## A phone as a satellite (`satelliten:`, optional)
+
+One microphone doesn't cover the whole home. For rooms you rarely talk in
+(the bathtub, the garden) you don't need a second ReSpeaker: an Android phone
+running **[Ava](https://github.com/brownard/Ava)** presents itself on the
+network as an ESPHome voice satellite and speaks the same Native API. List it
+as a satellite in the profile:
+
+```yaml
+satelliten:
+  - name: phone          # free-form; shows up in the log
+    host: 192.168.1.50   # a DHCP reservation helps
+    volume: 1.0
+    http_port: 18801     # each device needs its own port to fetch replies from
+```
+
+While the app is not running nothing changes, and the assistant keeps quietly
+retrying the connection. Once it is running, **the turn belongs to the device
+that started it**: audio comes from the phone, the reply is played on the
+phone, and the main microphone is ignored until the turn is over. Timers,
+speaker recognition, the actuator and the brain stay shared, because it is
+still one assistant, not two. Later announcements (`voice_speak_text`, a
+ringing timer) also go to the phone, until a turn comes from the main
+microphone again or the phone disconnects. The main device's LED ring follows
+the turn as usual, which tells the room the assistant is busy.
+
+How Ava differs from the ReSpeaker (measured, not assumed):
+
+- **No continuous stream.** Ava has no start button. It detects its wake word
+  on the phone (its own models, e.g. "Okay Nabu") and opens a session only
+  then. The session takes the place of the trigger; your own wake word model
+  never hears this audio. Upside: no near-misses on that path.
+- **The session ends only when the client ends it.** Endpointing stays on the
+  assistant's side, which then sends `STT_VAD_END` + `RUN_END`.
+- **Use the announce API for replies, not the media player.** On Ava it reports
+  the *end* of playback (≈0.2–0.5 s after the audio), and with
+  `start_conversation` the phone opens its microphone by itself afterwards.
+  Follow-ups and clarifying questions run on that, without a wake word.
+- **Always use dialog endpointing (2 s), never the 1 s command endpointing.**
+  The wake word is not part of the recording, so every recording looked
+  "spoken in one breath". Anyone who waited for Ava's wake sound was cut off
+  after a second.
+- Recording and playback keep working with the screen locked.
+
+Not done yet: speaker recognition thresholds were measured on the ReSpeaker
+only, and a phone microphone sounds different. Barge-in has no audio on this
+path while the phone is speaking.
+
 ## Wake-word level gate (`wake_rms_min`)
 
 Besides the score gate, there is an optional **level gate**: the RMS of the

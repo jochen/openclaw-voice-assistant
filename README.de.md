@@ -231,6 +231,56 @@ Zwei Dinge, die man wissen muss, wenn man darauf aufbaut:
   länger dauert als das Audio, macht aus der nächsten Regression dieser Art
   etwas zum Lesen statt zum Hören.
 
+## Ein Handy als Satellit (`satelliten:`, optional)
+
+Ein Mikrofon deckt nicht die ganze Wohnung ab. Für Räume, in denen man selten
+spricht (Badewanne, Garten), braucht es keinen zweiten ReSpeaker: Ein
+Android-Handy mit **[Ava](https://github.com/brownard/Ava)** gibt sich im Netz
+als ESPHome-Sprachsatellit aus und spricht dieselbe Native API. Im Profil
+trägt man es als Satellit ein:
+
+```yaml
+satelliten:
+  - name: handy          # frei wählbar, steht im Log
+    host: 192.168.1.50   # eine feste DHCP-Adresse hilft
+    volume: 1.0
+    http_port: 18801     # jedes Gerät braucht einen eigenen Port zum Abholen der Antworten
+```
+
+Solange die App nicht läuft, ändert sich nichts, und der Assistent versucht
+still weiter, sich zu verbinden. Läuft sie, **gehört der Turn dem Gerät, das
+ihn ausgelöst hat**: Das Audio kommt vom Handy, die Antwort wird auf dem Handy
+abgespielt, und das Haupt-Mikrofon wird ignoriert, bis der Turn vorbei ist.
+Timer, Sprechererkennung, Aktuator und Brain bleiben gemeinsam, denn es ist
+weiterhin ein Assistent und nicht zwei. Spätere Ansagen (`voice_speak_text`,
+ein klingelnder Timer) gehen ebenfalls aufs Handy, bis wieder ein Turn vom
+Haupt-Mikrofon kommt oder das Handy die Verbindung verliert. Der LED-Ring des
+Haupt-Geräts folgt dem Turn wie gewohnt und zeigt dem Raum so, dass der
+Assistent beschäftigt ist.
+
+Was bei Ava anders ist als beim ReSpeaker (gemessen, nicht angenommen):
+
+- **Kein Dauerstrom.** Ava hat keinen Start-Knopf. Sie erkennt ihr Wakewort
+  selbst auf dem Handy (eigene Modelle, z. B. „Okay Nabu“) und öffnet erst
+  dann eine Session. Die Session ersetzt den Trigger; das eigene
+  Wakeword-Modell hört dieses Audio nie. Vorteil: Auf diesem Weg gibt es keine
+  Verhörer.
+- **Die Session endet erst, wenn der Client sie beendet.** Das Endpointing
+  bleibt beim Assistenten, der danach `STT_VAD_END` + `RUN_END` schickt.
+- **Antworten über die Announce-API abspielen, nicht über den Media-Player.**
+  Bei Ava meldet sie das *Ende* der Wiedergabe (≈0,2–0,5 s nach dem Audio),
+  und mit `start_conversation` öffnet das Handy danach von selbst das
+  Mikrofon. Darauf laufen Follow-ups und Rückfragen, ohne Wakewort.
+- **Immer Dialog-Endpointing (2 s), nie das 1-s-Kommando-Endpointing.** Das
+  Wakewort steckt nicht in der Aufnahme, deshalb sah jede Aufnahme
+  „durchgesprochen“ aus. Wer Avas Weck-Ton abwartete, wurde nach einer Sekunde
+  abgeschnitten.
+- Aufnahme und Wiedergabe funktionieren auch bei gesperrtem Bildschirm.
+
+Noch offen: Die Schwellen der Sprechererkennung sind nur am ReSpeaker
+gemessen, und ein Handy-Mikrofon klingt anders. Während das Handy spricht,
+hat das Barge-in auf diesem Weg kein Audio.
+
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 
 Neben dem Score-Gate gibt es ein optionales **Pegel-Gate**: der RMS des
