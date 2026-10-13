@@ -455,9 +455,12 @@ keine Musik). Das Token liegt in einer Datei (`token_file`), nie in der
 config.yaml oder in Logs. Erster Test mit Musik (2026-10-13, Echo
 Studio, „Wind of Change“): 3 von 4 Rufen erkannt (der verfehlte: Spitze 0,73
 in einem Frame), Bridge antwortet in 12–16 ms, ein 106-s-Turn blieb dank
-Erneuerung durchgehend gedämpft. Offen: hörbare Latenz über
-Squeezelite/Bluetooth/Echo; Ansagen außerhalb eines Turns (Timer,
-`voice_speak_text`) dämpfen noch nicht. Tests:
+Erneuerung durchgehend gedämpft. Ansagen von außen
+(`voice_speak_text`, Aussprache-Probe) dämpfen, solange sie laufen
+(`ansage()`, über `start_announce_worker(daempfen=…)`), nur nicht, wenn sie
+ans Handy gehen. **Der Timer dämpft nicht** (Jochen 2026-10-13), weder
+Klingeln noch Ablauf-Ansage: die steht als `(text, False, False)` in der
+`announce_queue`. Offen: hörbare Latenz über Squeezelite/Bluetooth/Echo. Tests:
 `tests/test_musik_ducking.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)

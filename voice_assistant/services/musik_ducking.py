@@ -20,6 +20,9 @@ Regeln:
   laufender Musik). Wird der Ruf danach doch verworfen (Pegel-Gate), gibt
   ``verworfen()`` sofort frei; jeden anderen Weg ohne Turn faengt
   ``_VORAB_FRIST`` ab.
+- **Ansagen von aussen** (``voice_speak_text``) daempfen ebenfalls, solange sie
+  laufen (``ansage()``). Der Timer nicht (Jochen, 2026-10-13): weder sein
+  Klingeln noch „Der Timer ist abgelaufen“.
 - **Nur Turns des Haupt-Mikrofons.** Ein Satelliten-Turn (Handy) hat keinen
   Raum (audio/satellit.py) und daempft nichts.
 - **Erneuert wird nur, was das erste duck tatsaechlich gedaempft hat.** Lief
@@ -31,6 +34,7 @@ Regeln:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -59,8 +63,10 @@ class MusikDucker:
         self._http_timeout = http_timeout
         self._post = post or self._http_post
         self._cv = threading.Condition()
-        self._wunsch = False          # soll gerade gedaempft sein?
-        self._erstes = False          # das erste duck dieses Turns steht noch aus
+        self._wunsch = False          # soll gerade gedaempft sein? (Turn oder Ansage)
+        self._turn = False            # ein Turn (oder vorab gemeldeter Ruf) laeuft
+        self._ansagen = 0             # laufende Ansagen von aussen
+        self._erstes = False          # das erste duck dieser Daempfung steht noch aus
         self._leases: list[str] = []  # erhaltene lease_ids des laufenden Turns
         self._letztes_duck = 0.0
         self._fehler_gemeldet = False
@@ -96,13 +102,32 @@ class MusikDucker:
         if alt == STATE_LISTENING and not satellit:
             self._setze(True)
 
-    def _setze(self, daempfen: bool) -> None:
+    @contextlib.contextmanager
+    def ansage(self):
+        """Gedaempft, solange der Block laeuft (Ansage von aussen)."""
         with self._cv:
-            if daempfen == self._wunsch:
-                return
-            self._wunsch = daempfen
-            self._erstes = daempfen
-            self._cv.notify()
+            self._ansagen += 1
+            self._aktualisieren()
+        try:
+            yield
+        finally:
+            with self._cv:
+                self._ansagen -= 1
+                self._aktualisieren()
+
+    def _setze(self, turn: bool) -> None:
+        with self._cv:
+            self._turn = turn
+            self._aktualisieren()
+
+    def _aktualisieren(self) -> None:
+        """Nur unter self._cv."""
+        daempfen = self._turn or self._ansagen > 0
+        if daempfen == self._wunsch:
+            return
+        self._wunsch = daempfen
+        self._erstes = daempfen
+        self._cv.notify()
 
     # --- Thread ------------------------------------------------------------
 

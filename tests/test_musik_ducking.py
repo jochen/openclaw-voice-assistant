@@ -153,5 +153,68 @@ class VorabTest(unittest.TestCase):
         self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
 
 
+class AnsageTest(unittest.TestCase):
+    def test_ansage_daempft_waehrend_sie_laeuft(self):
+        d, bridge = _bauen()
+        with d.ansage():
+            _thread(d)
+            self.assertEqual(bridge.was(), [("duck", None)])
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+
+    def test_ruf_waehrend_der_ansage_haelt_die_daempfung(self):
+        d, bridge = _bauen()
+        with d.ansage():
+            _thread(d)
+            d.vorab()
+            d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None)], "Turn laeuft noch")
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+
+
+class AnnounceWorkerTest(unittest.TestCase):
+    """Timer-Ansagen (text, False, False) daempfen nicht, alle anderen schon."""
+
+    def test_timer_nicht_voice_speak_text_schon(self):
+        import contextlib
+        import threading
+        from voice_assistant import state
+        from voice_assistant.services import speak_server
+
+        gesprochen: list[tuple[str, bool]] = []
+        gedaempft = [False]
+        fertig = threading.Event()
+
+        @contextlib.contextmanager
+        def daempfen():
+            gedaempft[0] = True
+            try:
+                yield
+            finally:
+                gedaempft[0] = False
+
+        class Sprecher:
+            class leds:
+                @staticmethod
+                def set_phase(_):
+                    pass
+
+            def speak(self, text):
+                gesprochen.append((text, gedaempft[0]))
+                if len(gesprochen) == 2:
+                    fertig.set()
+
+        state.current_state[0] = state.STATE_LISTENING
+        speak_server.start_announce_worker(Sprecher(), daempfen=daempfen)
+        state.announce_queue.put(("Der Timer ist abgelaufen.", False, False))
+        state.announce_queue.put("Der Bericht ist fertig.")
+        self.assertTrue(fertig.wait(5))
+        self.assertEqual(gesprochen, [("Der Timer ist abgelaufen.", False),
+                                      ("Der Bericht ist fertig.", True)])
+
+
 if __name__ == "__main__":
     unittest.main()

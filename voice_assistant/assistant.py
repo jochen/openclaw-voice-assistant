@@ -889,7 +889,8 @@ def _start_kuechentimer(profile: Profile, audio_sink):
             nachlauf_max_s=tc.nachlauf_max_s,
             nachlauf_min_s=tc.nachlauf_min_s,
             nachlauf_faktor=tc.nachlauf_faktor,
-            ansage=(lambda text: announce_queue.put((text, False))) if tc.ansage else None,
+            # (text, nicht spiegeln, Musik nicht daempfen — Jochen 2026-10-13)
+            ansage=(lambda text: announce_queue.put((text, False, False))) if tc.ansage else None,
             lautsprecher_klingeln=lautsprecher_klingeln if tc.lautsprecher_rueckfall else None,
         )
         kt.start()
@@ -1116,10 +1117,19 @@ def run() -> None:
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
     start_speak_server(voice_controller=voice_controller, kuechentimer=kuechentimer)
+
+    def _ansage_daempfen():
+        # Geht die Ansage ans Handy (audio/satellit.py, ziel), bleibt die Musik
+        # im Raum des Haupt-Mikrofons, wie sie ist.
+        if musik_ducker is None or getattr(audio_source, "ziel", None) is not None:
+            return None
+        return musik_ducker.ansage()
+
     start_announce_worker(
         speaker,
         telegram_bot_token=profile.telegram_bot_token,
         telegram_chat_id=profile.telegram_chat_id,
+        daempfen=_ansage_daempfen,
     )
 
     # --- Voice-Aktuator v1 (schneller lokaler Schalt-Pfad, siehe
