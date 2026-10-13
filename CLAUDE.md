@@ -440,7 +440,7 @@ solange das Handy spricht. Tests: `tests/test_satellit.py`.
 
 `services/musik_ducking.py` dämpft die Musik im Raum des Haupt-Mikrofons vom
 Wakewort bis zum Leerlauf, über die REST-Schnittstelle der
-lms-voice-bridge (pi51; Spezifikation und Stand im MemPalace,
+lms-voice-bridge (eigener Rechner; Spezifikation und Stand im MemPalace,
 `gaston-voice-assistant/music-control`). Die Hauptschleife setzt nur den
 Wunsch (`zustand()` nach `read_chunk`, erst dann steht fest, ob ein Satellit
 den Turn eröffnet hat), die Aufrufe macht ein eigener Thread. Gedämpft wird
