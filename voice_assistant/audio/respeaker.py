@@ -33,6 +33,30 @@ from voice_assistant.config import CHUNK_SIZE, VOICE_DIR, RespeakerAudio
 
 log = logging.getLogger(__name__)
 
+
+class _StilleSatelliten(logging.Filter):
+    """Verbindungsfehler abwesender Satelliten aus aioesphomeapi verschlucken.
+
+    aioesphomeapi meldet jeden gescheiterten Versuch selbst als WARNING
+    ("192.168.x.y: Connection error occurred …"), alle 15 s. Ein Satellit
+    (Handy) ist aber meistens absichtlich weg (Jochen, 2026-10-13).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hosts: set[str] = set()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self.hosts:
+            return True
+        text = record.getMessage()
+        return not any(text.startswith(f"{h}:") for h in self.hosts)
+
+
+_stille_satelliten = _StilleSatelliten()
+for _name in ("aioesphomeapi.connection", "aioesphomeapi.client"):
+    logging.getLogger(_name).addFilter(_stille_satelliten)
+
 _SAMPLES_PER_CHUNK = CHUNK_SIZE // 2  # 640 int16-Samples = 40 ms @ 16 kHz
 
 # Optionen des Selects "XVF-Ausgang links" in esphome/respeaker.yaml — die
@@ -175,6 +199,7 @@ class RespeakerClient:
                     log.info("Satellit %s nicht erreichbar (%s) — warte still darauf",
                              self._cfg.host, exc)
                     self._fehler_gemeldet = True
+                    _stille_satelliten.hosts.add(self._cfg.host)
                 else:
                     log.error(
                         "RespeakerClient connection error: %s — retry in %ds",
@@ -190,7 +215,9 @@ class RespeakerClient:
             password=None,
             noise_psk=self._cfg.encryption_key or None,
         )
-        log.info("Connecting to ReSpeaker %s:%d …", self._cfg.host, self._cfg.port)
+        (log.debug if self._fehler_gemeldet else log.info)(
+            "Connecting to %s %s:%d …", "Satellit" if self._cfg.satellit else "ReSpeaker",
+            self._cfg.host, self._cfg.port)
 
         done: asyncio.Future = asyncio.get_event_loop().create_future()
 
@@ -203,6 +230,7 @@ class RespeakerClient:
         await self._api.connect(login=True, on_stop=_on_stop)
         self._verbunden = True
         self._fehler_gemeldet = False
+        _stille_satelliten.hosts.discard(self._cfg.host)
         log.info("%s connected (%s)", "Satellit" if self._cfg.satellit else "ReSpeaker",
                  self._cfg.host)
 

@@ -223,5 +223,31 @@ class AnsageGehtDorthinTest(unittest.TestCase):
         self.assertEqual(haupt.gespielt, ["/x.wav"])
 
 
+class StillesWartenTest(unittest.TestCase):
+    """Ein abwesendes Handy darf das Journal nicht alle 15 s fuellen."""
+
+    def test_verbindungsfehler_des_satelliten_werden_verschluckt(self):
+        import logging
+        from voice_assistant.audio import respeaker
+        logger = logging.getLogger("aioesphomeapi.connection")
+        gesehen: list[str] = []
+
+        class Sammler(logging.Handler):
+            def emit(self, record):
+                gesehen.append(record.getMessage())
+
+        h = Sammler()
+        logger.addHandler(h)
+        try:
+            respeaker._stille_satelliten.hosts.add("10.9.9.9")
+            logger.warning("10.9.9.9: Connection error occurred: refused")
+            logger.warning("10.9.9.1: Connection error occurred: refused")
+        finally:
+            respeaker._stille_satelliten.hosts.discard("10.9.9.9")
+            logger.removeHandler(h)
+        self.assertEqual(gesehen, ["10.9.9.1: Connection error occurred: refused"],
+                         "nur der stille Satellit, nicht der ReSpeaker")
+
+
 if __name__ == "__main__":
     unittest.main()
