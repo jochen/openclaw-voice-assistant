@@ -2933,6 +2933,13 @@ def run() -> None:
                     audio_source.flush()
                     wakeword.reset()
                     print(f"[{now:.1f}s] ⏸  PAUSE done, followup_round={followup_round}/{MAX_FOLLOWUP_ROUNDS}")
+                    if (pending_reply_text[0] is not None and musik_ducker is not None
+                            and musik_ducker.musik_gestartet()):
+                        # Der Turn hat Musik gestartet: kein Follow-up-Fenster
+                        # in die Musik hinein (Jochen 2026-10-15). Wer noch
+                        # etwas will, ruft das Wakewort, das daempft sofort.
+                        print(f"[{now:.1f}s] 🎵 Musik in diesem Turn gestartet — kein Follow-up")
+                        pending_reply_text[0] = None
                     if followup_round < MAX_FOLLOWUP_ROUNDS and pending_reply_text[0] is not None:
                         followup_round += 1
                         print(f"[{now:.1f}s] 🔄 Follow-up round {followup_round}/{MAX_FOLLOWUP_ROUNDS}")

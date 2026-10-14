@@ -306,6 +306,7 @@ volume by itself after `timeout_s` (30 s) without a new `duck`, so a longer
 turn renews every 15 s, but only if the first `duck` actually lowered
 something. Otherwise the assistant would duck music it has just started in
 this very turn. Turns from a satellite (phone) have no room and duck nothing.
+If a turn started the music (nothing played when the wake word came, something plays now), no follow-up window opens: it would listen straight into the music. Anyone who wants more says the wake word, which ducks at once.
 Announcements from outside a turn (`voice_speak_text`) duck the music while
 they play, unless they go to the phone. Kitchen timers deliberately don't:
 neither the ringing nor "the timer has expired".

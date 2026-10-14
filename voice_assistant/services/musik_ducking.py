@@ -28,6 +28,12 @@ Regeln:
 - **Erneuert wird nur, was das erste duck tatsaechlich gedaempft hat.** Lief
   beim Ruf keine Musik, bleibt es dabei — sonst wuerde die Musik gedaempft,
   die Gaston in diesem Turn gerade selbst gestartet hat.
+- **Hat der Turn die Musik gestartet, entfaellt der Follow-up**
+  (``musik_gestartet()``, Jochen 2026-10-15). Sonst stand nach „spiel Queen“
+  das Follow-up-Fenster mit voller Musik offen, ungedaempft, weil beim Ruf
+  nichts lief. Verglichen wird, in welchen Raeumen beim Ruf und vor dem
+  Follow-up Musik laeuft (GET /api/v1/rooms) — die Bridge sagt nicht, welcher
+  Raum in welchem liegt, und Gaston spielt in Unterraeumen.
 - Ob ein zweites duck dieselbe Lease verlaengert oder eine neue anlegt, ist
   der Bridge ueberlassen: am Ende wird jede erhaltene ``lease_id`` freigegeben.
 """
@@ -49,11 +55,14 @@ log = logging.getLogger(__name__)
 # nach dem Ueberschreiten der Schwelle dauerte gemessen hoechstens 0,8 s.
 _VORAB_FRIST = 3.0
 
+# So zaehlt ein Raum als "Musik laeuft": spielt oder schaltet sich gerade ein.
+_SPIELT = ("play", "starting")
+
 
 class MusikDucker:
     def __init__(self, url: str, token: str, raum: str, *, level: int | None = None,
                  lease_s: float = 30.0, erneuern_s: float = 15.0,
-                 http_timeout: float = 1.0, post=None) -> None:
+                 http_timeout: float = 1.0, post=None, get=None) -> None:
         self._url = url.rstrip("/")
         self._token = token
         self._raum = raum
@@ -62,6 +71,7 @@ class MusikDucker:
         self._erneuern_s = erneuern_s
         self._http_timeout = http_timeout
         self._post = post or self._http_post
+        self._get = get or self._http_get
         self._cv = threading.Condition()
         self._wunsch = False          # soll gerade gedaempft sein? (Turn oder Ansage)
         self._turn = False            # ein Turn (oder vorab gemeldeter Ruf) laeuft
@@ -72,6 +82,8 @@ class MusikDucker:
         self._fehler_gemeldet = False
         self._zustand = STATE_LISTENING
         self._vorab_seit: float | None = None
+        # Raeume, in denen beim Ruf Musik lief (None = nicht bekannt).
+        self._lief_beim_ruf: set[str] | None = None
         self._thread: threading.Thread | None = None
 
     # --- Hauptschleife -----------------------------------------------------
@@ -147,12 +159,17 @@ class MusikDucker:
         """Ein Durchlauf des Threads (einzeln testbar)."""
         if wunsch:
             faellig = time.monotonic() - self._letztes_duck >= self._erneuern_s
-            if erstes or (self._leases and faellig):
+            if erstes:
                 self._duck()
-        elif self._leases:
-            leases, self._leases = self._leases, []
-            for lease in dict.fromkeys(leases):
-                self._aufruf("unduck", {"lease_id": lease})
+                self._lief_beim_ruf = self.spielende_raeume()
+            elif self._leases and faellig:
+                self._duck()
+        else:
+            self._lief_beim_ruf = None
+            if self._leases:
+                leases, self._leases = self._leases, []
+                for lease in dict.fromkeys(leases):
+                    self._aufruf("unduck", {"lease_id": lease})
 
     def _duck(self) -> None:
         self._letztes_duck = time.monotonic()
@@ -172,6 +189,27 @@ class MusikDucker:
         elif not self._leases:
             log.debug("Musik %s nicht gedaempft: %s", self._raum, antwort.get("reason"))
 
+    def spielende_raeume(self, timeout: float | None = None) -> set[str] | None:
+        """Raeume, in denen gerade Musik laeuft; None, wenn die Bridge nicht antwortet."""
+        try:
+            raeume = self._get(f"{self._url}/api/v1/rooms", timeout or self._http_timeout)
+        except Exception as exc:
+            log.debug("Musik-Raeume nicht lesbar: %s", exc)
+            return None
+        return {str(r.get("room")) for r in raeume if r.get("state") in _SPIELT}
+
+    def musik_gestartet(self) -> bool:
+        """Laeuft jetzt Musik in einem Raum, in dem beim Ruf keine lief?
+
+        Aus der Hauptschleife vor dem Follow-up; kurze Frist, im Zweifel False
+        (dann kommt der Follow-up wie bisher).
+        """
+        vorher = self._lief_beim_ruf
+        if vorher is None:
+            return False
+        jetzt = self.spielende_raeume(timeout=0.5)
+        return bool(jetzt and jetzt - vorher)
+
     def _aufruf(self, was: str, body: dict) -> dict | None:
         try:
             antwort = self._post(f"{self._url}/api/v1/rooms/{self._raum}/{was}", body)
@@ -185,6 +223,11 @@ class MusikDucker:
             log.info("Musik-Ducking wieder erreichbar")
             self._fehler_gemeldet = False
         return antwort
+
+    def _http_get(self, url: str, timeout: float):
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._token}"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read() or b"[]")
 
     def _http_post(self, url: str, body: dict) -> dict:
         req = urllib.request.Request(

@@ -464,7 +464,7 @@ Erneuerung durchgehend gedämpft. Ansagen von außen
 (`ansage()`, über `start_announce_worker(daempfen=…)`), nur nicht, wenn sie
 ans Handy gehen. **Der Timer dämpft nicht** (Jochen 2026-10-13), weder
 Klingeln noch Ablauf-Ansage: die steht als `(text, False, False)` in der
-`announce_queue`. Offen: hörbare Latenz über Squeezelite/Bluetooth/Echo. Tests:
+`announce_queue`. **Hat der Turn Musik gestartet, entfällt der Follow-up** (`musik_gestartet()`, Jochen 2026-10-15): Vergleich der spielenden Räume beim Ruf und vor dem Follow-up (GET /api/v1/rooms), weil die Bridge keine Raum-Hierarchie liefert und Gaston in Unterräumen spielt. Vorher stand nach „spiel Queen“ das Follow-up-Fenster ungedämpft in der Musik. Tests:
 `tests/test_musik_ducking.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)

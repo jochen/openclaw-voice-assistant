@@ -45,7 +45,8 @@ class FakeBridge:
 
 def _bauen(**kw):
     bridge = FakeBridge(**kw)
-    d = MusikDucker("http://bridge", "t", "wohnzimmer", erneuern_s=15.0, post=bridge.post)
+    d = MusikDucker("http://bridge", "t", "wohnzimmer", erneuern_s=15.0, post=bridge.post,
+                    get=lambda url, timeout: [])
     return d, bridge
 
 
@@ -214,6 +215,61 @@ class AnnounceWorkerTest(unittest.TestCase):
         self.assertTrue(fertig.wait(5))
         self.assertEqual(gesprochen, [("Der Timer ist abgelaufen.", False),
                                       ("Der Bericht ist fertig.", True)])
+
+
+class MusikGestartetTest(unittest.TestCase):
+    """Hat der Turn Musik gestartet, entfaellt der Follow-up (Jochen 2026-10-15)."""
+
+    def _bauen(self, raeume):
+        bridge = FakeBridge(spielt=False)
+        stand = {"r": raeume}
+        d = MusikDucker("http://bridge", "t", "wohnzimmer", post=bridge.post,
+                        get=lambda url, timeout: stand["r"])
+        return d, stand
+
+    def test_spiel_queen_ohne_musik_beim_ruf(self):
+        d, stand = self._bauen([{"room": "kachelofen", "state": "stop"}])
+        d.vorab()
+        _thread(d)
+        d.zustand(STATE_RECORDING, False)
+        stand["r"] = [{"room": "kachelofen", "state": "play"}]
+        self.assertTrue(d.musik_gestartet())
+
+    def test_echo_schaltet_sich_noch_ein(self):
+        d, stand = self._bauen([{"room": "kachelofen", "state": "stop"}])
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        stand["r"] = [{"room": "kachelofen", "state": "starting"}]
+        self.assertTrue(d.musik_gestartet())
+
+    def test_musik_lief_schon_follow_up_bleibt(self):
+        d, stand = self._bauen([{"room": "kachelofen", "state": "play"}])
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        self.assertFalse(d.musik_gestartet(), "naechstes Lied, lauter …")
+
+    def test_rueckfrage_ohne_musik_follow_up_bleibt(self):
+        d, _ = self._bauen([{"room": "kachelofen", "state": "stop"}])
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        self.assertFalse(d.musik_gestartet())
+
+    def test_bridge_weg_follow_up_bleibt(self):
+        d, stand = self._bauen([{"room": "kachelofen", "state": "stop"}])
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+
+        def kaputt(url, timeout):
+            raise OSError("weg")
+        d._get = kaputt
+        self.assertFalse(d.musik_gestartet())
+
+    def test_satelliten_turn_kennt_keinen_vorher_stand(self):
+        d, stand = self._bauen([{"room": "kachelofen", "state": "stop"}])
+        d.zustand(STATE_RECORDING, True)
+        _thread(d)
+        stand["r"] = [{"room": "kachelofen", "state": "play"}]
+        self.assertFalse(d.musik_gestartet())
 
 
 if __name__ == "__main__":

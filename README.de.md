@@ -311,6 +311,7 @@ selbst wieder her. Ein längerer Turn erneuert deshalb alle 15 s, aber nur,
 wenn das erste `duck` wirklich etwas leiser gemacht hat. Sonst würde der
 Assistent Musik dämpfen, die er in diesem Turn gerade selbst gestartet hat.
 Turns von einem Satelliten (Handy) haben keinen Raum und dämpfen nichts.
+Hat ein Turn die Musik gestartet (beim Wakewort lief nichts, jetzt läuft etwas), öffnet sich kein Follow-up-Fenster: Es würde direkt in die Musik hineinhören. Wer noch etwas will, ruft das Wakewort, das dämpft sofort.
 Ansagen außerhalb eines Turns (`voice_speak_text`) dämpfen die Musik, solange
 sie laufen, außer sie gehen ans Handy. Der Küchentimer bewusst nicht: weder
 das Klingeln noch „Der Timer ist abgelaufen“.
