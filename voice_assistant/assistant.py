@@ -124,6 +124,9 @@ _STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
 # gar kein "Ja?" (LED-Ring reicht als Rückmeldung). Bleibt es still, wird
 # "Ja?" gespielt wie bisher. Zusammen mit _PRE_ROLL_SEC ergibt das den
 # Ein-Satz-Betrieb: die LED quittiert sofort, der Anfang geht nicht verloren.
+# Follow-up: so lange darf nach dem Beep niemand sprechen, bevor das Fenster
+# zugeht (siehe STATE_FOLLOWUP).
+_FOLLOWUP_START_SEC = 10.0
 _ACK_DELAY_SEC = 0.4
 # Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
 # straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
@@ -1354,6 +1357,7 @@ def run() -> None:
     followup_rms_sum = 0.0
     followup_rms_count = 0
     followup_vad_speech = 0
+    followup_sprache_ab = 0.0
     # Hält beim Aktuator-Handshake {"intent":..., "request_id":...} zwischen
     # Rückfrage und der ja/nein-Antwort im nächsten Turn. Muss überall, wo ein
     # Handshake ins Leere läuft, wieder auf None zurückgesetzt werden — sonst
@@ -2992,6 +2996,8 @@ def run() -> None:
                 if _is_speech:
                     if speech_detected:
                         max_internal_pause = max(max_internal_pause, silence_counter)
+                    else:
+                        followup_sprache_ab = len(recorded_chunks) * _chunk_sec
                     speech_detected = True
                     silence_counter = 0
                     followup_vad_speech += 1
@@ -3000,11 +3006,19 @@ def run() -> None:
 
                 timeout = (now - state_start) > turn_max_sec
                 stop = speech_detected and silence_counter >= turn_silence_limit
+                # Sagt nach dem Beep niemand etwas, wartete das Fenster bis zum
+                # Deckel (30 s, Jochen 2026-10-15: "bleibt sehr lang aktiv").
+                # Grenze grosszuegig: im endpoint.log lag der Einsatz (obere
+                # Schranke) im Median bei 1,5 s, bei 9 von 200 ueber 10 s —
+                # geschaetzt, weil Follow-up-Aufnahmen nicht archiviert werden.
+                # Ab jetzt steht der Einsatz als sprache_ab_s im Log.
+                still = (not speech_detected
+                         and (now - state_start) > _FOLLOWUP_START_SEC)
 
-                if stop or timeout:
+                if stop or timeout or still:
                     avg_rms = followup_rms_sum / followup_rms_count if followup_rms_count else 0.0
                     vad_str = f"{followup_vad_speech}/{followup_rms_count}"
-                    reason = "Stille" if stop else "Timeout"
+                    reason = "Stille" if stop else "keine Sprache" if still else "Timeout"
                     dur = len(recorded_chunks) * _chunk_sec
                     print(
                         f"[{now:.1f}s] ⏹  Follow-up beendet ({reason}), "
@@ -3016,8 +3030,9 @@ def run() -> None:
                     )
                     endpoint_meta = {
                         "phase": "followup",
-                        "reason": "silence" if stop else "timeout",
+                        "reason": "silence" if stop else "no_speech" if still else "timeout",
                         "dur_s": round(dur, 2),
+                        **({"sprache_ab_s": round(followup_sprache_ab, 2)} if speech_detected else {}),
                         "mode": turn_mode,
                         "silence_limit": turn_silence_limit,
                         "silence_seconds": round(turn_silence_limit * _chunk_sec, 2),

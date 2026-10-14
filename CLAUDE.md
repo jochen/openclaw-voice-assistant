@@ -1003,6 +1003,18 @@ den Brain zu schicken. Das gilt einmal je Trigger, nicht nach Follow-up,
 Rückfrage oder Barge-in. `endpoint.log`: `ausgang=nur_wakewort`, danach
 `nach_nur_wakewort`, außerdem `wake_rms` und `laute_sprache_s` je Aufnahme.
 
+**Follow-up ohne Sprache endet nach 10 s** (`_FOLLOWUP_START_SEC`, seit
+2026-10-15), vorher erst am 30-s-Deckel (Jochen: „bleibt sehr lang aktiv“).
+Die Grenze ist geschätzt, nicht gegen ein Archiv gemessen: Follow-up-Aufnahmen
+werden nicht archiviert, im endpoint.log lag der Einsatz (obere Schranke aus
+Dauer − Nachlauf − Sprechzeit) im Median bei 1,5 s, bei 9 von 200 über 10 s.
+Seither steht der echte Einsatz als `sprache_ab_s` im endpoint.log — daran
+nachjustieren. Dazu kann der Brain das Fenster selbst zulassen:
+`KEIN_FOLLOWUP` am Ende der Antwort (`openclaw.ohne_followup`, Regel in
+`_DEFAULT_VOICE_INSTRUCTION`, weil die jede Spracheingabe begleitet) → kein
+Follow-up, das Wort wird vor TTS und Telegram entfernt. Tests:
+`tests/test_kein_followup.py`.
+
 **Warum überhaupt zwei Sätze:** Bei laufendem Fernseher endete die Aufnahme
 nie — die Sprechpausen einer Störquelle sind ~1,7 s lang und setzen den
 Stille-Zähler vor der 2-s-Schwelle zurück. Ein Turn lief so 21,9 s bis zum

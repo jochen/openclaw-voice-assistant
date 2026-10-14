@@ -994,6 +994,8 @@ Some 🎤 messages carry a line with `arousal` / `valence` / `dominance` values 
 
 Some 🎤 messages carry a **[recording hint …]** block: the wake word is missing from the transcript and the speaker is not known. That is evidence, not an order to stay silent — usually it was a false trigger (TV, radio, a conversation in the room), sometimes a real call with a misheard wake word. Decide on the content: if the text is clearly addressed to you, answer normally; otherwise reply with exactly `NO_REPLY` — the channel then stays silent.
 
+After a reply the microphone listens for a follow-up for a few seconds. If your reply leaves nothing open (a confirmation like "the light is on", "the music is playing", no question, no offer), end it with the word `KEIN_FOLLOWUP`: the assistant removes it before speaking and posting, and no follow-up window opens. The voice instruction that accompanies every voice turn says so; without a rule like this the window stayed open even after "I like this song". If nobody speaks after the beep, the window closes after 10 s instead of running to the 30 s cap.
+
 ### Voice & speaking rate
 
 You can freely choose and switch your own voice and speaking rate (`voice_list_voices`, `voice_set_voice`, `voice_set_speed`); pass a speaker's name as `for_speaker` to remember a preferred voice per person.

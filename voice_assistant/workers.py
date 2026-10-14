@@ -267,6 +267,23 @@ class Workers:
             pending_reply_text[0] = None
             reply_done_event.set()
 
+        # KEIN_FOLLOWUP in der Antwort (openclaw.ohne_followup): Gaston lässt
+        # nichts offen, also kein Follow-up-Fenster (pending_reply_text=None).
+        kein_followup = [False]
+
+        def bereinigt(text: str | None) -> str | None:
+            text, ohne = openclaw.ohne_followup(text)
+            if ohne:
+                kein_followup[0] = True
+            return text
+
+        def antwort_merken(text: str | None) -> None:
+            if kein_followup[0]:
+                print("🤐 KEIN_FOLLOWUP in der Antwort → kein Follow-up-Fenster")
+                pending_reply_text[0] = None
+            else:
+                pending_reply_text[0] = text
+
         # --- Streaming-Pfad: Sätze werden gesprochen, sobald sie generiert sind ---
         timed_out = False
         if self.use_stream:
@@ -275,7 +292,10 @@ class Workers:
             def guarded_feed(sentence: str) -> None:
                 # NO_REPLY-Sentinel niemals sprechen; echte Sätze posten erst
                 # jetzt die User-Eingabe (vor der ersten realen Ausgabe).
-                if openclaw.is_no_reply(sentence):
+                sentence, ohne = openclaw.ohne_followup(sentence)
+                if ohne:
+                    kein_followup[0] = True
+                if not sentence or openclaw.is_no_reply(sentence):
                     return
                 post_user_input()
                 session.feed(sentence)
@@ -295,6 +315,7 @@ class Workers:
                 turn=turn,
             )
             spoke = session.end()
+            full_reply = bereinigt(full_reply)
 
             if turn_stopped(turn):
                 self._finish_cancelled(session_key)
@@ -315,7 +336,7 @@ class Workers:
                         full_reply,
                         prefix="🔊 ",
                     )
-                pending_reply_text[0] = full_reply
+                antwort_merken(full_reply)
                 reply_done_event.set()
                 return
 
@@ -328,7 +349,7 @@ class Workers:
                     full_reply,
                     prefix="🔊 ",
                 )
-                pending_reply_text[0] = full_reply
+                antwort_merken(full_reply)
                 self.speaker.speak(full_reply, turn=turn)
                 reply_done_event.set()
                 return
@@ -361,6 +382,7 @@ class Workers:
                 hinweis=hinweis,
                 on_done=self.thinking.stop,
             )
+        full_reply = bereinigt(full_reply)
 
         if turn_stopped(turn):
             self._finish_cancelled(session_key)
@@ -379,7 +401,7 @@ class Workers:
                 full_reply,
                 prefix="🔊 ",
             )
-            pending_reply_text[0] = full_reply
+            antwort_merken(full_reply)
             self.speaker.speak(full_reply, turn=turn)
         else:
             # Echter Leerlauf/Fehler (kein Sentinel): Eingabe spiegeln + Fallback ansagen

@@ -29,6 +29,22 @@ from voice_assistant.config import (
 NO_REPLY_SENTINEL = "NO_REPLY"
 _NO_REPLY_RE = re.compile(r"^\W*NO[ _]?REPLY\W*$", re.IGNORECASE)
 
+# Schluesselwort fuer "nach dieser Antwort kein Follow-up-Fenster" (Jochen,
+# 2026-10-15: nach "gefaellt mir" stand das Fenster 30 s offen, obwohl nichts
+# mehr kam). Gaston haengt es an eine Antwort, die nichts offen laesst; es wird
+# vor Sprache und Telegram entfernt. Die Regel steht in der Sprach-Direktive
+# (config._DEFAULT_VOICE_INSTRUCTION), die jede Spracheingabe begleitet.
+KEIN_FOLLOWUP = "KEIN_FOLLOWUP"
+_KEIN_FOLLOWUP_RE = re.compile(r"\s*\[?\bKEIN[ _-]?FOLLOW[ _-]?UP\b\]?\.?", re.IGNORECASE)
+
+
+def ohne_followup(text: str | None) -> tuple[str | None, bool]:
+    """(Text ohne das Schluesselwort, ob es drin stand)."""
+    if not text:
+        return text, False
+    neu, n = _KEIN_FOLLOWUP_RE.subn("", text)
+    return (neu.strip() if n else text), n > 0
+
 
 def is_no_reply(text: str | None) -> bool:
     """True, wenn die (komplette) LLM-Antwort nur das NO_REPLY-Sentinel ist.

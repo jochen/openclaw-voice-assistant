@@ -1021,6 +1021,8 @@ Manche 🎤-Nachrichten tragen eine Zeile mit `arousal` / `valence` / `dominance
 
 Manche 🎤-Nachrichten tragen einen Block **[Hinweis zur Aufnahme …]**: das Wakewort fehlt in der Transkription, und der Sprecher ist nicht bekannt. Das ist ein Beleg, keine Anweisung zum Schweigen — meist war es eine Fehlauslösung (Fernseher, Radio, ein Gespräch im Raum), manchmal ein echter Ruf mit verhörtem Wakewort. Entscheide am Inhalt: Ist der Text erkennbar an dich gerichtet, antworte normal; sonst antworte ausschließlich mit `NO_REPLY` — dann bleibt der Kanal stumm.
 
+Nach einer Antwort hört das Mikrofon noch einige Sekunden auf ein Follow-up. Lässt deine Antwort nichts offen (eine Bestätigung wie „Das Licht ist an“, „Die Musik läuft“, keine Frage, kein Angebot), beende sie mit dem Wort `KEIN_FOLLOWUP`: Der Assistent entfernt es vor dem Vorlesen und Spiegeln, und es öffnet sich kein Follow-up-Fenster. Das steht in der Sprach-Direktive, die jede Spracheingabe begleitet; ohne eine solche Regel stand das Fenster selbst nach „Das Lied gefällt mir“ offen. Sagt nach dem Beep niemand etwas, geht das Fenster nach 10 s zu statt erst am 30-s-Deckel.
+
 ### Stimme & Sprechtempo
 
 Du kannst deine Stimme und dein Tempo frei wählen und wechseln (`voice_list_voices`, `voice_set_voice`, `voice_set_speed`); gib den Namen eines Sprechers als `for_speaker` mit, um eine bevorzugte Stimme pro Person zu merken.
