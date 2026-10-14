@@ -276,6 +276,7 @@ Was bei Ava anders ist als beim ReSpeaker (gemessen, nicht angenommen):
   „durchgesprochen“ aus. Wer Avas Weck-Ton abwartete, wurde nach einer Sekunde
   abgeschnitten.
 - Aufnahme und Wiedergabe funktionieren auch bei gesperrtem Bildschirm.
+- Der Brain erfährt, dass die Eingabe vom Handy kam (`locale.satellit_hinweis`), und kann ein persönliches Handy so seinem Besitzer zuordnen, z. B. für eine Musik-Historie pro Person. Der `[Sprecher: …]` bleibt das Ergebnis der Messung.
 
 Noch offen: Die Schwellen der Sprechererkennung sind nur am ReSpeaker
 gemessen, und ein Handy-Mikrofon klingt anders. Während das Handy spricht,
@@ -1005,7 +1006,7 @@ Jede 🎤-Nachricht ist mit `[Sprecher: …]` versehen. Darin steht eines von vi
 
 **Fortsetzung hat eine Grenze.** Eine Folge-Eingabe ohne festen Sprecher als Fortsetzung der eben erkannten Person zu behandeln, ist für Harmloses in Ordnung. Für folgenreiche Aktionen gilt es nicht: Rechner ausschalten, löschen, umkonfigurieren, flashen, im Namen anderer handeln. Dafür braucht es einen Sprecher, der *bei dieser Eingabe* feststeht — nicht einen, der vorhin feststand. Diese Unterscheidung ist nicht akademisch; ihr Fehlen hat den Vorfall vom 2026-09-18 erlaubt.
 
-**Festhalten, wer etwas wollte, ist auch keine Fortsetzung.** Werkzeuge, die speichern, wer etwas angefordert hat (z. B. eine Musik-Historie pro Person), bekommen nur den Namen aus `[Sprecher: …]` *dieser* Nachricht, genau so geschrieben wie das Sprecherprofil. In allen anderen Fällen bleibt das Feld leer. Am geteilten Mikrofon wechseln die Sprecher, und ein falscher Name verfälscht die Statistik einer Person dauerhaft, ein fehlender nicht. Fragt jemand nach „meinen“ Liedern und der Sprecher ist nicht bekannt, wird nachgefragt, wer gemeint ist, statt den ganzen Haushalt zu nehmen.
+**Festhalten, wer etwas wollte, braucht einen festen Vornamen.** Werkzeuge, die speichern, wer etwas angefordert hat (z. B. eine Musik-Historie pro Person), bekommen pro Person immer denselben Vornamen aus der Familienliste in der Nutzer-Datei des Agenten, nie einen Chat-Benutzernamen oder Spitznamen. Quellen: der erkannte `[Sprecher: …]`; der Besitzer eines persönlichen Geräts (ein Handy-Satellit hängt einen Hinweis an, von welchem Handy die Eingabe kam); im Follow-up desselben Gesprächs der Sprecher von eben; im Chat der Absender, über die Familienliste zugeordnet. Sonst bleibt das Feld leer: Ein falscher Name verfälscht die Statistik einer Person dauerhaft, ein fehlender nicht. Fragt jemand nach „meinen“ Liedern und der Sprecher ist nicht bekannt, wird nachgefragt, wer gemeint ist, statt den ganzen Haushalt zu nehmen. Die Werkzeug-Beschreibung der Musik-Bridge kann nur sagen, *dass* ein Vorname gebraucht wird; *welcher*, ist Hauswissen, deshalb gehört die Zuordnung in die eigenen Anweisungen des Agenten.
 
 Weist das Werkzeug ab, funktioniert die Regel. Dann von einer bekannten Stimme bestätigen lassen oder per Chat anweisen, statt einen Weg drumherum zu suchen.
 

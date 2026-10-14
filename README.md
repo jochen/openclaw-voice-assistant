@@ -272,6 +272,7 @@ How Ava differs from the ReSpeaker (measured, not assumed):
   "spoken in one breath". Anyone who waited for Ava's wake sound was cut off
   after a second.
 - Recording and playback keep working with the screen locked.
+- The brain is told that the input came from the phone (`locale.satellit_hinweis`), so it can treat a personal phone as its owner, e.g. for a per-person play history. The `[Sprecher: …]` stays the measured result.
 
 Not done yet: speaker recognition thresholds were measured on the ReSpeaker
 only, and a phone microphone sounds different. Barge-in has no audio on this
@@ -978,7 +979,7 @@ Each 🎤 message is prefixed with `[Sprecher: …]`. It carries one of four thi
 
 **Continuation has a limit.** Treating a follow-up without a fixed speaker as a continuation of the person recognised a moment ago is fine for harmless things. It does not extend to impactful actions: powering machines off, deleting, reconfiguring, flashing, acting in someone's name. Those need a speaker who is established *for that input* — not one who was established earlier. That distinction is not academic; leaving it out is what allowed the 2026-09-18 incident.
 
-**Recording who asked is not a continuation either.** Tools that store who wanted something (e.g. a per-person play history for music) get only the name from `[Sprecher: …]` of *this* message, spelled exactly like the speaker profile. For anything else, leave the field out. On a shared microphone the speakers change, and a wrong name skews one person's statistics for good, a missing one doesn't. If someone asks for "my" songs and the speaker is not known, ask who is meant instead of using the whole household.
+**Recording who asked needs a canonical first name.** Tools that store who wanted something (e.g. a per-person play history for music) always get the same first name per person, taken from the household list in the agent's user file, never a chat username or nickname. Sources: the recognised `[Sprecher: …]`; the owner of a personal device (a phone satellite adds a note saying which phone the input came from); in a follow-up within the same conversation, the speaker from just before; in a chat, the sender mapped through the household list. Otherwise leave the field out: a wrong name skews one person's statistics for good, a missing one doesn't. If someone asks for "my" songs and the speaker is not known, ask who is meant instead of using the whole household. The tool description of the music bridge can only say *that* a first name is needed; *which* one is house knowledge, so the mapping belongs in the agent's own instructions.
 
 If the tool refuses, that is the rule working. Ask for confirmation by a known voice or via chat instead of looking for another route around it.
 

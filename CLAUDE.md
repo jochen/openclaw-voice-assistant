@@ -427,6 +427,10 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   Ton abwartete, wurde nach 1 s abgeschnitten (07:21:52, „Ich sage.“).
 - Kein Anrede-Hinweis und kein `_ist_nur_wakewort` für Handy-Turns
   (`_satelliten_turn()`).
+- Handy-Turns bekommen `locale.satellit_hinweis` an den Brain mit („kam über
+  das Handy …“), damit `requested_by` der Musik den Besitzer trifft (Jochen
+  2026-10-14: das Handy ist personenbezogen). Der `[Sprecher: …]` bleibt die
+  Messung, die Sprecher-Schranke hängt nicht daran.
 - Der ReSpeaker-Ring läuft während eines Handy-Turns mit — gewollt (Jochen:
   „gar nicht so verkehrt“).
 - Ansagen gehen an das Gerät des letzten Turns (`ziel`), auch spätere von außen,

@@ -2684,6 +2684,10 @@ def run() -> None:
                                 hinweis = profile.locale.anrede_hinweis
                                 print(f"[{now:.1f}s] 🗯️  Wakewort fehlt im Transkript, Sprecher "
                                       f"{spk_label} → Hinweis an den Brain")
+                            if _satelliten_turn() and profile.locale.satellit_hinweis:
+                                geraet = profile.locale.satellit_hinweis.replace(
+                                    "{name}", audio_source.aktiv)
+                                hinweis = f"{hinweis}\n\n{geraet}" if hinweis else geraet
                             _log_outcome("brain", transcript=text,
                                          **({"unklar_an_brain": True} if unklar_an_brain
                                             else {"anrede_hinweis": True} if hinweis else {}))

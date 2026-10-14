@@ -144,6 +144,14 @@ _DEFAULT_UNKLAR_HINWEIS = (
     "sonst frag kurz nach.]"
 )
 
+# Handy-Turns (audio/satellit.py): Gaston erfährt sonst nicht, dass die Eingabe
+# vom persönlichen Gerät kam. Nur ein Beleg dafür, wem das Gerät gehört; der
+# [Sprecher: …] bleibt das Ergebnis der Messung.
+_DEFAULT_SATELLIT_HINWEIS = (
+    "[Diese Spracheingabe kam über das Handy \"{name}\", das persönliche Gerät "
+    "von {name}, nicht über das feste Mikrofon im Raum.]"
+)
+
 
 @dataclass
 class LocaleConfig:
@@ -153,6 +161,7 @@ class LocaleConfig:
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
+    satellit_hinweis: str = _DEFAULT_SATELLIT_HINWEIS
     thinking_phrases: list = field(default_factory=lambda: [
         "Einen Moment bitte.",
         "Ich schaue kurz nach.",
@@ -1049,6 +1058,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
+        satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
         unklar_hinweis=str(locale_raw.get("unklar_hinweis", _dloc.unklar_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
