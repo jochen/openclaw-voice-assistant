@@ -1005,6 +1005,8 @@ Jede 🎤-Nachricht ist mit `[Sprecher: …]` versehen. Darin steht eines von vi
 
 **Fortsetzung hat eine Grenze.** Eine Folge-Eingabe ohne festen Sprecher als Fortsetzung der eben erkannten Person zu behandeln, ist für Harmloses in Ordnung. Für folgenreiche Aktionen gilt es nicht: Rechner ausschalten, löschen, umkonfigurieren, flashen, im Namen anderer handeln. Dafür braucht es einen Sprecher, der *bei dieser Eingabe* feststeht — nicht einen, der vorhin feststand. Diese Unterscheidung ist nicht akademisch; ihr Fehlen hat den Vorfall vom 2026-09-18 erlaubt.
 
+**Festhalten, wer etwas wollte, ist auch keine Fortsetzung.** Werkzeuge, die speichern, wer etwas angefordert hat (z. B. eine Musik-Historie pro Person), bekommen nur den Namen aus `[Sprecher: …]` *dieser* Nachricht, genau so geschrieben wie das Sprecherprofil. In allen anderen Fällen bleibt das Feld leer. Am geteilten Mikrofon wechseln die Sprecher, und ein falscher Name verfälscht die Statistik einer Person dauerhaft, ein fehlender nicht. Fragt jemand nach „meinen“ Liedern und der Sprecher ist nicht bekannt, wird nachgefragt, wer gemeint ist, statt den ganzen Haushalt zu nehmen.
+
 Weist das Werkzeug ab, funktioniert die Regel. Dann von einer bekannten Stimme bestätigen lassen oder per Chat anweisen, statt einen Weg drumherum zu suchen.
 
 Diese Prompt-Direktive ist Anleitung, keine Durchsetzung. Durchgesetzt wird es in dem Werkzeug, das die Aktion ausführt — über [`SPEAKER_STATE.md`](SPEAKER_STATE.md).

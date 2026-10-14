@@ -978,6 +978,8 @@ Each 🎤 message is prefixed with `[Sprecher: …]`. It carries one of four thi
 
 **Continuation has a limit.** Treating a follow-up without a fixed speaker as a continuation of the person recognised a moment ago is fine for harmless things. It does not extend to impactful actions: powering machines off, deleting, reconfiguring, flashing, acting in someone's name. Those need a speaker who is established *for that input* — not one who was established earlier. That distinction is not academic; leaving it out is what allowed the 2026-09-18 incident.
 
+**Recording who asked is not a continuation either.** Tools that store who wanted something (e.g. a per-person play history for music) get only the name from `[Sprecher: …]` of *this* message, spelled exactly like the speaker profile. For anything else, leave the field out. On a shared microphone the speakers change, and a wrong name skews one person's statistics for good, a missing one doesn't. If someone asks for "my" songs and the speaker is not known, ask who is meant instead of using the whole household.
+
 If the tool refuses, that is the rule working. Ask for confirmation by a known voice or via chat instead of looking for another route around it.
 
 This prompt directive is guidance, not enforcement. The enforcement lives in the tool that performs the action, via [`SPEAKER_STATE.md`](SPEAKER_STATE.md).
