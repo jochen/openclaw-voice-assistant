@@ -40,5 +40,17 @@ class OhneFollowupTest(unittest.TestCase):
         self.assertTrue(is_no_reply(text))
 
 
+class BeepBlipTest(unittest.TestCase):
+    """Der eigene Beep im Mikrofon schloss das Fenster nach 2,2 s (2026-10-15)."""
+
+    def test_werte_aus_dem_endpoint_log(self):
+        from voice_assistant.assistant import _followup_nur_blip
+        # 09:49:25: 7 von 57 Chunks "Sprache", nur der Beep -> weiter zuhoeren
+        self.assertTrue(_followup_nur_blip(7, 57))
+        # 2026-10-09 "ja" als Handshake-Antwort (VAD 0,28) -> normal beenden
+        self.assertFalse(_followup_nur_blip(16, 57))
+        self.assertFalse(_followup_nur_blip(0, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1034,6 +1034,8 @@ nachjustieren. Dazu kann der Brain das Fenster selbst zulassen:
 Follow-up, das Wort wird vor TTS und Telegram entfernt. Tests:
 `tests/test_kein_followup.py`.
 
+**Der eigene Beep ist keine Antwort** (`_followup_nur_blip`, seit 2026-10-15): er kommt im Mikrofon an, der VAD sah 7 Chunks (0,28 s) Sprache, und nach 2 s Stille ging das Fenster zu, bevor jemand antwortete. 16 von 275 Follow-ups im endpoint.log, alle mit VAD-Anteil ≤ 0,14 und leisem Pegel; echte kurze Antworten („ja“) lagen bei ≥ 0,28. Wäre die Aufnahme beim Stille-Ende ohnehin am VAD-Gate gescheitert, wird sie ohne den Blip weitergeführt.
+
 **Warum überhaupt zwei Sätze:** Bei laufendem Fernseher endete die Aufnahme
 nie — die Sprechpausen einer Störquelle sind ~1,7 s lang und setzen den
 Stille-Zähler vor der 2-s-Schwelle zurück. Ein Turn lief so 21,9 s bis zum

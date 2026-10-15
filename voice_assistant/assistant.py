@@ -127,6 +127,9 @@ _STOP_CORE = r'(stopp?|halt|aus|abbrechen)'
 # Follow-up: so lange darf nach dem Beep niemand sprechen, bevor das Fenster
 # zugeht (siehe STATE_FOLLOWUP).
 _FOLLOWUP_START_SEC = 10.0
+# Sprachanteil, den eine Follow-up-Aufnahme fuer die STT braucht (echte
+# Aeusserungen >= 50 %, Hintergrund ~14 %, der eigene Beep allein ~12 %).
+_FOLLOWUP_MIN_VAD = 0.20
 _ACK_DELAY_SEC = 0.4
 # Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
 # straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
@@ -673,6 +676,12 @@ def _ends_clean(text: str) -> bool:
         return True
     last = re.sub(r"[^\wäöüß]", "", t.split()[-1].lower())
     return last not in _OPEN_TAIL
+
+
+def _followup_nur_blip(vad_speech: int, chunks: int) -> bool:
+    """Endet ein Follow-up auf Stille, waere die Aufnahme aber zu sprachearm
+    fuer die STT? Dann war die "Sprache" nur ein Blip (meist der eigene Beep)."""
+    return chunks > 0 and vad_speech / chunks < _FOLLOWUP_MIN_VAD
 
 
 def _signal_stats(rms: list[float], speech_frames: int, total_frames: int) -> dict:
@@ -3017,6 +3026,22 @@ def run() -> None:
 
                 timeout = (now - state_start) > turn_max_sec
                 stop = speech_detected and silence_counter >= turn_silence_limit
+                if (stop and not timeout
+                        and _followup_nur_blip(followup_vad_speech, followup_rms_count)):
+                    # Die "Sprache" war nur der eigene Beep im Mikrofon
+                    # (7 Chunks = 0,28 s, leise): das Fenster ging nach 2,2 s
+                    # zu, bevor jemand antworten konnte (16 von 275
+                    # Follow-ups, zuletzt 2026-10-15 09:49 bei einer
+                    # Timer-Rueckfrage). Die Aufnahme waere am VAD-Gate unten
+                    # ohnehin verworfen worden — also weiter zuhoeren, ohne
+                    # den Blip, damit er den Sprachanteil nicht verduennt.
+                    recorded_chunks = recorded_chunks[-int(0.4 / _chunk_sec):]  # Anlaut-Reserve
+                    followup_rms_sum = 0.0
+                    followup_rms_count = 0
+                    followup_vad_speech = 0
+                    speech_detected = False
+                    silence_counter = 0
+                    stop = False
                 # Sagt nach dem Beep niemand etwas, wartete das Fenster bis zum
                 # Deckel (30 s, Jochen 2026-10-15: "bleibt sehr lang aktiv").
                 # Grenze grosszuegig: im endpoint.log lag der Einsatz (obere
@@ -3061,7 +3086,7 @@ def run() -> None:
                     if (
                         speech_detected
                         and len(recorded_chunks) >= MIN_SPEECH_CHUNKS
-                        and vad_ratio >= 0.20
+                        and vad_ratio >= _FOLLOWUP_MIN_VAD
                     ):
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
