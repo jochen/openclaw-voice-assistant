@@ -624,6 +624,10 @@ class Profile:
     # bei Gerätenamen). Siehe services/stt.LlamaCppAsrStt.
     stt_llamacpp_url: str = ""
     stt_llamacpp_kontext: bool = True
+    # Sprache fest vorgeben (Qwen-Name, z. B. "German"). Leer = das Modell
+    # bestimmt sie je Aufnahme selbst und landet bei leisen Aufnahmen
+    # gelegentlich im Niederlaendischen oder Polnischen.
+    stt_llamacpp_sprache: str = ""
     # Sprechererkennung per Stimm-Fingerabdruck auf der CPU statt Diarization
     # über Speaches (services/sprecher_verifikation.py). Default aus. Schwelle
     # und Abstand nur gegen tools/sprecher_verifikation_test.py ändern.
@@ -1101,6 +1105,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         stt_onnx_threads=int(raw.get("stt_onnx_threads", 8)),
         stt_llamacpp_url=str(raw.get("stt_llamacpp_url", "") or ""),
         stt_llamacpp_kontext=bool(raw.get("stt_llamacpp_kontext", True)),
+        stt_llamacpp_sprache=str(raw.get("stt_llamacpp_sprache", "") or ""),
         sprecher_verifikation=bool(raw.get("sprecher_verifikation", False)),
         sprecher_schwelle=float(raw.get("sprecher_schwelle", 0.40)),
         sprecher_abstand=float(raw.get("sprecher_abstand", 0.15)),

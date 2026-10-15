@@ -947,7 +947,13 @@ Stufe fällt bei Fehler auf die nächste (`SttPipeline`). Qwen läuft als
 Container `llamacpp-qwenasr` (openclaw-voice-stack, Q8, Port 8094) und bekommt
 Wakewort + je Ziel den ersten Namen aus `/capabilities` als Kontext
 (`stt_llamacpp_url`, `services/stt.LlamaCppAsrStt`, Leck-Schutz
-`ist_kontext_leck`). Parakeet rechnet im Assistenten auf der CPU
+`ist_kontext_leck`). **Die Sprache ist fest Deutsch** (`stt_llamacpp_sprache:
+German`, seit 2026-10-15, Jochen): ohne Vorgabe riet Qwen sie je Aufnahme
+und schrieb bei leisen Aufnahmen Niederländisch oder Polnisch. Gemessen über
+373 archivierte Aufnahmen mit Live-Kontext: 363 gleich, die 10 anderen
+vorher fremdsprachig oder leer. Preis: ein Fernseh-Fehltrigger, vorher leer,
+wird zu „Abendlicht.“ — Laya fragt dann zurück, Gemma würde schalten.
+Parakeet rechnet im Assistenten auf der CPU
 (`stt_onnx_model`, `OnnxAsrStt`). `speaches_stt_model` bleibt medium — das ist
 auch das Modell der Messwerkzeuge.
 

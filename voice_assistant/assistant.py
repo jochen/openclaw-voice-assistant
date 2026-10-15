@@ -1071,9 +1071,12 @@ def run() -> None:
         llamacpp_stt = LlamaCppAsrStt(
             profile.stt_llamacpp_url,
             kontext=_stt_kontext if profile.stt_llamacpp_kontext else None,
+            sprache=profile.stt_llamacpp_sprache or None,
         )
         print(f"✅ STT über llama.cpp: {profile.stt_llamacpp_url}"
-              + (" (mit Gerätenamen als Kontext)" if profile.stt_llamacpp_kontext else ""))
+              + (" (mit Gerätenamen als Kontext)" if profile.stt_llamacpp_kontext else "")
+              + (f", Sprache fest: {profile.stt_llamacpp_sprache}"
+                 if profile.stt_llamacpp_sprache else ""))
     stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt, llamacpp_stt)
     speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
     thinking = ThinkingWorker(

@@ -216,11 +216,24 @@ class LlamaCppAsrStt:
 
     Zahlen kommen als Wörter ("fünfzig Prozent"); der Werteleser des
     Aktuators liest sie. Kein no_speech_prob — siehe OnnxAsrStt.
+
+    `sprache` ("German") gibt die Sprache fest vor: die Antwort wird mit
+    "language German<asr_text>" vorbelegt, das Modell schreibt nur noch den
+    Text. Ohne bestimmt es die Sprache je Aufnahme selbst, und bei leisen
+    oder undeutlichen Aufnahmen rät es daneben — gemessen am 2026-10-15 über
+    373 archivierte Aufnahmen (ohne Kontext): 26 nicht deutsch (Englisch 8,
+    Portugiesisch 5, Chinesisch 4, Polnisch 3, Niederländisch 2 …), darunter
+    zwei Endlosschleifen ("Next song." ×100). Mit Vorgabe kamen fast alle als
+    lesbares Deutsch; englische Wörter bleiben englisch ("Stop. Nächstes
+    Lied."). Anlass: "Gaston, mach alle Rollos auf" → "Klaas, daarom maak ik
+    dit voor los, ook."
     """
 
-    def __init__(self, url: str, kontext=None, timeout: float = 15.0) -> None:
+    def __init__(self, url: str, kontext=None, timeout: float = 15.0,
+                 sprache: str | None = None) -> None:
         self.url = url.rstrip("/")
         self.kontext = kontext              # () -> str | None
+        self.sprache = sprache
         self.timeout = timeout
         self.state = SpeachesState()        # nur für stt_ok()/Cooldown-Semantik
 
@@ -229,6 +242,9 @@ class LlamaCppAsrStt:
             {"role": "user", "content": [{
                 "type": "input_audio",
                 "input_audio": {"data": base64.b64encode(wav_bytes).decode(), "format": "wav"}}]}]
+        if self.sprache:
+            # Vorbelegte Antwort: llama-server setzt die letzte assistant-Nachricht fort.
+            msgs.append({"role": "assistant", "content": f"language {self.sprache}<asr_text>"})
         req = urllib.request.Request(
             f"{self.url}/v1/chat/completions",
             data=json.dumps({"messages": msgs, "temperature": 0, "max_tokens": 400}).encode(),

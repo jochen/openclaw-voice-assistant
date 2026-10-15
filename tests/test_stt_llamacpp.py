@@ -60,6 +60,22 @@ class LlamaCppAsrTest(unittest.TestCase):
         self.assertEqual(len(_Server.anfragen), 2)
         self.assertEqual(_Server.anfragen[1]["messages"][0]["role"], "user")   # ohne System
 
+    def test_feste_sprache_belegt_die_antwort_vor(self):
+        # llama-server setzt die vorbelegte Antwort fort; ob er den Anfang
+        # mitliefert oder nicht, das Ergebnis ist derselbe Text.
+        for antwort in ("language German<asr_text>Alle Rollos auf.", "Alle Rollos auf."):
+            _Server.anfragen.clear()
+            _Server.antworten[:] = [antwort]
+            stt = LlamaCppAsrStt(self.url, kontext=lambda: KONTEXT, sprache="German")
+            self.assertEqual(stt.transcribe(b"RIFF"), "Alle Rollos auf.")
+            self.assertEqual(_Server.anfragen[0]["messages"][-1],
+                             {"role": "assistant", "content": "language German<asr_text>"})
+
+    def test_ohne_sprache_keine_vorbelegung(self):
+        _Server.antworten[:] = ["language Dutch<asr_text>Klaas."]
+        LlamaCppAsrStt(self.url).transcribe(b"RIFF")
+        self.assertEqual(_Server.anfragen[0]["messages"][-1]["role"], "user")
+
     def test_leer_ist_keine_sprache_kein_fehler(self):
         _Server.antworten[:] = ["language None<asr_text>"]
         stt = LlamaCppAsrStt(self.url)
