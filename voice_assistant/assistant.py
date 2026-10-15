@@ -1206,10 +1206,18 @@ def run() -> None:
     if profile.aussprache.enabled:
         try:
             from voice_assistant.services import aussprache as aussprache_mod
-            _as = aussprache_mod.fuer_sprache(profile.aussprache.sprache)
+            _as = aussprache_mod.fuer_sprache(profile.aussprache.sprache,
+                                              englisch=profile.aussprache.englisch)
             aussprache_mod.einrichten(_as)
             print(f"🗣️  Aussprache-Liste ({profile.aussprache.sprache}): "
-                  f"{len(_as._lexikon)} Einträge, Fälle → {_as.faelle_pfad}")
+                  f"{len(_as._lexikon)} Einträge, Fälle → {_as.faelle_pfad}"
+                  + (", englische Stellen englisch" if _as.englisch else ""))
+            if _as.englisch:
+                # Wortlisten jetzt laden, nicht im ersten gesprochenen Satz.
+                from voice_assistant.services.englisch import listen as _wortlisten
+                _en, _de = _wortlisten()
+                if not (_en and _de):
+                    print("⚠️  Englische Stellen: Wortlisten fehlen (/usr/share/dict) — bleibt deutsch")
         except Exception as e:
             print(f"⚠️  Aussprache-Liste nicht geladen: {e}")
 

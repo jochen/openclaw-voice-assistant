@@ -887,6 +887,22 @@ speaker names and device-name parts — the LLM's own "public" flag wasn't
 reliable). Only for Piper voices; for another language add its list and
 set `sprache`.
 
+**English passages (`englisch: true`).** Most song titles and artists are
+English, and no list can hold them all. So a German answer is scanned word by
+word against two word lists (Debian `wamerican` and `wngerman` under
+`/usr/share/dict`, `services/englisch.py`): a run of words found only in the
+English list is English, words in both lists right next to it join in
+("*Wind* of Change"), unknown words (names, deliberate misspellings) take
+English from an English neighbour unless a German word sits next to them.
+German function words that are also English ("den", "in") join only when
+enclosed. Such a passage goes through espeak's English rules and is mapped onto
+the German voice's sounds — it sounds like a German speaking English, which
+for song titles is exactly right. Entries from `eigen`/`ergaenzt` still win;
+the Wiktionary base list doesn't, it reads English words the German way.
+Measured against a blind-labelled sample of our own music library
+(`tools/musik_sprache_test.py`, details in its docstring): about 77 % right,
+no German title that sounded worse.
+
 **Speaches with piper-tts 1.3.0 (e.g. `speaches 0.9.0-rc.3`) needs a patch.**
 There, text after a `[[ … ]]` block becomes a sentence of its own; when the
 word ends the sentence, an empty sentence is left over and the voice turns it
@@ -902,6 +918,7 @@ mounted over `piper/voice.py` in the container.
       llm_url: http://<llm-host>:<port>   # optional; without it cases are only collected
       llm_model: <model>
       min_faelle: 50
+      englisch: true                     # optional; English passages in English (German only)
 ```
 
 ### Service watchdog (optional, `dienstwaechter:`)

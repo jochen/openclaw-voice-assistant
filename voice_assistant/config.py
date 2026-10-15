@@ -506,6 +506,10 @@ class AusspracheConfig:
     llm_api_key: str = ""
     # Ab so vielen gesammelten Faellen laeuft ein Ergaenzungslauf.
     min_faelle: int = 50
+    # Englische Stellen (Musiktitel, Interpreten) mit englischen Regeln
+    # sprechen (services/englisch.py). Braucht die Wortlisten unter
+    # /usr/share/dict (Debian: wamerican, wngerman); nur fuer sprache "de".
+    englisch: bool = False
 
 
 @dataclass
@@ -1041,6 +1045,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         llm_model=str(as_raw.get("llm_model", _das.llm_model)),
         llm_api_key=str(as_raw.get("llm_api_key", _das.llm_api_key)),
         min_faelle=int(as_raw.get("min_faelle", _das.min_faelle)),
+        englisch=bool(as_raw.get("englisch", _das.englisch)),
     )
 
     rewind_raw = raw.get("rewind") or {}

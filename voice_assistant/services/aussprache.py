@@ -15,6 +15,13 @@ Drei Schichten, die erste gewinnt:
                   (tools/aussprache_ergaenzen.py)
 3. ``grundstock`` — aus dem deutschen Wiktionary (tools/aussprache_grundstock.py)
 
+Mit ``englisch=True`` gehen englische Stellen (services/englisch.py: Musiktitel,
+Interpreten) ganz durch die englischen espeak-Regeln ("en-us"), abgebildet auf
+den Lautvorrat der deutschen Stimme — es klingt wie ein Deutscher, der
+Englisch spricht, und bei Musiktiteln ist das genau richtig (Jochen,
+2026-10-15). Eintraege aus ``eigen``/``ergaenzt`` gewinnen auch dort; der
+Wiktionary-Grundstock nicht, der liest englische Woerter deutsch.
+
 Daneben werden unbekannte Woerter gesammelt (``faelle``): weder in der Liste
 noch im Wiktionary-Wortschatz. Aus ihnen erzeugt der naechste Ergaenzungslauf
 Eintraege — automatisch, sobald genug zusammengekommen ist.
@@ -105,7 +112,9 @@ class Aussprache:
         eigen: str,
         faelle: str,
         bekannt: str = "",
+        englisch: bool = False,
     ) -> None:
+        self.englisch = englisch
         # Grundstock = alles, was im Repo liegt (Wiktionary + veroeffentlichte
         # Ergaenzungen); als eine Schicht, die Reihenfolge der Liste gilt.
         self.grundstock = [grundstock] if isinstance(grundstock, str) else list(grundstock)
@@ -170,20 +179,75 @@ class Aussprache:
         """Text mit ``[[Phonemen]]`` statt der bekannten Problemwoerter."""
         with self._lock:
             self._aktuell()
-            if not self._lexikon:
+            stellen = self._englische_stellen(text)
+            if not self._lexikon and not stellen:
                 return text
+            teile, pos = [], 0
+            for a, e in stellen:
+                teile.append(self._deutsch(text[pos:a]))
+                teile.append(self._englisch(text[a:e]))
+                pos = e
+            teile.append(self._deutsch(text[pos:]))
+            return "".join(teile)
 
-            def ersetze(m: re.Match) -> str:
-                wort = m.group(0)
-                ph = self.nachschlagen(wort)
-                if ph:
-                    return f"[[{ph}]]"
-                if "-" in wort:             # Koffein-Gehalt, Wake-on-LAN-Paket
-                    teile = wort.split("-")
-                    return "-".join(f"[[{p}]]" if (p := self.nachschlagen(t)) else t for t in teile)
-                return wort
+    def _englische_stellen(self, text: str) -> list[tuple[int, int]]:
+        if not self.englisch:
+            return []
+        from voice_assistant.services.englisch import englische_stellen
+        return englische_stellen(text)
 
-            return _WORT.sub(ersetze, text)
+    def _deutsch(self, text: str) -> str:
+        """Nur unter self._lock."""
+        if not self._lexikon:
+            return text
+
+        def ersetze(m: re.Match) -> str:
+            wort = m.group(0)
+            ph = self.nachschlagen(wort)
+            if ph:
+                return f"[[{ph}]]"
+            if "-" in wort:             # Koffein-Gehalt, Wake-on-LAN-Paket
+                teile = wort.split("-")
+                return "-".join(f"[[{p}]]" if (p := self.nachschlagen(t)) else t for t in teile)
+            return wort
+
+        return _WORT.sub(ersetze, text)
+
+    def _englisch(self, stelle: str) -> str:
+        """Eine englische Stelle als [[Phoneme]] je Wort; nur unter self._lock.
+
+        Satzzeichen und Klammern bleiben Text (Pausen). Woerter aus
+        eigen/ergaenzt behalten ihren Eintrag, der Rest geht gruppenweise
+        durch espeak en-us — als Gruppe, damit die Betonung im Zusammenhang
+        stimmt.
+        """
+        aus: list[str] = []
+        gruppe: list[str] = []
+
+        def gruppe_fertig() -> None:
+            if gruppe:
+                laute = (piper_phoneme(w) for w in espeak_en(" ".join(gruppe)).split())
+                aus.extend(f"[[{w}]]" for w in laute if w)
+                gruppe.clear()
+
+        for wort, zeichen in re.findall(r"([\w'´’]+)|([^\w\s'´’]+)", stelle):
+            if zeichen:
+                gruppe_fertig()
+                aus.append(zeichen)
+                continue
+            wort = wort.replace("´", "'").replace("’", "'")
+            eintrag = self.nachschlagen(wort)
+            herkunft = self._herkunft.get(wort) or self._herkunft.get(wort[:1].swapcase() + wort[1:])
+            if eintrag and herkunft in ("eigen", "ergaenzt"):
+                gruppe_fertig()
+                aus.append(f"[[{eintrag}]]")
+            else:
+                gruppe.append(wort)
+        gruppe_fertig()
+        text = " ".join(aus)
+        # Satzzeichen wieder an ihr Wort: "[[a]] , [[b]]" -> "[[a]], [[b]]".
+        text = re.sub(r" ([,.;:!?)\]])", r"\1", text)
+        return re.sub(r"([(\[]) ", r"\1", text)
 
     # --- Faelle -----------------------------------------------------------
     def _bekannte(self) -> frozenset[str]:
@@ -228,6 +292,9 @@ class Aussprache:
             return 0
         neu = []
         with self._lock:
+            # Englisch Gesprochenes ist kein Fall fuer die deutsche Liste.
+            for a, e in reversed(self._englische_stellen(text)):
+                text = text[:a] + " " + text[e:]
             for w in (t.strip("'") for m in _WORT.finditer(text) for t in m.group(0).split("-")):
                 if len(w) < 3 or w in self._gemeldet or self.nachschlagen(w):
                     continue
@@ -285,6 +352,15 @@ def espeak_de(text: str) -> str:
     return "".join(sum(_espeak.phonemize("de", text), []))
 
 
+def espeak_en(text: str) -> str:
+    """So liest espeak-ng den Text mit den englischen Regeln (en-us)."""
+    global _espeak
+    if _espeak is None:
+        from piper.phonemize_espeak import EspeakPhonemizer
+        _espeak = EspeakPhonemizer()
+    return " ".join("".join(satz) for satz in _espeak.phonemize("en-us", text))
+
+
 def aus_umschreibung(umschreibung: str) -> str:
     """Deutsche Umschreibung ("Sohße", "Ändru Dschäckßn") als Phoneme.
 
@@ -335,8 +411,8 @@ def pfade(sprache: str = "de") -> dict:
     }
 
 
-def fuer_sprache(sprache: str = "de") -> "Aussprache":
-    return Aussprache(**pfade(sprache))
+def fuer_sprache(sprache: str = "de", englisch: bool = False) -> "Aussprache":
+    return Aussprache(**pfade(sprache), englisch=englisch)
 
 
 # --- Prozessweite Instanz -------------------------------------------------

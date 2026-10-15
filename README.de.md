@@ -912,6 +912,24 @@ Filtern für Sprechernamen und Bestandteile von Gerätenamen — die
 „öffentlich"-Markierung des LLM war nicht zuverlässig). Nur für Piper-Stimmen;
 für eine andere Sprache deren Liste anlegen und `sprache` setzen.
 
+**Englische Stellen (`englisch: true`).** Die meisten Musiktitel und
+Interpreten sind englisch, und keine Liste kann sie alle fassen. Deshalb wird
+eine deutsche Antwort Wort für Wort gegen zwei Wortlisten geprüft (Debian
+`wamerican` und `wngerman` unter `/usr/share/dict`, `services/englisch.py`):
+Eine Folge von Wörtern, die nur in der englischen Liste stehen, ist Englisch,
+Wörter aus beiden Listen direkt daneben gehören dazu („*Wind* of Change“),
+unbekannte Wörter (Namen, absichtlich falsch Geschriebenes) übernehmen
+Englisch vom englischen Nachbarn, solange kein deutsches Wort danebensteht.
+Deutsche Funktionswörter, die auch englisch sind („den“, „in“), gehören nur
+dazu, wenn sie eingeschlossen sind. So eine Stelle geht durch die englischen
+espeak-Regeln und wird auf die Laute der deutschen Stimme abgebildet — es
+klingt wie ein Deutscher, der Englisch spricht, und bei Musiktiteln ist das
+genau richtig. Einträge aus `eigen`/`ergaenzt` gewinnen weiterhin; der
+Wiktionary-Grundstock nicht, der liest englische Wörter deutsch. Gemessen an
+einer blind gelabelten Stichprobe der eigenen Musiksammlung
+(`tools/musik_sprache_test.py`, Einzelheiten im Docstring): etwa 77 % richtig,
+kein deutscher Titel, der schlechter klang.
+
 **Speaches mit piper-tts 1.3.0 (z. B. `speaches 0.9.0-rc.3`) braucht einen
 Patch.** Dort wird Text nach einem `[[ … ]]`-Block zum eigenen Satz; steht das
 Wort am Satzende, bleibt ein leerer Satz übrig, aus dem die Stimme ein lautes
@@ -927,6 +945,7 @@ und wird über `piper/voice.py` im Container gelegt.
       llm_url: http://<llm-host>:<port>   # optional; ohne wird nur gesammelt
       llm_model: <modell>
       min_faelle: 50
+      englisch: true                     # optional; englische Stellen englisch (nur Deutsch)
 ```
 
 ### Dienst-Wächter (optional, `dienstwaechter:`)

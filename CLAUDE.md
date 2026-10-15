@@ -366,6 +366,19 @@ beobachten, dann nachbessern. Offen: ASCII-Umlaute aus Brain-Antworten
 („fuenf") gehören eigentlich in die Textaufbereitung. Tests:
 `tests/test_aussprache.py`.
 
+**Englische Stellen (`aussprache.englisch`, seit 2026-10-15).** Musiktitel
+und Interpreten sind meist englisch, einzeln eintragen geht nicht (Jochen).
+`services/englisch.py` findet englische Stellen Wort für Wort über die
+Debian-Wortlisten (`/usr/share/dict`, kein Modell), `Aussprache._englisch`
+schickt sie durch espeak `en-us` und `piper_phoneme` — „ein Deutscher, der
+Englisch spricht“ (Jochen: „genau richtig“). `eigen`/`ergaenzt` gewinnen auch
+dort, der Wiktionary-Grundstock nicht. **Regeländerungen nur gegen
+`tools/musik_sprache_test.py`** (Stichprobe der eigenen Sammlung,
+Labels privat in `testsets/musik_sprache/`). Die STT-Rückprobe taugt hier
+nicht als Richter: Whisper auf Deutsch hört englische Aussprache schlecht, und
+Piper ist nicht deterministisch. Entschieden hat das Ohr. Tests:
+`tests/test_englisch.py`.
+
 ### Küchentimer (`timer:`, seit 2026-10-10, Branch `feature/kuechentimer`)
 
 Ablösung des Alexa-Timers. Der Zustand liegt im Assistenten
