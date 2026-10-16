@@ -27,7 +27,9 @@ from voice_assistant.config import (
 # (Die Regel ist bewusst generisch; die TV-Erkennung ist eine Generalisierung
 # des Modells, kein eigener Trigger.) Hier nur die Erkennung/der Abbruch.
 NO_REPLY_SENTINEL = "NO_REPLY"
-_NO_REPLY_RE = re.compile(r"^\W*NO[ _]?REPLY\W*$", re.IGNORECASE)
+# KEIN_REPLY: am 2026-10-16 vermischte der Brain NO_REPLY mit KEIN_FOLLOWUP
+# (vier Fernseh-Turns hintereinander) -- vorgelesen, gespiegelt, Follow-up offen.
+_NO_REPLY_RE = re.compile(r"^\W*(?:NO|KEIN)[ _-]?REPLY\W*$", re.IGNORECASE)
 
 # Schluesselwort fuer "nach dieser Antwort kein Follow-up-Fenster" (Jochen,
 # 2026-10-15: nach "gefaellt mir" stand das Fenster 30 s offen, obwohl nichts

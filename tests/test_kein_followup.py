@@ -39,6 +39,13 @@ class OhneFollowupTest(unittest.TestCase):
         text, _ = ohne_followup("NO_REPLY KEIN_FOLLOWUP")
         self.assertTrue(is_no_reply(text))
 
+    def test_kein_reply_ist_no_reply(self):
+        # 2026-10-16: der Brain schrieb KEIN_REPLY statt NO_REPLY (Fernseher).
+        for t in ("KEIN_REPLY", "kein reply.", "KEIN-REPLY", "KEIN_REPLY KEIN_FOLLOWUP"):
+            text, _ = ohne_followup(t)
+            self.assertTrue(is_no_reply(text), t)
+        self.assertFalse(is_no_reply("Kein Reply nötig, das Licht ist an."))
+
 
 class BeepBlipTest(unittest.TestCase):
     """Der eigene Beep im Mikrofon schloss das Fenster nach 2,2 s (2026-10-15)."""
