@@ -1,4 +1,4 @@
-"""KEIN_FOLLOWUP (services/openclaw.ohne_followup): Gaston laesst nichts offen.
+"""NO_FOLLOWUP (services/openclaw.ohne_followup): Gaston laesst nichts offen.
 
 Das Schluesselwort darf nie vorgelesen werden, und es muss in den Formen
 erkannt werden, in denen ein LLM es schreibt.
@@ -15,14 +15,15 @@ from voice_assistant.services.openclaw import is_no_reply, ohne_followup  # noqa
 
 class OhneFollowupTest(unittest.TestCase):
     def test_eigener_satz_am_ende(self):
-        self.assertEqual(ohne_followup("KEIN_FOLLOWUP"), ("", True))
+        self.assertEqual(ohne_followup("NO_FOLLOWUP"), ("", True))
 
     def test_angehaengt(self):
-        self.assertEqual(ohne_followup("Hab ich mir gemerkt. KEIN_FOLLOWUP"),
+        self.assertEqual(ohne_followup("Hab ich mir gemerkt. NO_FOLLOWUP"),
                          ("Hab ich mir gemerkt.", True))
 
     def test_varianten(self):
-        for t in ("Die Musik läuft. [KEIN_FOLLOWUP]", "Die Musik läuft. kein followup.",
+        for t in ("Die Musik läuft. [NO_FOLLOWUP]", "Die Musik läuft. no_follow_up.",
+                  "Die Musik läuft. KEIN_FOLLOWUP", "Die Musik läuft. kein followup.",
                   "Die Musik läuft. KEIN-FOLLOW-UP"):
             self.assertEqual(ohne_followup(t), ("Die Musik läuft.", True), t)
 
@@ -34,9 +35,10 @@ class OhneFollowupTest(unittest.TestCase):
     def test_followup_im_normalen_wort_bleibt(self):
         # "Follow-up" als Wort in einem Satz ist kein Schluesselwort.
         self.assertFalse(ohne_followup("Das Follow-up-Fenster ist zu.")[1])
+        self.assertFalse(ohne_followup("There is no follow-up needed.")[1])
 
     def test_no_reply_bleibt_erkennbar(self):
-        text, _ = ohne_followup("NO_REPLY KEIN_FOLLOWUP")
+        text, _ = ohne_followup("NO_REPLY NO_FOLLOWUP")
         self.assertTrue(is_no_reply(text))
 
     def test_kein_reply_ist_no_reply(self):

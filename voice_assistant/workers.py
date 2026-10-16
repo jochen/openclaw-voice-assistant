@@ -267,7 +267,7 @@ class Workers:
             pending_reply_text[0] = None
             reply_done_event.set()
 
-        # KEIN_FOLLOWUP in der Antwort (openclaw.ohne_followup): Gaston lässt
+        # NO_FOLLOWUP in der Antwort (openclaw.ohne_followup): Gaston lässt
         # nichts offen, also kein Follow-up-Fenster (pending_reply_text=None).
         kein_followup = [False]
 
@@ -279,7 +279,7 @@ class Workers:
 
         def antwort_merken(text: str | None) -> None:
             if kein_followup[0]:
-                print("🤐 KEIN_FOLLOWUP in der Antwort → kein Follow-up-Fenster")
+                print("🤐 NO_FOLLOWUP in der Antwort → kein Follow-up-Fenster")
                 pending_reply_text[0] = None
             else:
                 pending_reply_text[0] = text

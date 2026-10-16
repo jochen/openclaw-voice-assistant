@@ -114,7 +114,7 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "Nach deiner Antwort hört das Mikrofon noch einige Sekunden auf eine "
     "Erwiderung. Lässt deine Antwort nichts offen (eine Bestätigung wie 'Das "
     "Licht ist an', 'Die Musik läuft', 'Hab ich mir gemerkt', keine Frage, "
-    "kein Angebot), schreib als letztes Wort KEIN_FOLLOWUP — es wird nicht "
+    "kein Angebot), schreib als letztes Wort NO_FOLLOWUP — es wird nicht "
     "vorgelesen, und das Mikrofon bleibt zu. Bei einer Frage oder wenn eine "
     "Antwort zu erwarten ist, lass es weg.]"
 )

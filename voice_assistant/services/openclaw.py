@@ -28,6 +28,7 @@ from voice_assistant.config import (
 # des Modells, kein eigener Trigger.) Hier nur die Erkennung/der Abbruch.
 NO_REPLY_SENTINEL = "NO_REPLY"
 # KEIN_REPLY: am 2026-10-16 vermischte der Brain NO_REPLY mit KEIN_FOLLOWUP
+# (seither heisst das NO_FOLLOWUP, siehe unten)
 # (vier Fernseh-Turns hintereinander) -- vorgelesen, gespiegelt, Follow-up offen.
 _NO_REPLY_RE = re.compile(r"^\W*(?:NO|KEIN)[ _-]?REPLY\W*$", re.IGNORECASE)
 
@@ -36,15 +37,21 @@ _NO_REPLY_RE = re.compile(r"^\W*(?:NO|KEIN)[ _-]?REPLY\W*$", re.IGNORECASE)
 # mehr kam). Gaston haengt es an eine Antwort, die nichts offen laesst; es wird
 # vor Sprache und Telegram entfernt. Die Regel steht in der Sprach-Direktive
 # (config._DEFAULT_VOICE_INSTRUCTION), die jede Spracheingabe begleitet.
-KEIN_FOLLOWUP = "KEIN_FOLLOWUP"
-_KEIN_FOLLOWUP_RE = re.compile(r"\s*\[?\bKEIN[ _-]?FOLLOW[ _-]?UP\b\]?\.?", re.IGNORECASE)
+# Seit 2026-10-16 NO_FOLLOWUP statt KEIN_FOLLOWUP (Jochen): parallel zu
+# NO_REPLY, das der Brain mit KEIN_FOLLOWUP zu KEIN_REPLY vermischt hatte.
+# KEIN_FOLLOWUP wird weiter erkannt, es steht noch in den Session-Verlaeufen.
+# Die NO-Form nur mit Unterstrich: ein englisches "no follow-up" im Satz
+# bleibt stehen.
+NO_FOLLOWUP = "NO_FOLLOWUP"
+_NO_FOLLOWUP_RE = re.compile(
+    r"\s*\[?\b(?:NO_FOLLOW_?UP|KEIN[ _-]?FOLLOW[ _-]?UP)\b\]?\.?", re.IGNORECASE)
 
 
 def ohne_followup(text: str | None) -> tuple[str | None, bool]:
     """(Text ohne das Schluesselwort, ob es drin stand)."""
     if not text:
         return text, False
-    neu, n = _KEIN_FOLLOWUP_RE.subn("", text)
+    neu, n = _NO_FOLLOWUP_RE.subn("", text)
     return (neu.strip() if n else text), n > 0
 
 

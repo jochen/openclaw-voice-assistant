@@ -1029,7 +1029,7 @@ werden nicht archiviert, im endpoint.log lag der Einsatz (obere Schranke aus
 Dauer − Nachlauf − Sprechzeit) im Median bei 1,5 s, bei 9 von 200 über 10 s.
 Seither steht der echte Einsatz als `sprache_ab_s` im endpoint.log — daran
 nachjustieren. Dazu kann der Brain das Fenster selbst zulassen:
-`KEIN_FOLLOWUP` am Ende der Antwort (`openclaw.ohne_followup`, Regel in
+`NO_FOLLOWUP` (bis 2026-10-16 `KEIN_FOLLOWUP`, wird weiter erkannt) am Ende der Antwort (`openclaw.ohne_followup`, Regel in
 `_DEFAULT_VOICE_INSTRUCTION`, weil die jede Spracheingabe begleitet) → kein
 Follow-up, das Wort wird vor TTS und Telegram entfernt. Tests:
 `tests/test_kein_followup.py`.
