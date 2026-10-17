@@ -993,6 +993,10 @@ Typisches Format: `agent:main:telegram:group:-1003XXXXXXXXX`
 
 Das Script setzt den HTTP-Header `x-openclaw-session-key`. Ohne ihn legt OpenClaw einen separaten `openresponses-user:`-Namespace an — Voice-Turns wären vom Chat-Verlauf getrennt.
 
+### Stille Antworten (`NO_REPLY`)
+
+Entscheidet der Brain, dass eine Aufnahme nicht ihm galt, antwortet er exakt `NO_REPLY`, und der Assistent bleibt stumm: keine Sprache, kein Telegram, kein Follow-up. Achtung: Das Gateway behandelt `NO_REPLY` selbst als Stille-Zeichen und filtert es aus dem Endergebnis. Was beim Client ankommt, hängt dann vom Modell ab. Schon live gestreamter Text (z. B. bei Codex) kommt weiter als `NO_REPLY` an. Bei einem Modell, dessen Text das Gateway bis zum Ende zurückhält (OpenAI-kompatible Completions mit Reasoning), wird das Zeichen gefiltert, und das Gateway schickt stattdessen seinen Platzhalter `No response from OpenClaw.`. Der Assistent wertet diesen Platzhalter als ganze Antwort ebenfalls als Stille (`openclaw.GATEWAY_LEER_PLATZHALTER`). Fehler kommen weiterhin als `response.failed`. Ändert ein Gateway-Update den Wortlaut, spricht der Assistent den neuen Text, dann die Konstante anpassen.
+
 ### AGENTS.md (Voice-Direktiven)
 
 Die OpenClaw-Workspace-Datei `~/.openclaw/workspace/AGENTS.md` prägt das Voice-Verhalten des Assistenten. Formuliere diese Vorgaben als **Ziele**, nicht als Verbote — beschreibe, was erreicht werden soll, damit das Modell im Kontext sinnvoll handeln kann. Eine minimale Voice-Sektion:

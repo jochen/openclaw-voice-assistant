@@ -32,6 +32,27 @@ NO_REPLY_SENTINEL = "NO_REPLY"
 # (vier Fernseh-Turns hintereinander) -- vorgelesen, gespiegelt, Follow-up offen.
 _NO_REPLY_RE = re.compile(r"^\W*(?:NO|KEIN)[ _-]?REPLY\W*$", re.IGNORECASE)
 
+# Platzhalter des Gateways fuer einen erfolgreich beendeten Lauf ohne
+# sichtbaren Text (openresponses-http, `fallbackText`). NO_REPLY ist dort ein
+# eingebautes Signal (SILENT_REPLY_TOKEN): das Gateway filtert es aus dem
+# Endergebnis und schickt dann statt nichts diesen Satz. Er gilt hier wie
+# NO_REPLY (2026-10-17: drei Fernseh-Turns, jedes Mal vorgelesen, gespiegelt,
+# Follow-up offen; der Brain hatte richtig NO_REPLY geantwortet).
+#
+# Warum NO_REPLY bis 2026-10-15 trotzdem als Text ankam: der Filter wirkt nur
+# auf das Endergebnis, und was schon gestreamt wurde, gilt dort weiter
+# (resolveAssistantTextCompletion). Codex streamte "NO_REPLY" live heraus.
+# Ein Modell ueber openai-completions mit Reasoning (seit 2026-10-16 GLM bei
+# noris) haelt das Gateway bis zum Ende zurueck, dann greift der Filter.
+#
+# Nur der Satz als ganze Antwort zaehlt: das Gateway schickt ihn nur, wenn
+# nichts gestreamt wurde, und nur in response.completed. Fehler kommen als
+# response.failed (query_stream -> None), Timeouts als timed_out. Nicht
+# unterscheidbar ist "NO_REPLY gesagt" von "gar nichts geliefert"; das
+# Gateway behandelt beides als still, hier ebenso. Aendert ein Update den
+# Wortlaut, liest Gaston ihn wieder vor (laut, nicht still kaputt).
+GATEWAY_LEER_PLATZHALTER = "No response from OpenClaw."
+
 # Schluesselwort fuer "nach dieser Antwort kein Follow-up-Fenster" (Jochen,
 # 2026-10-15: nach "gefaellt mir" stand das Fenster 30 s offen, obwohl nichts
 # mehr kam). Gaston haengt es an eine Antwort, die nichts offen laesst; es wird
@@ -61,9 +82,13 @@ def is_no_reply(text: str | None) -> bool:
     Tolerant gegenüber Groß/Klein, Leer-/Unterstrich und umgebender
     Interpunktion ('no reply.', 'NO_REPLY' …), aber nur als Voll-Match — eine
     mehrsätzige echte Antwort, die das Wort beiläufig enthält, wird NICHT
-    unterdrückt.
+    unterdrückt. Der Leer-Platzhalter des Gateways zählt mit
+    (GATEWAY_LEER_PLATZHALTER), ebenfalls nur als ganze Antwort.
     """
-    return bool(text) and bool(_NO_REPLY_RE.match(text.strip()))
+    if not text:
+        return False
+    text = text.strip()
+    return text == GATEWAY_LEER_PLATZHALTER or bool(_NO_REPLY_RE.match(text))
 
 
 # Nach Stream-Timeout: Der Server arbeitet vermutlich noch am ursprünglichen
