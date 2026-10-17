@@ -126,6 +126,7 @@ voice_assistant/
   state.py               STATE_*, tts_lock, reply_done_event, TurnControl
   bargein.py             Abbruch mitten im Turn ("Stopp Gaston")
   wake_gate.py           Score-Gate, geteilt von Wakeword und Barge-in
+  umgebung.py            Umgebungspegel: im Lärm strenger (Experiment)
   config.py              Profile-Dataclass + YAML-Loader (alt + neu)
   workers.py             Workers: start_stt, start_confirmation, start_openclaw_turn
   mcp_actuator.py        stdio-MCP-Server: haus_ziele/haus_schalten für den Brain
@@ -1177,6 +1178,22 @@ gain-abhängig (ReSpeaker ×4) — ändert sich Hardware/Gain, verschiebt sich d
 Skala. Zweite, am 2026-08-22 sichtbar gewordene Schwäche: **eine absolute
 Schwelle muss zugleich für den leisen Morgen und den lauten Abend passen** —
 der teuerste Fehltrigger lag bei RMS 1691, der verlorene echte Ruf bei 336.
+
+### Umgebungspegel (`umgebung:`, Experiment seit 2026-10-17, Branch `feature/umgebungspegel`)
+
+Jochens Idee: im Lärm (Fernseher, volles Fablab) strenger triggern; wer rufen
+will, schaltet den Fernseher stumm. `umgebung.py` lernt den Ruhepegel selbst
+(unteres Zehntel der Minuten-Mediane über 24 h, `umgebung.json`) und misst den
+Raum gleitend (Median 30 s, ohne die letzten 3 s). Raum ≥ 4× Ruhe → Trigger
+braucht ≥ 4 Frames, außer das Wakewort ist ≥ 6× so laut wie der Raum (Rufer
+am Mikro). Sonst Near-Miss mit `failed_on: "umgebung"`. Jeder Trigger und
+Near-Miss trägt das Feld `umgebung` im `wake_events.log`. Grundlage nur eine
+grobe Messung an denselben Daten (Modul-Docstring): 6 von 9 lauten
+Fernseh-Fehltriggern weg, 5 von 62 echten Rufen im Lärm verloren. Bevor die
+Zahlen fest werden: Replay-Werkzeug gegen gehörte Labels. Der Barge-in ist
+nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
+(hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
+Tests: `tests/test_umgebung.py`.
 
 **Gelabelte Clips gehören gesichert, bevor das Archiv sie löscht.**
 `TRIGGER_AUDIO_DIR` räumt beim Service-Start alles älter als

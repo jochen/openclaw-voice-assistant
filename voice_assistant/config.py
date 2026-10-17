@@ -477,6 +477,23 @@ class DienstWaechterConfig:
 
 
 @dataclass
+class UmgebungConfig:
+    """Umgebungspegel (voice_assistant/umgebung.py): im Lärm triggert das
+    Wakewort strenger. Experiment seit 2026-10-17.
+
+    enabled=False: ohne den Block wird nichts gemessen. scharf=False misst und
+    loggt nur (wake_events.log, Feld ``umgebung``), ohne zu blocken.
+    """
+    enabled: bool = False
+    scharf: bool = True
+    laut_faktor: float = 4.0
+    streng_min_hits: int = 4
+    nah_faktor: float = 6.0
+    gleit_sec: float = 30.0
+    ruhe_stunden: float = 24.0
+
+
+@dataclass
 class MusikDuckingConfig:
     """Musik leiser waehrend eines Turns (services/musik_ducking.py).
 
@@ -767,6 +784,9 @@ class Profile:
     # Dienst-Waechter — fehlt der Block: kein Waechter-Thread.
     dienstwaechter: DienstWaechterConfig = field(default_factory=DienstWaechterConfig)
 
+    # Umgebungspegel — fehlt der Block: kein strengeres Wakewort im Lärm.
+    umgebung: UmgebungConfig = field(default_factory=UmgebungConfig)
+
     # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
     rewind: RewindConfig = field(default_factory=RewindConfig)
 
@@ -1054,6 +1074,18 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         dienste=tuple((str(d["name"]), str(d["url"])) for d in dw_raw.get("dienste") or ()),
     )
 
+    um_raw = raw.get("umgebung") or {}
+    _dum = UmgebungConfig()
+    umgebung = UmgebungConfig(
+        enabled=bool(um_raw.get("enabled", _dum.enabled)),
+        scharf=bool(um_raw.get("scharf", _dum.scharf)),
+        laut_faktor=float(um_raw.get("laut_faktor", _dum.laut_faktor)),
+        streng_min_hits=int(um_raw.get("streng_min_hits", _dum.streng_min_hits)),
+        nah_faktor=float(um_raw.get("nah_faktor", _dum.nah_faktor)),
+        gleit_sec=float(um_raw.get("gleit_sec", _dum.gleit_sec)),
+        ruhe_stunden=float(um_raw.get("ruhe_stunden", _dum.ruhe_stunden)),
+    )
+
     md_raw = raw.get("musik_ducking") or {}
     _dmd = MusikDuckingConfig()
     musik_ducking = MusikDuckingConfig(
@@ -1186,6 +1218,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         actuator=actuator,
         watcher=watcher,
         dienstwaechter=dienstwaechter,
+        umgebung=umgebung,
         musik_ducking=musik_ducking,
         timer=timer,
         aussprache=aussprache,

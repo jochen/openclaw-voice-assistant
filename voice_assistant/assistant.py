@@ -119,6 +119,7 @@ from voice_assistant.nearmiss_shadow import NearMissShadow
 from voice_assistant.rewind import RewindBuffer
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
+from voice_assistant import umgebung as _umgebung
 from voice_assistant.workers import Workers
 
 
@@ -1105,6 +1106,28 @@ def run() -> None:
               f"failed_on=min_rms)")
     else:
         print("🔊 Pegel-Gate aus (wake_rms_min=0)")
+    # Umgebungspegel (umgebung.py): im Lärm strenger. Ohne Block: None.
+    _um_cfg = profile.umgebung
+    umgebung_pegel = None
+    if _um_cfg.enabled:
+        from voice_assistant.config import WORKSPACE as _WS
+        umgebung_pegel = _umgebung.Umgebungspegel(
+            gleit_sec=_um_cfg.gleit_sec, ruhe_stunden=_um_cfg.ruhe_stunden,
+            zustand_datei=os.path.join(_WS, "umgebung.json"), rate=RATE_OW,
+        )
+        print(f"🔊 Umgebungspegel {'scharf' if _um_cfg.scharf else 'nur messen'}: "
+              f"laut ab {_um_cfg.laut_faktor:g}× Ruhe → ≥{_um_cfg.streng_min_hits} Frames, "
+              f"außer Wakewort ≥{_um_cfg.nah_faktor:g}× Raum "
+              f"(Ruhe bisher: {umgebung_pegel.ruhe() or 'noch nicht gelernt'})")
+
+    def _umgebung_urteil(hits: int, wake_rms: float, now: float):
+        if umgebung_pegel is None:
+            return None
+        return _umgebung.entscheide(
+            hits, wake_rms, umgebung_pegel.gleitend(now), umgebung_pegel.ruhe(),
+            _um_cfg.laut_faktor, _um_cfg.streng_min_hits, _um_cfg.nah_faktor,
+            scharf=_um_cfg.scharf,
+        )
 
     # --- Barge-in ("Stopp Gaston"): zweite Wakeword-Instanz fuers Fenster,
     # in dem der Assistent selbst dran ist (Bestaetigung, Denken, Vorlesen).
@@ -1629,6 +1652,12 @@ def run() -> None:
 
             # --- LISTENING ---
             if state == STATE_LISTENING:
+                # Eigene Ansagen (voice_speak_text, Timer) sind kein Raum.
+                if umgebung_pegel is not None and len(audio_16) > 0:
+                    if tts_lock.locked():
+                        umgebung_pegel.luecke()
+                    else:
+                        umgebung_pegel.feed(now, audio_16)
                 if len(audio_16) > 0:
                     wake_ring.append(audio_16.copy())
                     wake_ring_samples += len(audio_16)
@@ -1747,7 +1776,36 @@ def run() -> None:
                         # _archive_level_blocked_nearmiss). Rechnung identisch zum
                         # Replay (tools/wake_rms_replay.py) via voice_assistant.wake_rms.
                         _level_ok, _lvl_rms = _level_gate_ok(wake_ring, _wake_rms_min)
-                        if not _level_ok:
+                        _um = _umgebung_urteil(wake_hits, _wake_level_rms(wake_ring), now)
+                        if _level_ok and _um is not None and not _um.ok:
+                            # Laut, zu kurzer Streak, Rufer nicht nah: Near-Miss.
+                            nm_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            _save_trigger_audio(list(wake_ring), current_wakeword.bundle, "nearmiss", nm_id)
+                            nm_event = {
+                                "result": "nearmiss",
+                                "bundle": current_wakeword.bundle,
+                                "hits": wake_hits,
+                                "peak": round(wake_peak, 3),
+                                "min_hits": current_min_hits,
+                                "threshold": current_threshold,
+                                "failed_on": "umgebung",
+                                "umgebung": _um.als_log(),
+                                "scores": [round(s, 3) for s in recent_scores],
+                                "beam": float(beam) if beam is not None else None,
+                                "audio": f"{nm_id}_{current_wakeword.bundle}_nearmiss.wav",
+                            }
+                            _log_wake_event(nm_event)
+                            if nearmiss_shadow is not None:
+                                nearmiss_shadow.start(nm_event, _pre_roll(wake_ring, _PRE_ROLL_SEC))
+                            print(f"[{now:.1f}s] ⚡ Near-Miss [{current_wakeword.bundle}] "
+                                  f"(laut: Raum {_um.gleitend:.0f}, Ruhe {_um.ruhe:.0f}, "
+                                  f"{wake_hits} Frames < {_um_cfg.streng_min_hits}, "
+                                  f"Wakewort {_um.wake_rms:.0f} nicht nah){beam_str}")
+                            leds.set_phase(LED_NEAR_MISS)
+                            near_miss_until = now + 0.6
+                            if musik_ducker is not None:
+                                musik_ducker.verworfen()
+                        elif not _level_ok:
                             nm_event = _archive_level_blocked_nearmiss(
                                 wake_ring, current_wakeword.bundle,
                                 wake_hits, wake_peak,
@@ -1788,6 +1846,7 @@ def run() -> None:
                             # ein Sweep braucht beide Klassen im selben Log.
                             _log_wake_event({
                                 "result": "trigger",
+                                **({"umgebung": _um.als_log()} if _um is not None else {}),
                                 "bundle": trigger_audio_bundle,
                                 "hits": wake_hits,
                                 "peak": round(wake_peak, 3),
@@ -1869,6 +1928,8 @@ def run() -> None:
                             "min_hits": current_min_hits,
                             "threshold": current_threshold,
                             "failed_on": "min_hits" if wake_hits < current_min_hits else "min_peak",
+                            **({"umgebung": _umgebung_urteil(wake_hits, _wake_level_rms(wake_ring), now).als_log()}
+                               if umgebung_pegel is not None else {}),
                             "scores": [round(s, 3) for s in recent_scores],
                             "beam": float(beam) if beam is not None else None,
                             "audio": f"{nm_id}_{current_wakeword.bundle}_nearmiss.wav",
@@ -1928,9 +1989,11 @@ def run() -> None:
                                 seconds=_rewind_cfg.before_trigger_seconds,
                                 extra={"wake_audio": turn_audio},
                             )
+                        _um = _umgebung_urteil(wake_hits, _wake_level_rms(wake_ring), now)
                         _log_wake_event({
                             "result": "trigger",
                             "via": "timeout",
+                            **({"umgebung": _um.als_log()} if _um is not None else {}),
                             "bundle": trigger_audio_bundle,
                             "hits": wake_hits,
                             "peak": round(wake_peak, 3),
