@@ -36,12 +36,15 @@ class FakeBridge:
         if was == "duck":
             if not self.spielt:
                 return {"ducked": False, "reason": "not_playing"}
+            if body.get("lease_id"):
+                return {"ducked": True, "lease_id": body["lease_id"], "renewed": True}
             self._n += 1
             return {"ducked": True, "lease_id": f"L{self._n}"}
         return {"restored": True}
 
     def was(self):
-        return [(w, b.get("lease_id")) for w, b in self.aufrufe]
+        return [(w, b.get("lease_id") or b.get("source") if w == "unduck" else b.get("lease_id"))
+                for w, b in self.aufrufe]
 
 
 def _bauen(**kw):
@@ -70,7 +73,7 @@ class WannGedaempftWirdTest(unittest.TestCase):
         self.assertEqual(bridge.was(), [("duck", None)], "kein zweites duck vor der Frist")
         d.zustand(STATE_LISTENING, False)
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
 
     def test_satelliten_turn_daempft_nicht(self):
         d, bridge = _bauen()
@@ -80,7 +83,7 @@ class WannGedaempftWirdTest(unittest.TestCase):
         _thread(d)
         self.assertEqual(bridge.aufrufe, [])
 
-    def test_langer_turn_erneuert_und_gibt_alle_leases_frei(self):
+    def test_langer_turn_erneuert_mit_der_eigenen_lease(self):
         d, bridge = _bauen()
         d.zustand(STATE_RECORDING, False)
         _thread(d)
@@ -89,7 +92,7 @@ class WannGedaempftWirdTest(unittest.TestCase):
         d.zustand(STATE_LISTENING, False)
         _thread(d)
         self.assertEqual(bridge.was(),
-                         [("duck", None), ("duck", None), ("unduck", "L1"), ("unduck", "L2")])
+                         [("duck", None), ("duck", "L1"), ("unduck", "gaston")])
 
     def test_ohne_musik_beim_ruf_wird_nicht_nachgedaempft(self):
         # Gaston startet im Turn selbst Musik — die soll nicht leise werden.
@@ -133,14 +136,14 @@ class DenkpauseTest(unittest.TestCase):
         self.assertEqual(bridge.was(), [("duck", None)])
         self._denken(d)
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
         d.zustand(STATE_WAITING, False, True)      # Antwort kommt
         _thread(d)
         d.zustand(STATE_PAUSE, False)
         d.zustand(STATE_LISTENING, False)
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1"),
-                                        ("duck", None), ("unduck", "L2")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston"),
+                                        ("duck", None), ("unduck", "gaston")])
 
     def test_selbst_gestartete_musik_bleibt_nach_der_denkpause_laut(self):
         d, bridge = _bauen(spielt=False)
@@ -166,7 +169,7 @@ class DenkpauseTest(unittest.TestCase):
 class VerloreneLeaseTest(unittest.TestCase):
     """2026-10-18 22:06:51: duck im Timeout, die Bridge hatte es angenommen."""
 
-    def test_nach_duck_ohne_antwort_gibt_das_ende_alle_frei(self):
+    def test_erneuerung_ohne_antwort_bleibt_eine_lease(self):
         d, bridge = _bauen()
         d.zustand(STATE_RECORDING, False)
         _thread(d)
@@ -184,17 +187,32 @@ class VerloreneLeaseTest(unittest.TestCase):
         _thread(d)
         d.zustand(STATE_LISTENING, False)
         _thread(d)
-        self.assertEqual(bridge.was()[-3:],
-                         [("unduck", "L1"), ("unduck", "L3"), ("unduck", None)])
+        self.assertEqual(bridge.was(),
+                         [("duck", None), ("duck", "L1"), ("duck", "L1"), ("unduck", "gaston")])
         self.assertFalse(d._duck_fehler)
 
-    def test_ohne_fehler_nur_die_eigenen(self):
+    def test_erstes_duck_ohne_antwort_wird_trotzdem_freigegeben(self):
+        d, bridge = _bauen()
+        echt = bridge.post
+
+        def timeout(url, body):
+            echt(url, body)
+            raise TimeoutError("timed out")
+        d._post = timeout
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        d._post = echt
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
+
+    def test_ende_gibt_nach_source_frei(self):
         d, bridge = _bauen()
         d.zustand(STATE_RECORDING, False)
         _thread(d)
         d.zustand(STATE_LISTENING, False)
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
 
 
 class BridgeNeustartTest(unittest.TestCase):
@@ -210,7 +228,7 @@ class BridgeNeustartTest(unittest.TestCase):
             antwort = echt(url, body)
             if url.endswith("/unduck"):
                 return {"restored": False, "reason": "not_ducked"}
-            return antwort        # ohne already_ducked: wie nach einem Neustart
+            return {"ducked": True, "lease_id": "L9"}   # weder renewed noch already_ducked
         d._post = vergesslich
         d._letztes_duck -= 16
         with self.assertLogs("voice_assistant.services.musik_ducking", "WARNING") as cm:
@@ -225,9 +243,7 @@ class BridgeNeustartTest(unittest.TestCase):
 
         def wie_die_bridge(url, body):
             antwort = echt(url, body)
-            if url.endswith("/duck") and len(d._leases) > 0:
-                antwort = dict(antwort, already_ducked=True)
-            return antwort
+            return antwort        # Erneuerung: renewed
         d._post = wie_die_bridge
         d.zustand(STATE_RECORDING, False)
         _thread(d)
@@ -251,7 +267,7 @@ class VorabTest(unittest.TestCase):
         self.assertEqual(bridge.was(), [("duck", None)], "kein zweites duck beim Turn")
         d.zustand(STATE_LISTENING, False)
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
 
     def test_vom_pegel_gate_verworfen_gibt_sofort_frei(self):
         d, bridge = _bauen()
@@ -259,7 +275,7 @@ class VorabTest(unittest.TestCase):
         _thread(d)
         d.verworfen()
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
 
     def test_ohne_turn_greift_die_frist(self):
         from voice_assistant.services import musik_ducking
@@ -272,7 +288,7 @@ class VorabTest(unittest.TestCase):
         d._vorab_seit -= musik_ducking._VORAB_FRIST + 1
         d.zustand(STATE_LISTENING, False)
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
 
 
 class AnsageTest(unittest.TestCase):
@@ -282,7 +298,7 @@ class AnsageTest(unittest.TestCase):
             _thread(d)
             self.assertEqual(bridge.was(), [("duck", None)])
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
 
     def test_ruf_waehrend_der_ansage_haelt_die_daempfung(self):
         d, bridge = _bauen()
@@ -294,7 +310,7 @@ class AnsageTest(unittest.TestCase):
         self.assertEqual(bridge.was(), [("duck", None)], "Turn laeuft noch")
         d.zustand(STATE_LISTENING, False)
         _thread(d)
-        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "gaston")])
 
 
 class AnnounceWorkerTest(unittest.TestCase):

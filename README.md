@@ -287,9 +287,9 @@ API of the music system with leases (here: a bridge in front of Lyrion Music
 Server):
 
 ```
-POST {url}/api/v1/rooms/{raum}/duck    {"source", "level"?, "timeout_s"?}
-     -> {"ducked": true, "lease_id": "…"}  or  {"ducked": false, "reason": "…"}
-POST {url}/api/v1/rooms/{raum}/unduck  {"lease_id"}
+POST {url}/api/v1/rooms/{raum}/duck    {"source", "lease_id"?, "level"?, "timeout_s"?}
+     -> {"ducked": true, "lease_id": "…", "renewed"?}  or  {"ducked": false, "reason": "…"}
+POST {url}/api/v1/rooms/{raum}/unduck  {"source"}
 ```
 
 ```yaml
@@ -313,10 +313,12 @@ neither the ringing nor "the timer has expired".
 While the brain is thinking and the assistant says nothing, the music comes
 back up after 4 s and is ducked again for the next sentence or "one moment":
 ducking is only needed for the recording and for our own output. The price:
-a "stop" during that pause has to compete with the music. If a `duck` call
-times out, the bridge may still have created a lease the assistant never got
-the id of; the turn then ends with an `unduck` without `lease_id`, which a
-bridge should treat as "release all".
+a "stop" during that pause has to compete with the music. Renewals carry the
+assistant's own `lease_id`, and the release goes by `source`: a lost reply or
+a restart of the bridge in the middle of a turn then leaves no orphaned lease
+behind. A bridge should also keep its ducking state (previous volume, leases)
+across a restart; otherwise the next renewal looks like a first `duck`, and
+the ducked volume is "restored" at the end.
 
 ## Wake-word level gate (`wake_rms_min`)
 

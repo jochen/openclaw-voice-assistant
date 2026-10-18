@@ -467,10 +467,12 @@ den Ruf, gibt `verworfen()` sofort frei, sonst nach 3 s `_VORAB_FRIST`. Satellit
 dämpfen nichts. **Während der Brain denkt, ist die Musik laut** (Jochen
 2026-10-18): in STATE_WAITING ohne Ausgabe (`tts_lock` frei) nach `_HALTEN`
 4 s unduck, zum nächsten Satz/Lebenszeichen neu duck — aber nur, wenn das
-erste duck des Turns gedämpft hatte. Gemessen an der Bridge: jedes duck legt
-eine neue Lease an und hält alle am Leben, unduck ohne id gibt alle frei.
-Lief ein duck in den Timeout (22:06:51, Bridge beschäftigt), endet der Turn
-deshalb mit einem unduck ohne id. Das Freigeben steht jetzt im Log. Erneuert wird (Lease 30 s, alle 15 s) nur, wenn das erste duck
+erste duck des Turns gedämpft hatte. Erneuert wird mit der eigenen
+`lease_id`, freigegeben mit `unduck {"source": "gaston"}`. Anlass 22:06: die
+Bridge wurde mitten im Ducking neu gestartet, vergaß die alte Lautstärke und
+„stellte“ am Ende 2 % „wieder her“ (Bridge-Log); sie rettet ihren Zustand
+seither über Neustarts. Freigeben und eine Erneuerung, die die Bridge als
+erstes duck nimmt, stehen im Log. Erneuert wird (Lease 30 s, alle 15 s) nur, wenn das erste duck
 wirklich gedämpft hat, sonst würde Musik leise, die Gaston im selben Turn
 gestartet hat. Alle erhaltenen `lease_id`s werden am Ende freigegeben: ob
 ein zweites duck eine neue Lease anlegt, war beim Bau nicht messbar (es lief

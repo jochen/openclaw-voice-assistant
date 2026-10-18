@@ -291,9 +291,9 @@ REST-Schnittstelle der Musikanlage mit Leases (hier eine Bridge vor dem Lyrion
 Music Server):
 
 ```
-POST {url}/api/v1/rooms/{raum}/duck    {"source", "level"?, "timeout_s"?}
-     -> {"ducked": true, "lease_id": "…"}  oder  {"ducked": false, "reason": "…"}
-POST {url}/api/v1/rooms/{raum}/unduck  {"lease_id"}
+POST {url}/api/v1/rooms/{raum}/duck    {"source", "lease_id"?, "level"?, "timeout_s"?}
+     -> {"ducked": true, "lease_id": "…", "renewed"?}  oder  {"ducked": false, "reason": "…"}
+POST {url}/api/v1/rooms/{raum}/unduck  {"source"}
 ```
 
 ```yaml
@@ -318,10 +318,13 @@ das Klingeln noch „Der Timer ist abgelaufen“.
 Während der Brain denkt und der Assistent nichts sagt, wird die Musik nach
 4 s wieder laut und zum nächsten Satz oder „Einen Moment“ neu gedämpft:
 gebraucht wird die Dämpfung nur für die Aufnahme und die eigene Ausgabe. Der
-Preis: ein „Stopp“ in dieser Pause muss gegen die Musik an. Läuft ein `duck`
-in den Timeout, hat die Bridge womöglich trotzdem eine Lease angelegt, deren
-id der Assistent nie bekam; der Turn endet dann mit einem `unduck` ohne
-`lease_id`, das eine Bridge als „alle freigeben“ verstehen sollte.
+Preis: ein „Stopp“ in dieser Pause muss gegen die Musik an. Erneuert wird mit
+der eigenen `lease_id`, freigegeben nach `source`: eine verlorene Antwort oder
+ein Neustart der Bridge mitten im Turn hinterlässt dann keine verwaiste
+Lease. Eine Bridge sollte außerdem ihren Ducking-Zustand (alte Lautstärke,
+Leases) über einen Neustart retten; sonst sieht die nächste Erneuerung aus
+wie ein erstes `duck`, und am Ende wird die gedämpfte Lautstärke
+„wiederhergestellt“.
 
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 

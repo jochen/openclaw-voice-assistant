@@ -2,12 +2,17 @@
 
 Gegenstelle ist eine REST-Schnittstelle mit Lease-Semantik:
 
-    POST {url}/api/v1/rooms/{raum}/duck    {"source", "level"?, "timeout_s"?}
-         -> {"ducked": true, "lease_id": "…"} | {"ducked": false, "reason": "…"}
-    POST {url}/api/v1/rooms/{raum}/unduck  {"lease_id"}
+    POST {url}/api/v1/rooms/{raum}/duck    {"source", "lease_id"?, "level"?, "timeout_s"?}
+         -> {"ducked": true, "lease_id": "…", "renewed"?, "already_ducked"?}
+          | {"ducked": false, "reason": "…"}
+    POST {url}/api/v1/rooms/{raum}/unduck  {"source"} | {"lease_id"} | {}
 
 Die Bridge stellt nach ``timeout_s`` ohne erneutes duck selbst wieder her
-(Absturzschutz). Ein laengerer Turn erneuert deshalb alle ``erneuern_s``.
+(Absturzschutz). Ein laengerer Turn erneuert deshalb alle ``erneuern_s``, mit
+der eigenen ``lease_id``: dann bleibt es eine Lease, auch wenn eine Antwort
+verloren geht oder die Bridge dazwischen neu startet (sie speichert ihren
+Ducking-Zustand seit 2026-10-18). Freigegeben wird nach ``source``, das
+erfasst auch eine Lease, deren Antwort nie ankam.
 
 Regeln:
 
@@ -21,12 +26,12 @@ Regeln:
   zum naechsten Satz oder Lebenszeichen neu gedaempft. Der tts_lock wird vor
   der Synthese genommen, die gibt dem Echo also Vorlauf. Anlass: 2026-10-18
   22:05, ein Soulseek-Auftrag, gut 60 s Denken bei leiser Musik. Preis: ein
-  „Stopp Gaston“ waehrend des Denkens muss gegen die volle Musik an. Schon beim Ueberschreiten
-  der Schwelle (``vorab()``), nicht erst beim Turn-Beginn: der kommt erst, wenn
-  die Treffer-Serie abreisst, gemessen 0,62–0,78 s spaeter (2026-10-13, bei
-  laufender Musik). Wird der Ruf danach doch verworfen (Pegel-Gate), gibt
-  ``verworfen()`` sofort frei; jeden anderen Weg ohne Turn faengt
-  ``_VORAB_FRIST`` ab.
+  „Stopp Gaston“ waehrend des Denkens muss gegen die volle Musik an.
+- **Schon beim Ueberschreiten der Schwelle** (``vorab()``), nicht erst beim
+  Turn-Beginn: der kommt erst, wenn die Treffer-Serie abreisst, gemessen
+  0,62–0,78 s spaeter (2026-10-13, bei laufender Musik). Wird der Ruf danach
+  doch verworfen (Pegel-Gate), gibt ``verworfen()`` sofort frei; jeden
+  anderen Weg ohne Turn faengt ``_VORAB_FRIST`` ab.
 - **Ansagen von aussen** (``voice_speak_text``) daempfen ebenfalls, solange sie
   laufen (``ansage()``). Der Timer nicht (Jochen, 2026-10-13): weder sein
   Klingeln noch „Der Timer ist abgelaufen“.
@@ -41,19 +46,14 @@ Regeln:
   nichts lief. Verglichen wird, in welchen Raeumen beim Ruf und vor dem
   Follow-up Musik laeuft (GET /api/v1/rooms) — die Bridge sagt nicht, welcher
   Raum in welchem liegt, und Gaston spielt in Unterraeumen.
-- **Startet die Bridge mitten im Turn neu** (Jochen 2026-10-18 als zweite
-  moegliche Ursache fuer 22:06:51), vergisst sie die Leases und die alte
-  Lautstaerke; die naechste Erneuerung merkt sich dann die gedaempfte als
-  die alte. Hier nur sichtbar gemacht (zwei Warnungen), beheben kann es nur
-  die Bridge; sie verweigert seither den Neustart, solange Musik laeuft.
-- **Jedes duck legt eine neue Lease an, und jedes haelt alle anderen am
-  Leben** (gemessen 2026-10-18 an der Bridge; unduck ohne ``lease_id`` gibt
-  alle frei). Am Ende wird jede erhaltene ``lease_id`` freigegeben. Lief ein
-  duck in den Timeout, hat die Bridge es womoeglich doch angenommen, und
-  diese Lease kennen wir nicht: sie hielt die Musik nach dem Turn bis zum
-  Auto-Restore leise, solange wir weiter erneuerten noch laenger. Dann geht
-  am Ende ein unduck ohne id hinterher (gibt auch fremde Leases frei; ausser
-  Gaston daempft heute niemand).
+- **Warum Erneuern mit id und Freigeben nach source** (2026-10-18 22:06,
+  Bridge-Log): die Bridge wurde mitten im Ducking zweimal neu gestartet
+  (Deploys auf ihrer Seite). Sie vergass Leases und alte Lautstaerke,
+  Gastons naechste Erneuerung war fuer sie ein erstes duck und merkte sich
+  die gedaempfte Lautstaerke als die alte: am Ende „wiederhergestellt“ auf
+  2 %. Damals legte jedes duck eine neue Lease an. Beides hat die Bridge am
+  selben Abend behoben; bleibt eine Erneuerung trotzdem ohne ``renewed`` und
+  ``already_ducked``, war unsere Lease weg, und das steht als Warnung im Log.
 """
 
 from __future__ import annotations
@@ -75,6 +75,9 @@ _VORAB_FRIST = 3.0
 
 # So zaehlt ein Raum als "Musik laeuft": spielt oder schaltet sich gerade ein.
 _SPIELT = ("play", "starting")
+
+# Unter diesem Namen daempft Gaston; unduck nach source gibt genau die frei.
+_QUELLE = "gaston"
 
 # So lange ohne eigene Ausgabe in STATE_WAITING, bis die Musik wieder hoch
 # darf: haelt sie zwischen zwei Saetzen einer Antwort unten. Geschaetzt.
@@ -233,27 +236,22 @@ class MusikDucker:
     def _freigeben(self, anlass: str) -> None:
         leases, self._leases = self._leases, []
         fehler, self._duck_fehler = self._duck_fehler, False
+        # Ein duck ohne Antwort kann trotzdem eine Lease angelegt haben.
         if not leases and not fehler:
             return
         t0 = time.monotonic()
-        antwort = None
-        vergessen = False
-        for lease in dict.fromkeys(leases):
-            antwort = self._aufruf("unduck", {"lease_id": lease})
-            vergessen |= bool(antwort and antwort.get("reason") == "not_ducked")
-        if vergessen:
+        antwort = self._aufruf("unduck", {"source": _QUELLE})
+        if leases and antwort and antwort.get("reason") == "not_ducked":
             log.warning("Musik %s: die Bridge kannte unsere Lease nicht mehr "
-                        "(Neustart?) — Musik bleibt womoeglich leise", self._raum)
-        if fehler:
-            # Eine Lease ohne Antwort kennen wir nicht (siehe Modul-Docstring).
-            antwort = self._aufruf("unduck", {})
-        log.info("Musik %s freigegeben (%s, %d Lease(s)%s, %.0f ms): %s", self._raum,
-                 anlass, len(leases), ", alle" if fehler else "",
+                        "— Musik bleibt womoeglich leise", self._raum)
+        log.info("Musik %s freigegeben (%s, %.0f ms): %s", self._raum, anlass,
                  (time.monotonic() - t0) * 1000, antwort)
 
     def _duck(self) -> None:
         self._letztes_duck = time.monotonic()
-        body: dict = {"source": "gaston", "timeout_s": self._lease_s}
+        body: dict = {"source": _QUELLE, "timeout_s": self._lease_s}
+        if self._leases:
+            body["lease_id"] = self._leases[-1]
         if self._level is not None:
             body["level"] = self._level
         t0 = time.monotonic()
@@ -263,14 +261,15 @@ class MusikDucker:
             return
         if antwort.get("ducked") and antwort.get("lease_id"):
             erstes = not self._leases
-            if not erstes and not antwort.get("already_ducked"):
-                # Eine Erneuerung, die die Bridge als erstes duck nimmt: sie hat
-                # unsere Leases vergessen und merkt sich jetzt die GEDAEMPFTE
+            if not erstes and not (antwort.get("renewed") or antwort.get("already_ducked")):
+                # Die Bridge nimmt die Erneuerung als erstes duck: unsere Lease
+                # war weg, und sie merkt sich jetzt womoeglich die GEDAEMPFTE
                 # Lautstaerke als die alte (previous_volume).
-                log.warning("Musik %s: Erneuerung als neues duck (Bridge neu "
-                            "gestartet?), previous_volume=%s", self._raum,
-                            antwort.get("previous_volume"))
-            self._leases.append(str(antwort["lease_id"]))
+                log.warning("Musik %s: Erneuerung als neues duck, previous_volume=%s",
+                            self._raum, antwort.get("previous_volume"))
+            lease = str(antwort["lease_id"])
+            if lease not in self._leases:
+                self._leases.append(lease)
             if erstes:
                 log.info("Musik %s gedaempft (%.0f ms)", self._raum,
                          (time.monotonic() - t0) * 1000)
