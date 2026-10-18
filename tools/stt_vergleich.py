@@ -213,6 +213,24 @@ Messreihe
                 erkennt Laya schon richtig, die Rückfrage kommt von Regel A
                 (Gruppenwort exakt im Satz). Der Rest sind Raumnamen-
                 Verhörer ("Zischlicht", "Kirchenlicht", "Wohnzimmerholder").
+
+    2026-10-18  Kanal 1 gegen Kanal 2 (kanal2_quelle asr), Qwen3-ASR wie live
+                (--kanaele --qwen: Kontext, Sprache German), 317 Clips
+                2026-10-03 12:11..10-18, 311 mit Live-Transkript, 28 gelabelt;
+                capabilities b05e5198. Anlass: "Gaston, schalte die
+                Fernsehelektronik ein" kam auf Kanal 1 als "Gasthaus schaltet
+                die französische Kultur ein", auf Kanal 2 als "...Fernsehlektoren".
+
+                              = live  richtig verp. FALSCH
+                qwen Kanal 1  227/311    27     1     0
+                qwen Kanal 2  101/311    24     4     0
+
+                Über alle Clips: Kanal 1 schaltet, Kanal 2 fragt zurück 11×,
+                umgekehrt 5×. Kanal 2 verbiegt die Vokale ("Rollus", "Rollös"
+                -> Regel A fragt zurück), und der Fernsehelektronik-Satz wäre
+                dort fernseher/ein geworden. Vorbehalt: die Labels gehören
+                zum Satz, den Kanal 1 gehört hat. Ergebnis: STT bleibt auf
+                Kanal 1.
 """
 
 from __future__ import annotations
@@ -243,7 +261,7 @@ from voice_assistant.services import aktuator_schatten  # noqa: E402
 from voice_assistant.services.actuator import Actuator  # noqa: E402
 from voice_assistant.services.aktuator_schatten import ausgang  # noqa: E402
 from voice_assistant.services.speaches import SpeachesState  # noqa: E402
-from voice_assistant.services.stt import SpeachesStt, chunks_to_wav_bytes  # noqa: E402
+from voice_assistant.services.stt import LlamaCppAsrStt, SpeachesStt, chunks_to_wav_bytes  # noqa: E402
 from tools.aktuator_vergleich import bewerte  # noqa: E402
 
 _TESTSET = os.path.join(_REPO, "testsets", "actuator_tor.jsonl")
@@ -303,6 +321,36 @@ def transkribiere(stt: SpeachesStt, wav: bytes) -> tuple[str | None, float, int]
     nsp = sum(s.get("no_speech_prob", 0.0) for s in seg) / len(seg) if seg else 0.0
     text = (r.get("text") or "").strip()
     return (None if nsp >= 0.5 or not text else text), round(nsp, 2), ms
+
+
+class _QwenWieLive:
+    """Qwen3-ASR mit der Live-Anfrage, hinter der Schnittstelle von SpeachesStt.
+
+    Kontext wie assistant._stt_kontext (Wakewort + je Ziel der erste Name),
+    Sprache aus stt_llamacpp_sprache. Ohne Segmente gibt es kein
+    no_speech_prob, verworfen wird nur ein leerer Text.
+    """
+
+    def __init__(self, profil, aktuator) -> None:
+        self.profil = profil
+        self.aktuator = aktuator            # () -> Actuator | None, entsteht später
+        self.qwen = LlamaCppAsrStt(profil.stt_llamacpp_url,
+                                   sprache=profil.stt_llamacpp_sprache or None)
+
+    def _kontext(self) -> str | None:
+        akt = self.aktuator()
+        if not (self.profil.stt_llamacpp_kontext and akt and akt.ziele):
+            return None
+        namen: list[str] = []
+        for z in akt.ziele:
+            n = (z.get("namen") or [None])[0]
+            if n and n not in namen:
+                namen.append(n)
+        wort = self.profil.wakewords[0].bundle.replace("_", " ").title()
+        return f"{wort}, " + ", ".join(namen) + "."
+
+    def transcribe_raw(self, wav: bytes) -> dict:
+        return {"text": self.qwen._anfrage(wav, self._kontext())}
 
 
 def export_wavs(ziel: str, ordner: str) -> int:
@@ -479,6 +527,9 @@ def main() -> int:
                     help="statt zweier Modelle: Modell A auf Kanal 1 (*_rec.wav, live) "
                          "gegen Kanal 2 (*_rec_kanal2.wav)")
     ap.add_argument("--seit", help="nur Clips ab diesem Zeitpunkt (JJJJMMTT_HHMMSS oder ISO)")
+    ap.add_argument("--qwen", action="store_true",
+                    help="mit --kanaele: Qwen3-ASR wie live (stt_llamacpp_url, Gerätenamen als "
+                         "Kontext, feste Sprache) statt Modell A über Speaches")
     args = ap.parse_args()
     if args.export_wavs:
         return export_wavs(args.export_wavs, args.ordner)
@@ -495,12 +546,14 @@ def main() -> int:
     # Variante = (Modell, Datei-Endung). Zwei Modelle auf derselben Aufnahme,
     # oder (--kanaele) dasselbe Modell auf beiden Kanaelen derselben Aufnahme.
     if args.kanaele:
-        m = args.modelle[0]
+        m = "qwen" if args.qwen else args.modelle[0]
         varianten = {f"{_kurz(m)} Kanal 1": (m, "_rec.wav"),
                      f"{_kurz(m)} Kanal 2": (m, "_rec_kanal2.wav")}
     else:
         varianten = {m: (m, "_rec.wav") for m in args.modelle}
-    stts = {m: SpeachesStt(SpeachesState(), base, m) for m, _ in set(varianten.values())}
+    stts = {m: (_QwenWieLive(profil, lambda: akt) if m == "qwen"
+                else SpeachesStt(SpeachesState(), base, m))
+            for m, _ in set(varianten.values())}
     clips = sorted(glob.glob(os.path.join(args.ordner, "*_rec.wav")))
     if args.kanaele:
         clips = [c for c in clips if os.path.exists(c[:-len("_rec.wav")] + "_rec_kanal2.wav")]
