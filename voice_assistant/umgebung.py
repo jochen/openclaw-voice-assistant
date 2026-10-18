@@ -47,6 +47,10 @@ _OHNE_LETZTE_SEC = 3.0
 _MINUTE = 60.0
 # Erst ab so vielen Minuten-Werten gilt der Ruhepegel als gelernt.
 _RUHE_MIN_WERTE = 30
+# Darunter ist es kein Raum, sondern ein stummes Mikrofon: 2026-10-18 kamen
+# 00:16-04:32 exakt Nullen, der Ruhepegel fiel auf 0 und die Regel war aus.
+# Ein echter ruhiger Raum lag bei 23-26.
+_DIGITALE_STILLE = 1.0
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,8 @@ class Umgebungspegel:
         for i in range(n):
             f = a[i * self._fenster_n:(i + 1) * self._fenster_n]
             rms = float(np.sqrt(np.mean(f * f)))
+            if rms < _DIGITALE_STILLE:
+                continue
             self._fenster.append((now, rms))
             self._minute_dazu(now, rms)
         self._rest = a[n * self._fenster_n:]
@@ -160,7 +166,8 @@ class Umgebungspegel:
         try:
             with open(self._datei) as f:
                 for t, r in json.load(f).get("minuten", []):
-                    self._minuten.append((float(t), float(r)))
+                    if float(r) >= _DIGITALE_STILLE:    # Altbestand vor dem Filter
+                        self._minuten.append((float(t), float(r)))
         except (OSError, ValueError, TypeError):
             pass
 
