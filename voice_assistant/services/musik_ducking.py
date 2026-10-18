@@ -116,6 +116,8 @@ class MusikDucker:
         self._duck_fehler = False     # ein duck ohne Antwort: Lease evtl. unbekannt
         self._ausgabe_zuletzt = 0.0
         self._thread: threading.Thread | None = None
+        # Musik-Befehle an dieselbe Bridge (musik_befehle.py), wenn eingeschaltet.
+        self.befehle = None
 
     # --- Hauptschleife -----------------------------------------------------
 

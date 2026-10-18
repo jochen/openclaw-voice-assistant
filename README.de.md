@@ -327,6 +327,21 @@ Leases) über einen Neustart retten; sonst sieht die nächste Erneuerung aus
 wie ein erstes `duck`, und am Ende wird die gedämpfte Lautstärke
 „wiederhergestellt“.
 
+### Einfache Musik-Befehle ohne Brain (`musik_ducking.befehle`, optional)
+
+„Stopp die Musik“, „Pause“, „Musik weiter“, „nächstes Lied“, „Musik
+lauter/leiser“ liest ein fester Erkenner (`services/musik_parser.py`, ohne
+Modell; deutsche Muster, für eine andere Sprache dort ersetzen) und schickt
+sie direkt an die Bridge: `POST {url}/api/v1/rooms/{raum}/control {"action",
+"source"}`. Über den Brain dauerte derselbe Satz 13–29 s. Der Erkenner ist
+streng: „Musik“/„Lied“ muss im Satz stehen (außer bei einem bloßen
+„Pause“), genau eine Aktion, keine Verneinung, keine Frage. Nur im Erst-Turn
+nach dem Wakewort, nie am Satelliten. Spielt im Raum des Haupt-Mikrofons nichts,
+aber in genau einem anderen Raum, wirken „stopp“ und „Pause“ dort. Was die
+Bridge sonst ablehnt (mehrere Räume spielen, nichts zum Fortsetzen), geht
+unverändert an den Brain. Änderungen nur gegen `tools/musik_parser_test.py`
+(FALSCH muss 0 bleiben).
+
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 
 Neben dem Score-Gate gibt es ein optionales **Pegel-Gate**: der RMS des

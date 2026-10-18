@@ -1,0 +1,54 @@
+{"satz": "Gaston, stopp die Musik.", "erwartet": {"aktion": "stop", "raum": null}}
+{"satz": "Gaston, stoppe bitte die Musik.", "erwartet": {"aktion": "stop", "raum": null}}
+{"satz": "Gaston, Musik stopp.", "erwartet": {"aktion": "stop", "raum": null}}
+{"satz": "Gaston, Musik aus.", "erwartet": {"aktion": "stop", "raum": null}}
+{"satz": "Gaston, mach die Musik aus.", "erwartet": {"aktion": "stop", "raum": null}}
+{"satz": "Gaston, schalte die Musik aus.", "erwartet": {"aktion": "stop", "raum": null}}
+{"satz": "Gaston, hör auf mit der Musik.", "erwartet": {"aktion": "stop", "raum": null}}
+{"satz": "Gaston, stopp die Musik in der Küche.", "erwartet": {"aktion": "stop", "raum": "Küche"}}
+{"satz": "Gaston, mach die Musik im Bad aus.", "erwartet": {"aktion": "stop", "raum": "Bad"}}
+{"satz": "Gaston, Pause.", "erwartet": {"aktion": "pause", "raum": null}}
+{"satz": "Gaston, pausiere die Musik.", "erwartet": {"aktion": "pause", "raum": null}}
+{"satz": "Gaston, mach mal Pause mit der Musik.", "erwartet": {"aktion": "pause", "raum": null}}
+{"satz": "Gaston, Musik pausieren.", "erwartet": {"aktion": "pause", "raum": null}}
+{"satz": "Gaston, Musik weiter.", "erwartet": {"aktion": "resume", "raum": null}}
+{"satz": "Gaston, spiel die Musik weiter.", "erwartet": {"aktion": "resume", "raum": null}}
+{"satz": "Gaston, mach die Musik wieder an.", "erwartet": {"aktion": "resume", "raum": null}}
+{"satz": "Gaston, Musik weiter in der Küche.", "erwartet": {"aktion": "resume", "raum": "Küche"}}
+{"satz": "Gaston, nächstes Lied.", "erwartet": {"aktion": "next", "raum": null}}
+{"satz": "Gaston, nächster Titel.", "erwartet": {"aktion": "next", "raum": null}}
+{"satz": "Gaston, das nächste Lied bitte.", "erwartet": {"aktion": "next", "raum": null}}
+{"satz": "Gaston, überspring das Lied.", "erwartet": {"aktion": "next", "raum": null}}
+{"satz": "Gaston, spiel das nächste Lied.", "erwartet": {"aktion": "next", "raum": null}}
+{"satz": "Gaston, vorheriges Lied.", "erwartet": {"aktion": "previous", "raum": null}}
+{"satz": "Gaston, das Lied davor bitte.", "erwartet": {"aktion": "previous", "raum": null}}
+{"satz": "Gaston, spiel das letzte Lied nochmal.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, Musik lauter.", "erwartet": {"aktion": "volume_up", "raum": null}}
+{"satz": "Gaston, mach die Musik lauter.", "erwartet": {"aktion": "volume_up", "raum": null}}
+{"satz": "Gaston, die Musik bitte etwas lauter.", "erwartet": {"aktion": "volume_up", "raum": null}}
+{"satz": "Gaston, Musik leiser.", "erwartet": {"aktion": "volume_down", "raum": null}}
+{"satz": "Gaston, mach die Musik leiser.", "erwartet": {"aktion": "volume_down", "raum": null}}
+{"satz": "Gaston, die Musik in der Küche leiser.", "erwartet": {"aktion": "volume_down", "raum": "Küche"}}
+{"satz": "Gaston, spiel was von Queen.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, spiel Musik.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, spiel das Lied nochmal von vorne.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, was läuft da gerade?", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, mir gefällt das Lied.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, spiel nach dem Lied was von Enya.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, stopp.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Stopp Gaston.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, stopp alle Rollos.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, mach das Licht aus.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, das nächste Licht bitte.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, mach das Radio leiser.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, mach den Fernseher leiser.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, lauter.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, weiter.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, stopp den Timer.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, wie heißt das nächste Lied?", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, die Musik ist zu laut, findest du nicht?", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, wann ist die nächste Musikprobe?", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, kannst du die Musik in der Küche weiterspielen, wo ich jetzt bin?", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, mach die Musik im ganzen Haus an.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, die Musik nicht ausmachen.", "erwartet": {"aktion": null, "raum": null}}
+{"satz": "Gaston, stopp, nicht die Musik ausmachen.", "erwartet": {"aktion": null, "raum": null}}

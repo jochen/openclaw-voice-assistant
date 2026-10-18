@@ -26,6 +26,7 @@ from voice_assistant.config import (
     TIMER_KLINGEL_PATH,
     TIMER_LOG_PATH,
     TIMER_STATE_PATH,
+    MUSIK_LOG_PATH,
     ENDPOINT_LOG_PATH,
     FOLLOWUP_BEEP_PATH,
     LAST_RECORDING_PATH,
@@ -69,7 +70,7 @@ from voice_assistant.services.sprecher_verifikation import SprecherVerifikation
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
-from voice_assistant.services import timer_parser
+from voice_assistant.services import musik_parser, timer_parser
 from voice_assistant.services.kuechentimer import STOPP_NACHLAUF_S as TIMER_STOPP_NACHLAUF_S
 from voice_assistant.services.kuechentimer import ist_stopp as ist_timer_stopp
 from voice_assistant.services.voice_control import VoiceController
@@ -420,6 +421,17 @@ def _log_timer_turn(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:
         print(f"⚠️  timer-log: {exc}")
+
+
+def _log_musik_turn(meta: dict) -> None:
+    """Eine JSONL-Zeile je Musik-Befehl, den der Schnellweg selbst erledigt
+    hat (musik_turns.log), aus demselben Grund getrennt wie timer_turns.log."""
+    try:
+        meta = {"ts": datetime.now().isoformat(timespec="seconds"), **meta}
+        with open(MUSIK_LOG_PATH, "a") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        print(f"⚠️  musik-log: {exc}")
 
 
 def _log_actuator_turn(meta: dict) -> None:
@@ -867,6 +879,10 @@ def _start_musik_ducking(profile: Profile):
                          lease_s=cfg.lease_s, erneuern_s=cfg.erneuern_s)
     ducker.start()
     print(f"🎵 Musik-Ducking: Raum {cfg.raum} während eines Turns leiser")
+    if cfg.befehle:
+        from voice_assistant.services.musik_befehle import MusikBefehle
+        ducker.befehle = MusikBefehle(cfg.url, token, cfg.raum)
+        print("🎵 Musik-Befehle: stopp/Pause/weiter/nächstes/lauter/leiser ohne Brain")
     return ducker
 
 
@@ -2165,6 +2181,47 @@ def run() -> None:
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         unklar_round = 0
+                        pending_reply_text[0] = None
+                        state = STATE_PAUSE
+                        state_start = time.time()
+                    elif (followup_round == 0 and not unklar_round and not war_bargein
+                          and pending_timer is None
+                          and musik_ducker is not None and musik_ducker.befehle is not None
+                          and not _satelliten_turn()
+                          and (musik_befehl := musik_parser.parse(text)) is not None
+                          and (musik_erg := musik_ducker.befehle.ausfuehren(musik_befehl))
+                          is not None):
+                        # --- Musik-Schnellweg: fester Erkenner, kein Modell ---
+                        # Die Bedingung FUEHRT den Befehl schon aus: lehnt die
+                        # Bridge ab (mehrere Raeume, nichts zum Fortsetzen …),
+                        # ist sie False und der Satz geht weiter an den Brain.
+                        # Vor dem Stopp-Muster: "Gaston, stopp, stopp die Musik
+                        # bitte wieder." (Journal) ist dort ein Abbruch. Nur im
+                        # Erst-Turn, wie Timer und Aktuator; ein Handy-Turn hat
+                        # keinen Raum.
+                        bargein_abgebrochen_audio = None
+                        _save_last_recording(recorded_chunks)
+                        _flush_endpoint(text, ausgang="musik")
+                        print(f"[{now:.1f}s] 🎵 Musik: {musik_befehl} → {musik_erg.raum} "
+                              f"({musik_erg.ms:.0f} ms): {musik_erg.text}")
+                        _log_outcome("musik", aktion=musik_befehl.aktion, transcript=text)
+                        musik_log = {
+                            "transcript": text,
+                            "wakeword": current_wakeword.bundle,
+                            "aktion": musik_befehl.aktion,
+                            "raum_gesprochen": musik_befehl.raum,
+                            "raum": musik_erg.raum,
+                            "ms": round(musik_erg.ms),
+                            "antwort": musik_erg.antwort,
+                            "gesprochen": musik_erg.text,
+                        }
+                        _sprecher_nachtragen(
+                            turn_spk_q, turn_mood_q, current_wakeword.bundle, time.time(),
+                            lambda v, musik_log=musik_log: _log_musik_turn(
+                                {**musik_log, "speaker": v.name, "speaker_status": v.status}))
+                        speaker.speak(musik_erg.text)
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
                         pending_reply_text[0] = None
                         state = STATE_PAUSE
                         state_start = time.time()

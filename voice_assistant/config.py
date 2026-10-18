@@ -459,6 +459,9 @@ class MusikDuckingConfig:
     level: int | None = None          # None = Vorgabe der Bridge
     lease_s: float = 30.0             # Auto-Restore der Bridge ohne Erneuerung
     erneuern_s: float = 15.0
+    # Einfache Musik-Befehle ("stopp die Musik") direkt an dieselbe Bridge,
+    # ohne Brain (services/musik_befehle.py). Braucht ihren control-Endpunkt.
+    befehle: bool = False
 
 
 @dataclass
@@ -1022,6 +1025,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         level=int(md_raw["level"]) if md_raw.get("level") is not None else None,
         lease_s=max(5.0, float(md_raw.get("lease_s", _dmd.lease_s))),
         erneuern_s=max(2.0, float(md_raw.get("erneuern_s", _dmd.erneuern_s))),
+        befehle=bool(md_raw.get("befehle", _dmd.befehle)),
     )
 
     tm_raw = raw.get("timer") or {}
@@ -1206,6 +1210,7 @@ TIMER_STATE_PATH = os.path.join(WORKSPACE, "timer.json")
 TIMER_KLINGEL_PATH = os.path.join(WORKSPACE, "timer_klingel.wav")
 # Timer-Befehle, die der Schnellweg selbst erledigt hat (der Brain sieht sie nicht)
 TIMER_LOG_PATH = os.path.join(WORKSPACE, "timer_turns.log")
+MUSIK_LOG_PATH = os.path.join(WORKSPACE, "musik_turns.log")
 LAST_REPLY_WAV = os.path.join(WORKSPACE, "last_reply.wav")
 LAST_REPLY_TXT = os.path.join(WORKSPACE, "last_reply.txt")
 

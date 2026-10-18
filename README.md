@@ -321,6 +321,21 @@ behind. A bridge should also keep its ducking state (previous volume, leases)
 across a restart; otherwise the next renewal looks like a first `duck`, and
 the ducked volume is "restored" at the end.
 
+### Simple music commands without the brain (`musik_ducking.befehle`, optional)
+
+"Stop the music", "pause", "music on", "next song", "louder", "quieter" are
+read by a fixed recognizer (`services/musik_parser.py`, no model; German
+patterns, replace them for another language) and sent straight to the
+bridge: `POST {url}/api/v1/rooms/{raum}/control {"action", "source"}`. Over
+the brain the same sentence took 13–29 s. The recognizer is strict: the word
+"music"/"song" must be in the sentence (except a bare "pause"), exactly one
+action, no negation, no question. Only in the first turn after the wake word,
+never on a satellite. If nothing plays in the main microphone's room but music
+plays in exactly one other room, "stop" and "pause" act there. Anything else
+the bridge declines (several rooms playing, nothing to resume) goes to the
+brain unchanged.
+Measure changes with `tools/musik_parser_test.py` (FALSE must stay 0).
+
 ## Wake-word level gate (`wake_rms_min`)
 
 Besides the score gate, there is an optional **level gate**: the RMS of the

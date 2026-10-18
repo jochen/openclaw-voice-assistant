@@ -489,6 +489,24 @@ Klingeln noch Ablauf-Ansage: die steht als `(text, False, False)` in der
 `announce_queue`. **Hat der Turn Musik gestartet, entfällt der Follow-up** (`musik_gestartet()`, Jochen 2026-10-15): Vergleich der spielenden Räume beim Ruf und vor dem Follow-up (GET /api/v1/rooms), weil die Bridge keine Raum-Hierarchie liefert und Gaston in Unterräumen spielt. Vorher stand nach „spiel Queen“ das Follow-up-Fenster ungedämpft in der Musik. Tests:
 `tests/test_musik_ducking.py`.
 
+### Musik-Befehle ohne Brain (`musik_ducking.befehle`, seit 2026-10-18)
+
+„Gaston, stopp die Musik“ dauerte über den Brain 13–29 s. Jochen: nicht über
+den Aktuator, nicht über Node-RED, sondern ein fester Erkenner wie beim Timer
+(`services/musik_parser.py`), der an den control-Endpunkt der Bridge geht
+(`services/musik_befehle.py`, Vertrag im MemPalace `music-control`). Zweig in
+STATE_PROCESSING **vor** dem Stopp-Muster („Gaston, stopp, stopp die Musik
+bitte wieder.“ war dort ein Abbruch), nur Erst-Turn, nicht am Satelliten,
+nicht bei offener Timer-Rückfrage. Die Bedingung führt den Befehl schon aus;
+lehnt die Bridge ab, geht der Satz an den Brain. Ausnahme: spielt im
+Haupt-Raum nichts, aber in genau einem anderen, wirken stopp/Pause ohne
+gesagten Raum dort (pi51-Vorschlag, Jochen). Log: `musik_turns.log`.
+**Regeländerungen nur gegen `tools/musik_parser_test.py`** (Vorlagen
+`data/musik/de_saetze.jsonl`, echte Sätze privat in
+`testsets/musik_steuerung/`), FALSCH muss 0 bleiben. Echte Befehle gibt es
+bisher nur für stop/next/resume. Tests: `tests/test_musik_parser.py`,
+`tests/test_musik_befehle.py`.
+
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 
 `services/dienstwaechter.py` — Thread im Assistenten, prüft alle 60 s
