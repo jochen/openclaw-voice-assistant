@@ -5,6 +5,7 @@ Vorlauf-Clips): Fernseh-Fehltrigger in lauter Umgebung mit 2-3 Frames, echte
 Rufe mit mehr Frames oder deutlich lauter als der Raum.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -72,6 +73,24 @@ class PegelTest(unittest.TestCase):
             for _ in range(10):
                 p.feed(t, _ton(pegel, 6.0)); t += 6.0
         self.assertAlmostEqual(p.ruhe(), 30, delta=1)
+
+    def test_stummes_mikrofon_ist_keine_ruhe(self):
+        # 2026-10-18: Stunden exakter Nullen zogen den Ruhepegel auf 0
+        p = Umgebungspegel()
+        t = 0.0
+        for minute in range(60):
+            pegel = 0 if minute < 20 else 25
+            for _ in range(10):
+                p.feed(t, _ton(pegel, 6.0)); t += 6.0
+        self.assertAlmostEqual(p.ruhe(), 25, delta=1)
+
+    def test_alte_nullen_werden_beim_laden_verworfen(self):
+        with tempfile.TemporaryDirectory() as d:
+            datei = os.path.join(d, "umgebung.json")
+            with open(datei, "w") as f:
+                json.dump({"minuten": [[i * 60, 0.0] for i in range(40)]
+                           + [[(40 + i) * 60, 25.0] for i in range(40)]}, f)
+            self.assertAlmostEqual(Umgebungspegel(zustand_datei=datei).ruhe(), 25, delta=1)
 
     def test_ruhe_ueberlebt_neustart(self):
         with tempfile.TemporaryDirectory() as d:
