@@ -36,6 +36,13 @@ class PlatzhalterTest(unittest.TestCase):
         self.assertFalse(is_no_reply(None))
         self.assertFalse(is_no_reply(""))
 
+    def test_uebersetzte_formen(self):
+        # GLM schreibt NO_REPLY gern auf Deutsch (2026-10-16, 2026-10-18)
+        self.assertTrue(is_no_reply("KEIN_REPLY"))
+        self.assertTrue(is_no_reply("KEINE_ANTWORT"))
+        self.assertTrue(is_no_reply("Keine Antwort."))
+        self.assertFalse(is_no_reply("Keine Antwort von der Haustür."))
+
 
 def _ereignisse(*evts: dict) -> list[bytes]:
     return [f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in evts]

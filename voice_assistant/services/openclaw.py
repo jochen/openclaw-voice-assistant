@@ -30,7 +30,13 @@ NO_REPLY_SENTINEL = "NO_REPLY"
 # KEIN_REPLY: am 2026-10-16 vermischte der Brain NO_REPLY mit KEIN_FOLLOWUP
 # (seither heisst das NO_FOLLOWUP, siehe unten)
 # (vier Fernseh-Turns hintereinander) -- vorgelesen, gespiegelt, Follow-up offen.
-_NO_REPLY_RE = re.compile(r"^\W*(?:NO|KEIN)[ _-]?REPLY\W*$", re.IGNORECASE)
+# KEINE_ANTWORT: GLM uebersetzt das Wort beim Schreiben, die Absicht stimmt
+# ("Answer exclusively NO_REPLY" im eigenen Denken, 2026-10-18 15:19). Seit
+# 2026-10-03 bei etwa jeder vierten stillen Antwort, bei Codex nie. Mehr Prompt
+# hilft da nicht, die Anweisung kam schon direkt mit der Anfrage. Das Gateway
+# kennt nur NO_REPLY und laesst die deutschen Formen durch.
+_NO_REPLY_RE = re.compile(
+    r"^\W*(?:(?:NO|KEIN)[ _-]?REPLY|KEINE[ _-]?ANTWORT)\W*$", re.IGNORECASE)
 
 # Platzhalter des Gateways fuer einen erfolgreich beendeten Lauf ohne
 # sichtbaren Text (openresponses-http, `fallbackText`). NO_REPLY ist dort ein
