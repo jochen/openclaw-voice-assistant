@@ -14,7 +14,14 @@ Regeln:
 - **Nie blockieren.** Die Hauptschleife setzt nur einen Wunsch
   (``zustand()``), die Aufrufe macht ein eigener Thread.
 - **Gedaempft wird ab dem Wakewort und bis zum Leerlauf** (Antwort, Follow-up-
-  Fenster, Rueckfragen eingeschlossen), danach unduck. Schon beim Ueberschreiten
+  Fenster, Rueckfragen eingeschlossen), danach unduck. **Ausser, waehrend der
+  Brain denkt** (Jochen 2026-10-18): gebraucht wird die Daempfung nur fuer
+  die Aufnahme und fuer unsere Ausgabe. In STATE_WAITING ohne Ausgabe
+  (``tts_lock`` frei) geht die Musik nach ``_HALTEN`` wieder hoch und wird
+  zum naechsten Satz oder Lebenszeichen neu gedaempft. Der tts_lock wird vor
+  der Synthese genommen, die gibt dem Echo also Vorlauf. Anlass: 2026-10-18
+  22:05, ein Soulseek-Auftrag, gut 60 s Denken bei leiser Musik. Preis: ein
+  „Stopp Gaston“ waehrend des Denkens muss gegen die volle Musik an. Schon beim Ueberschreiten
   der Schwelle (``vorab()``), nicht erst beim Turn-Beginn: der kommt erst, wenn
   die Treffer-Serie abreisst, gemessen 0,62–0,78 s spaeter (2026-10-13, bei
   laufender Musik). Wird der Ruf danach doch verworfen (Pegel-Gate), gibt
@@ -34,8 +41,19 @@ Regeln:
   nichts lief. Verglichen wird, in welchen Raeumen beim Ruf und vor dem
   Follow-up Musik laeuft (GET /api/v1/rooms) — die Bridge sagt nicht, welcher
   Raum in welchem liegt, und Gaston spielt in Unterraeumen.
-- Ob ein zweites duck dieselbe Lease verlaengert oder eine neue anlegt, ist
-  der Bridge ueberlassen: am Ende wird jede erhaltene ``lease_id`` freigegeben.
+- **Startet die Bridge mitten im Turn neu** (Jochen 2026-10-18 als zweite
+  moegliche Ursache fuer 22:06:51), vergisst sie die Leases und die alte
+  Lautstaerke; die naechste Erneuerung merkt sich dann die gedaempfte als
+  die alte. Hier nur sichtbar gemacht (zwei Warnungen), beheben kann es nur
+  die Bridge; sie verweigert seither den Neustart, solange Musik laeuft.
+- **Jedes duck legt eine neue Lease an, und jedes haelt alle anderen am
+  Leben** (gemessen 2026-10-18 an der Bridge; unduck ohne ``lease_id`` gibt
+  alle frei). Am Ende wird jede erhaltene ``lease_id`` freigegeben. Lief ein
+  duck in den Timeout, hat die Bridge es womoeglich doch angenommen, und
+  diese Lease kennen wir nicht: sie hielt die Musik nach dem Turn bis zum
+  Auto-Restore leise, solange wir weiter erneuerten noch laenger. Dann geht
+  am Ende ein unduck ohne id hinterher (gibt auch fremde Leases frei; ausser
+  Gaston daempft heute niemand).
 """
 
 from __future__ import annotations
@@ -47,7 +65,7 @@ import threading
 import time
 import urllib.request
 
-from voice_assistant.state import STATE_LISTENING
+from voice_assistant.state import STATE_LISTENING, STATE_WAITING
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +75,10 @@ _VORAB_FRIST = 3.0
 
 # So zaehlt ein Raum als "Musik laeuft": spielt oder schaltet sich gerade ein.
 _SPIELT = ("play", "starting")
+
+# So lange ohne eigene Ausgabe in STATE_WAITING, bis die Musik wieder hoch
+# darf: haelt sie zwischen zwei Saetzen einer Antwort unten. Geschaetzt.
+_HALTEN = 4.0
 
 
 class MusikDucker:
@@ -84,6 +106,11 @@ class MusikDucker:
         self._vorab_seit: float | None = None
         # Raeume, in denen beim Ruf Musik lief (None = nicht bekannt).
         self._lief_beim_ruf: set[str] | None = None
+        self._denkt = False           # Turn wartet auf den Brain, wir sagen nichts
+        self._turn_neu = False        # der Turn hat noch kein erstes duck gesehen
+        self._turn_gedaempft = False  # das erste duck des Turns hat gedaempft
+        self._duck_fehler = False     # ein duck ohne Antwort: Lease evtl. unbekannt
+        self._ausgabe_zuletzt = 0.0
         self._thread: threading.Thread | None = None
 
     # --- Hauptschleife -----------------------------------------------------
@@ -100,9 +127,21 @@ class MusikDucker:
             self._vorab_seit = None
             self._setze(False)
 
-    def zustand(self, state: int, satellit: bool) -> None:
-        """Einmal je Schleifendurchlauf; entscheidet nur, ruft nichts auf."""
+    def zustand(self, state: int, satellit: bool, spricht: bool = False) -> None:
+        """Einmal je Schleifendurchlauf; entscheidet nur, ruft nichts auf.
+
+        spricht: tts_lock gehalten (wir synthetisieren oder spielen gerade).
+        """
         alt, self._zustand = self._zustand, state
+        jetzt = time.monotonic()
+        if spricht or state != STATE_WAITING or alt != STATE_WAITING:
+            self._ausgabe_zuletzt = jetzt
+        denkt = (state == STATE_WAITING and not spricht
+                 and jetzt - self._ausgabe_zuletzt >= _HALTEN)
+        if denkt != self._denkt:
+            with self._cv:
+                self._denkt = denkt
+                self._aktualisieren()
         if state == STATE_LISTENING:
             if alt != STATE_LISTENING:
                 self._setze(False)
@@ -129,12 +168,14 @@ class MusikDucker:
 
     def _setze(self, turn: bool) -> None:
         with self._cv:
+            if turn and not self._turn:
+                self._turn_neu = True
             self._turn = turn
             self._aktualisieren()
 
     def _aktualisieren(self) -> None:
         """Nur unter self._cv."""
-        daempfen = self._turn or self._ansagen > 0
+        daempfen = (self._turn and not self._denkt) or self._ansagen > 0
         if daempfen == self._wunsch:
             return
         self._wunsch = daempfen
@@ -151,25 +192,64 @@ class MusikDucker:
         while True:
             with self._cv:
                 self._cv.wait(timeout=1.0)
-                wunsch, erstes = self._wunsch, self._erstes
-                self._erstes = False
-            self.schritt(wunsch, erstes)
+                lage = self._lage()
+            self.schritt(*lage)
 
-    def schritt(self, wunsch: bool, erstes: bool) -> None:
-        """Ein Durchlauf des Threads (einzeln testbar)."""
+    def _lage(self) -> tuple[bool, bool, bool, bool]:
+        """Nur unter self._cv: was der Thread als Naechstes tun soll."""
+        lage = (self._wunsch, self._erstes, self._turn_neu or not self._turn, self._turn)
+        self._erstes = False
+        if self._wunsch and lage[1]:
+            self._turn_neu = False
+        return lage
+
+    def schritt(self, wunsch: bool, erstes: bool, neu: bool = True,
+                turn: bool = False) -> None:
+        """Ein Durchlauf des Threads (einzeln testbar).
+
+        neu: die Daempfung beginnt einen Turn (oder eine Ansage ausserhalb),
+        sonst kommt sie nach einer Denkpause desselben Turns wieder.
+        turn: ein Turn laeuft noch (Denkpause, nicht Leerlauf).
+        """
         if wunsch:
             faellig = time.monotonic() - self._letztes_duck >= self._erneuern_s
-            if erstes:
+            if erstes and neu:
                 self._duck()
+                self._turn_gedaempft = bool(self._leases)
                 self._lief_beim_ruf = self.spielende_raeume()
+            elif erstes:
+                # Nach der Denkpause nur, was der Turn selbst gedaempft hatte:
+                # Musik, die Gaston in diesem Turn gestartet hat, bleibt laut.
+                if self._turn_gedaempft:
+                    self._duck()
             elif self._leases and faellig:
                 self._duck()
         else:
-            self._lief_beim_ruf = None
-            if self._leases:
-                leases, self._leases = self._leases, []
-                for lease in dict.fromkeys(leases):
-                    self._aufruf("unduck", {"lease_id": lease})
+            if not turn:
+                self._lief_beim_ruf = None
+                self._turn_gedaempft = False
+            self._freigeben("Denkpause" if turn else "Ende")
+
+    def _freigeben(self, anlass: str) -> None:
+        leases, self._leases = self._leases, []
+        fehler, self._duck_fehler = self._duck_fehler, False
+        if not leases and not fehler:
+            return
+        t0 = time.monotonic()
+        antwort = None
+        vergessen = False
+        for lease in dict.fromkeys(leases):
+            antwort = self._aufruf("unduck", {"lease_id": lease})
+            vergessen |= bool(antwort and antwort.get("reason") == "not_ducked")
+        if vergessen:
+            log.warning("Musik %s: die Bridge kannte unsere Lease nicht mehr "
+                        "(Neustart?) — Musik bleibt womoeglich leise", self._raum)
+        if fehler:
+            # Eine Lease ohne Antwort kennen wir nicht (siehe Modul-Docstring).
+            antwort = self._aufruf("unduck", {})
+        log.info("Musik %s freigegeben (%s, %d Lease(s)%s, %.0f ms): %s", self._raum,
+                 anlass, len(leases), ", alle" if fehler else "",
+                 (time.monotonic() - t0) * 1000, antwort)
 
     def _duck(self) -> None:
         self._letztes_duck = time.monotonic()
@@ -179,9 +259,17 @@ class MusikDucker:
         t0 = time.monotonic()
         antwort = self._aufruf("duck", body)
         if antwort is None:
+            self._duck_fehler = True
             return
         if antwort.get("ducked") and antwort.get("lease_id"):
             erstes = not self._leases
+            if not erstes and not antwort.get("already_ducked"):
+                # Eine Erneuerung, die die Bridge als erstes duck nimmt: sie hat
+                # unsere Leases vergessen und merkt sich jetzt die GEDAEMPFTE
+                # Lautstaerke als die alte (previous_volume).
+                log.warning("Musik %s: Erneuerung als neues duck (Bridge neu "
+                            "gestartet?), previous_volume=%s", self._raum,
+                            antwort.get("previous_volume"))
             self._leases.append(str(antwort["lease_id"]))
             if erstes:
                 log.info("Musik %s gedaempft (%.0f ms)", self._raum,

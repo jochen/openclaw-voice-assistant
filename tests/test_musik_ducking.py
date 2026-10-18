@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from voice_assistant.services.musik_ducking import MusikDucker  # noqa: E402
 from voice_assistant.state import (  # noqa: E402
     STATE_LISTENING,
+    STATE_PAUSE,
     STATE_PROCESSING,
     STATE_RECORDING,
     STATE_WAITING,
@@ -53,9 +54,8 @@ def _bauen(**kw):
 def _thread(d):
     """Was der Thread nach dem letzten Wunsch tun wuerde."""
     with d._cv:
-        wunsch, erstes = d._wunsch, d._erstes
-        d._erstes = False
-    d.schritt(wunsch, erstes)
+        lage = d._lage()
+    d.schritt(*lage)
 
 
 class WannGedaempftWirdTest(unittest.TestCase):
@@ -113,6 +113,127 @@ class WannGedaempftWirdTest(unittest.TestCase):
         _thread(d)
         self.assertEqual(len(cm.output), 1)
         self.assertEqual(d._leases, [])
+
+
+class DenkpauseTest(unittest.TestCase):
+    """Waehrend der Brain denkt, ist die Musik laut (Jochen 2026-10-18)."""
+
+    def _denken(self, d):
+        from voice_assistant.services import musik_ducking
+        d._ausgabe_zuletzt -= musik_ducking._HALTEN + 1
+        d.zustand(STATE_WAITING, False, False)
+
+    def test_denkpause_gibt_frei_und_der_naechste_satz_daempft(self):
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        d.zustand(STATE_WAITING, False, True)      # Bestaetigung
+        d.zustand(STATE_WAITING, False, False)     # kurz still: noch halten
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None)])
+        self._denken(d)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+        d.zustand(STATE_WAITING, False, True)      # Antwort kommt
+        _thread(d)
+        d.zustand(STATE_PAUSE, False)
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1"),
+                                        ("duck", None), ("unduck", "L2")])
+
+    def test_selbst_gestartete_musik_bleibt_nach_der_denkpause_laut(self):
+        d, bridge = _bauen(spielt=False)
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        bridge.spielt = True                       # "spiel Queen"
+        self._denken(d)
+        _thread(d)
+        d.zustand(STATE_WAITING, False, True)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None)])
+
+    def test_denkpause_behaelt_den_stand_beim_ruf(self):
+        d, bridge = _bauen()
+        d._get = lambda url, timeout: [{"room": "wohnzimmer", "state": "play"}]
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        self._denken(d)
+        _thread(d)
+        self.assertEqual(d._lief_beim_ruf, {"wohnzimmer"})
+
+
+class VerloreneLeaseTest(unittest.TestCase):
+    """2026-10-18 22:06:51: duck im Timeout, die Bridge hatte es angenommen."""
+
+    def test_nach_duck_ohne_antwort_gibt_das_ende_alle_frei(self):
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        echt = bridge.post
+
+        def timeout(url, body):
+            echt(url, body)
+            raise TimeoutError("timed out")
+        bridge.post = timeout
+        d._post = timeout
+        d._letztes_duck -= 16
+        _thread(d)
+        d._post = echt
+        d._letztes_duck -= 16
+        _thread(d)
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was()[-3:],
+                         [("unduck", "L1"), ("unduck", "L3"), ("unduck", None)])
+        self.assertFalse(d._duck_fehler)
+
+    def test_ohne_fehler_nur_die_eigenen(self):
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("unduck", "L1")])
+
+
+class BridgeNeustartTest(unittest.TestCase):
+    """Die Bridge vergisst ihre Leases: sichtbar machen, nicht verdecken."""
+
+    def test_erneuerung_als_neues_duck_und_unbekannte_lease_melden(self):
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        echt = bridge.post
+
+        def vergesslich(url, body):
+            antwort = echt(url, body)
+            if url.endswith("/unduck"):
+                return {"restored": False, "reason": "not_ducked"}
+            return antwort        # ohne already_ducked: wie nach einem Neustart
+        d._post = vergesslich
+        d._letztes_duck -= 16
+        with self.assertLogs("voice_assistant.services.musik_ducking", "WARNING") as cm:
+            _thread(d)
+            d.zustand(STATE_LISTENING, False)
+            _thread(d)
+        self.assertEqual(len(cm.output), 2, cm.output)
+
+    def test_normale_erneuerung_meldet_nichts(self):
+        d, bridge = _bauen()
+        echt = bridge.post
+
+        def wie_die_bridge(url, body):
+            antwort = echt(url, body)
+            if url.endswith("/duck") and len(d._leases) > 0:
+                antwort = dict(antwort, already_ducked=True)
+            return antwort
+        d._post = wie_die_bridge
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        d._letztes_duck -= 16
+        with self.assertNoLogs("voice_assistant.services.musik_ducking", "WARNING"):
+            _thread(d)
 
 
 class VorabTest(unittest.TestCase):

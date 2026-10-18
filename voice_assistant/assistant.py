@@ -1488,8 +1488,8 @@ def run() -> None:
             audio_16 = audio_source.read_chunk()
             if musik_ducker is not None:
                 # Nach read_chunk: erst dort steht fest, ob ein Satellit den
-                # Turn eroeffnet hat.
-                musik_ducker.zustand(state, _satelliten_turn())
+                # Turn eroeffnet hat. tts_lock: wir sprechen (Denkpause sonst).
+                musik_ducker.zustand(state, _satelliten_turn(), tts_lock.locked())
             now = time.time()
             current_state[0] = state
             if rewind is not None:

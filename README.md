@@ -310,6 +310,13 @@ If a turn started the music (nothing played when the wake word came, something p
 Announcements from outside a turn (`voice_speak_text`) duck the music while
 they play, unless they go to the phone. Kitchen timers deliberately don't:
 neither the ringing nor "the timer has expired".
+While the brain is thinking and the assistant says nothing, the music comes
+back up after 4 s and is ducked again for the next sentence or "one moment":
+ducking is only needed for the recording and for our own output. The price:
+a "stop" during that pause has to compete with the music. If a `duck` call
+times out, the bridge may still have created a lease the assistant never got
+the id of; the turn then ends with an `unduck` without `lease_id`, which a
+bridge should treat as "release all".
 
 ## Wake-word level gate (`wake_rms_min`)
 

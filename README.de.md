@@ -315,6 +315,13 @@ Hat ein Turn die Musik gestartet (beim Wakewort lief nichts, jetzt läuft etwas)
 Ansagen außerhalb eines Turns (`voice_speak_text`) dämpfen die Musik, solange
 sie laufen, außer sie gehen ans Handy. Der Küchentimer bewusst nicht: weder
 das Klingeln noch „Der Timer ist abgelaufen“.
+Während der Brain denkt und der Assistent nichts sagt, wird die Musik nach
+4 s wieder laut und zum nächsten Satz oder „Einen Moment“ neu gedämpft:
+gebraucht wird die Dämpfung nur für die Aufnahme und die eigene Ausgabe. Der
+Preis: ein „Stopp“ in dieser Pause muss gegen die Musik an. Läuft ein `duck`
+in den Timeout, hat die Bridge womöglich trotzdem eine Lease angelegt, deren
+id der Assistent nie bekam; der Turn endet dann mit einem `unduck` ohne
+`lease_id`, das eine Bridge als „alle freigeben“ verstehen sollte.
 
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 
