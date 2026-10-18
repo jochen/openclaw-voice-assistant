@@ -316,8 +316,9 @@ Ansagen außerhalb eines Turns (`voice_speak_text`) dämpfen die Musik, solange
 sie laufen, außer sie gehen ans Handy. Der Küchentimer bewusst nicht: weder
 das Klingeln noch „Der Timer ist abgelaufen“.
 Während der Brain denkt und der Assistent nichts sagt, wird die Musik nach
-4 s wieder laut und zum nächsten Satz oder „Einen Moment“ neu gedämpft:
-gebraucht wird die Dämpfung nur für die Aufnahme und die eigene Ausgabe. Der
+4 s wieder laut und zum nächsten Satz der Antwort neu gedämpft: gebraucht
+wird die Dämpfung nur für die Aufnahme und die eigene Ausgabe. „Einen Moment
+bitte“ während des Denkens läuft ungedämpft über die Musik. Der
 Preis: ein „Stopp“ in dieser Pause muss gegen die Musik an. Erneuert wird mit
 der eigenen `lease_id`, freigegeben nach `source`: eine verlorene Antwort oder
 ein Neustart der Bridge mitten im Turn hinterlässt dann keine verwaiste

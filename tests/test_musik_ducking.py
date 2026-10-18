@@ -166,6 +166,31 @@ class DenkpauseTest(unittest.TestCase):
         self.assertEqual(d._lief_beim_ruf, {"wohnzimmer"})
 
 
+class LebenszeichenTest(unittest.TestCase):
+    """"Einen Moment bitte." haelt tts_lock, soll aber nicht daempfen."""
+
+    def test_lebenszeichen_ist_waehrend_der_wiedergabe_gesetzt(self):
+        import tempfile
+        import threading
+        from voice_assistant import state
+        from voice_assistant.services.tts import ThinkingWorker
+
+        gesehen: list[tuple[bool, bool]] = []
+        gespielt = threading.Event()
+
+        def play_wav(_):
+            gesehen.append((state.lebenszeichen.is_set(), state.tts_lock.locked()))
+            gespielt.set()
+
+        w = ThinkingWorker(play_wav, ["Einen Moment bitte."], min_quiet=0.0, max_quiet=0.0)
+        w._render = lambda phrase: tempfile.mkstemp(suffix=".wav")[1]
+        w.start()
+        self.assertTrue(gespielt.wait(5))
+        w.stop()
+        self.assertEqual(gesehen[0], (True, True))
+        self.assertFalse(state.lebenszeichen.is_set())
+
+
 class VerloreneLeaseTest(unittest.TestCase):
     """2026-10-18 22:06:51: duck im Timeout, die Bridge hatte es angenommen."""
 

@@ -209,6 +209,9 @@ STATE_PAUSE = 4
 STATE_FOLLOWUP = 5
 
 tts_lock = threading.Lock()
+# Gesetzt, solange ein Lebenszeichen ("Einen Moment bitte.") spricht: das
+# haelt tts_lock, braucht aber kein Musik-Ducking (Jochen 2026-10-18).
+lebenszeichen = threading.Event()
 reply_done_event = threading.Event()
 pending_reply = threading.Event()
 pending_reply_text: list[str | None] = [None]

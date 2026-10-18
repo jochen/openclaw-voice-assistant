@@ -23,7 +23,8 @@ Regeln:
   Brain denkt** (Jochen 2026-10-18): gebraucht wird die Daempfung nur fuer
   die Aufnahme und fuer unsere Ausgabe. In STATE_WAITING ohne Ausgabe
   (``tts_lock`` frei) geht die Musik nach ``_HALTEN`` wieder hoch und wird
-  zum naechsten Satz oder Lebenszeichen neu gedaempft. Der tts_lock wird vor
+  zum naechsten Satz neu gedaempft. Lebenszeichen („Einen Moment bitte.“,
+  ``state.lebenszeichen``) daempfen nicht, auch das braucht es nicht (Jochen). Der tts_lock wird vor
   der Synthese genommen, die gibt dem Echo also Vorlauf. Anlass: 2026-10-18
   22:05, ein Soulseek-Auftrag, gut 60 s Denken bei leiser Musik. Preis: ein
   „Stopp Gaston“ waehrend des Denkens muss gegen die volle Musik an.

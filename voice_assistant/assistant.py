@@ -102,6 +102,7 @@ from voice_assistant.state import (
     current_state,
     pending_reply_text,
     reply_done_event,
+    lebenszeichen,
     tts_lock,
     turn_control,
     voice_state,
@@ -1488,8 +1489,10 @@ def run() -> None:
             audio_16 = audio_source.read_chunk()
             if musik_ducker is not None:
                 # Nach read_chunk: erst dort steht fest, ob ein Satellit den
-                # Turn eroeffnet hat. tts_lock: wir sprechen (Denkpause sonst).
-                musik_ducker.zustand(state, _satelliten_turn(), tts_lock.locked())
+                # Turn eroeffnet hat. tts_lock: wir sprechen (Denkpause sonst);
+                # ein Lebenszeichen zaehlt nicht, das darf in die Musik.
+                musik_ducker.zustand(state, _satelliten_turn(),
+                                     tts_lock.locked() and not lebenszeichen.is_set())
             now = time.time()
             current_state[0] = state
             if rewind is not None:

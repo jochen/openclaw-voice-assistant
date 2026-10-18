@@ -31,7 +31,7 @@ from voice_assistant.config import (
     SPEACHES_TIMEOUT,
 )
 from voice_assistant.services.speaches import SpeachesState
-from voice_assistant.state import tts_lock, turn_stopped
+from voice_assistant.state import lebenszeichen, tts_lock, turn_stopped
 
 PlayWav = Callable[[str], None]
 
@@ -812,9 +812,13 @@ class ThinkingWorker:
                     )
                     tmp_wav = self._render(phrase)
                     if tmp_wav:
-                        with tts_lock:
-                            if not self._stop.is_set():
-                                self.play_wav(tmp_wav)
+                        lebenszeichen.set()
+                        try:
+                            with tts_lock:
+                                if not self._stop.is_set():
+                                    self.play_wav(tmp_wav)
+                        finally:
+                            lebenszeichen.clear()
                         os.unlink(tmp_wav)
                     quiet_since = time.time()
                     fired_count += 1

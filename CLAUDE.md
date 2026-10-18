@@ -466,7 +466,8 @@ Treffer-Serie abreißt, gemessen 0,62–0,78 s später. Verwirft das Pegel-Gate
 den Ruf, gibt `verworfen()` sofort frei, sonst nach 3 s `_VORAB_FRIST`. Satelliten-Turns
 dämpfen nichts. **Während der Brain denkt, ist die Musik laut** (Jochen
 2026-10-18): in STATE_WAITING ohne Ausgabe (`tts_lock` frei) nach `_HALTEN`
-4 s unduck, zum nächsten Satz/Lebenszeichen neu duck — aber nur, wenn das
+4 s unduck, zum nächsten Satz neu duck (Lebenszeichen nicht,
+`state.lebenszeichen`) — aber nur, wenn das
 erste duck des Turns gedämpft hatte. Erneuert wird mit der eigenen
 `lease_id`, freigegeben mit `unduck {"source": "gaston"}`. Anlass 22:06: die
 Bridge wurde mitten im Ducking neu gestartet, vergaß die alte Lautstärke und
