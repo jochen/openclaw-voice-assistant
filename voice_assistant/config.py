@@ -386,6 +386,21 @@ class RewindConfig:
 
 
 @dataclass
+class MikroConfig:
+    """Mikrofon stumm schalten mit Zeitgrenze (services/mikro_stumm.py).
+
+    Default enabled=False. Braucht mode respeaker (Mute-Schalter des
+    XVF3800). ``mqtt_topic`` leer = kein MQTT-Eingang (Zigbee-Knopf über
+    Node-RED oder direkt das zigbee2mqtt-Topic des Knopfs).
+    """
+    enabled: bool = False
+    standard_minuten: float = 120.0
+    mqtt_host: str = ""
+    mqtt_port: int = 1883
+    mqtt_topic: str = ""
+
+
+@dataclass
 class WatcherConfig:
     """Überwacher Stufe 1 (nur LESEN + MELDEN, siehe services/watcher.py und
     tools/actuator_watch.py). Default enabled=False: ohne den `watcher:`-Block
@@ -736,6 +751,9 @@ class Profile:
     # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
     rewind: RewindConfig = field(default_factory=RewindConfig)
 
+    # Mikro stumm schalten — fehlt der Block: kein „stell dich taub“.
+    mikro: MikroConfig = field(default_factory=MikroConfig)
+
     # Abbruch mitten im Turn ("Stopp Gaston"). Default: aus.
     barge_in: BargeInConfig = field(default_factory=BargeInConfig)
     # Weitere Geraete neben dem Haupt-Mikrofon (audio/satellit.py). Leer =
@@ -1071,6 +1089,16 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         marker_topic=str(rewind_raw.get("marker_topic") or _drw.marker_topic),
     )
 
+    mk_raw = raw.get("mikro") or {}
+    _dmk = MikroConfig()
+    mikro = MikroConfig(
+        enabled=bool(mk_raw.get("enabled", _dmk.enabled)),
+        standard_minuten=max(1.0, float(mk_raw.get("standard_minuten", _dmk.standard_minuten))),
+        mqtt_host=str(mk_raw.get("mqtt_host") or _dmk.mqtt_host),
+        mqtt_port=int(mk_raw.get("mqtt_port", _dmk.mqtt_port)),
+        mqtt_topic=str(mk_raw.get("mqtt_topic") or _dmk.mqtt_topic),
+    )
+
     locale_raw = raw.get("locale") or {}
     _dloc = LocaleConfig()
     locale = LocaleConfig(
@@ -1141,6 +1169,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         timer=timer,
         aussprache=aussprache,
         rewind=rewind,
+        mikro=mikro,
         wakewords=wakewords,
         barge_in=barge_in,
         satelliten=satelliten,
@@ -1240,6 +1269,10 @@ ACTUATOR_SCHATTEN_LOG_PATH = os.path.join(WORKSPACE, "actuator_schatten.log")
 # Teile, ihre Ausgaenge und ob geschaltet wurde oder der Brain dran ist.
 # Eigene Datei aus demselben Grund wie actuator_tor.log.
 ACTUATOR_UND_LOG_PATH = os.path.join(WORKSPACE, "actuator_und.log")
+# Mikro stumm (services/mikro_stumm.py): Zustand über Neustarts, und jede
+# Schaltung samt Quelle (sprache, mqtt, brain, zeit, Knopf am Gerät).
+MIKRO_STATE_PATH = os.path.join(WORKSPACE, "mikro.json")
+MIKRO_LOG_PATH = os.path.join(WORKSPACE, "mikro.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,

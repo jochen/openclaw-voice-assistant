@@ -22,6 +22,9 @@ Werkzeuge
 ``kuechentimer``  — Küchentimer des laufenden Assistenten (POST :18792/timer,
                    TIMER_INTERFACE.md). Kein Haus-Ziel, aber derselbe Gedanke:
                    ein enges Werkzeug statt Erinnerungen oder Cron im Brain.
+``mikro``         — Haupt-Mikrofon stumm schalten / wieder an (POST :18792/mikro,
+                   services/mikro_stumm.py). Nur mit Zeitgrenze, außer der
+                   Nutzer will ausdrücklich keine.
 
 Ausdrücklich KEIN Freitext-Tool ("mach was ich meine"): der ganze Gewinn ist
 das geschlossene Vokabular.
@@ -270,22 +273,43 @@ _TOOLS = [
             "required": ["aktion"],
         },
     },
+    {
+        "name": "mikro",
+        "description": (
+            "Haupt-Mikrofon des Sprachassistenten stumm schalten oder wieder "
+            "einschalten (\"stell dich taub\", \"hör wieder zu\"), oder den "
+            "Zustand abfragen. Stumm ist es nur für eine Zeit: ohne minuten gilt "
+            "der Standard (zwei Stunden). unbegrenzt=true nur, wenn der Nutzer "
+            "ausdrücklich keine Zeitgrenze will — ein vergessenes stummes Mikro "
+            "fällt sonst niemandem auf. Eine Uhrzeit (\"bis 22 Uhr\") rechnest "
+            "du in minuten um. 'text' ist eine fertige kurze Ansage."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "aktion": {"type": "string", "enum": ["stumm", "an", "abfragen"]},
+                "minuten": {"type": ["number", "null"],
+                            "description": "Dauer bei stumm, sonst weglassen."},
+                "unbegrenzt": {"type": ["boolean", "null"]},
+            },
+            "required": ["aktion"],
+        },
+    },
 ]
 
 
-def _timer_aufruf(args: dict) -> dict:
-    """POST an den Sprech-Server des laufenden Assistenten (127.0.0.1)."""
+def _speak_server(pfad: str, body: dict | None) -> dict:
+    """GET (body None) oder POST an den Sprech-Server des laufenden Assistenten."""
     import urllib.error
     import urllib.request
 
     from voice_assistant.config import SPEAK_SERVER_HOST, SPEAK_SERVER_PORT
 
-    body = {k: args.get(k) for k in ("aktion", "name", "dauer_s", "klingeln")
-            if args.get(k) is not None}
     req = urllib.request.Request(
-        f"http://{SPEAK_SERVER_HOST}:{SPEAK_SERVER_PORT}/timer",
-        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"},
-        method="POST")
+        f"http://{SPEAK_SERVER_HOST}:{SPEAK_SERVER_PORT}{pfad}",
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="GET" if body is None else "POST")
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             return json.loads(r.read() or b"{}")
@@ -293,7 +317,25 @@ def _timer_aufruf(args: dict) -> dict:
         try:
             return json.loads(e.read() or b"{}")
         except ValueError:
-            return {"ok": False, "text": f"Timer-Dienst HTTP {e.code}"}
+            return {"ok": False, "text": f"Sprech-Server HTTP {e.code}"}
+
+
+def _timer_aufruf(args: dict) -> dict:
+    body = {k: args.get(k) for k in ("aktion", "name", "dauer_s", "klingeln")
+            if args.get(k) is not None}
+    return _speak_server("/timer", body)
+
+
+def _mikro_aufruf(args: dict) -> dict:
+    aktion = args.get("aktion")
+    if aktion == "abfragen":
+        return _speak_server("/mikro", None)
+    body = {"stumm": aktion == "stumm", "quelle": "brain"}
+    if args.get("minuten"):
+        body["minuten"] = args["minuten"]
+    if args.get("unbegrenzt"):
+        body["unbegrenzt"] = True
+    return _speak_server("/mikro", body)
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +427,18 @@ def _call_tool(server: GastonMCP, name: str, args: dict) -> dict:
         )
         return {"content": [{"type": "text",
                              "text": json.dumps(env, ensure_ascii=False, indent=2)}]}
+
+    if name == "mikro":
+        try:
+            antwort = _mikro_aufruf(args)
+        except Exception as e:
+            return {"content": [{"type": "text",
+                                 "text": f"Mikro-Schalter nicht erreichbar ({e}). "
+                                         "Läuft der Sprachassistent mit mikro: im Profil?"}],
+                    "isError": True}
+        return {"content": [{"type": "text",
+                             "text": json.dumps(antwort, ensure_ascii=False, indent=2)}],
+                "isError": antwort.get("ok") is False}
 
     if name == "kuechentimer":
         try:
