@@ -683,6 +683,19 @@ for the small model are generated at runtime from `/capabilities`. Adding a new
 device there is enough — it becomes speakable immediately, without a restart and
 without touching the prompt.
 
+**Two commands in one sentence** ("turn on the evening light and close the
+living-room blind"): the small model forms one intent per sentence and mixed
+target and action of the two halves ("kitchen light off and the hall light
+on" → hall light **off**). `services/aktuator_und.py` therefore splits such
+sentences beforehand, rule-based without a model, at "und" (and), commas and
+sentence ends, and classifies each part on its own. "table light and sofa
+light off" becomes two parts with the same action. Switching happens only if
+**all** parts are executable; otherwise the whole sentence goes to the brain
+(also for "if", "not" or a time). The word lists are German; replace them for
+another language. Measured with `tools/aktuator_und_test.py` (sentences glued
+from your own labelled set plus hand-written ones); FALSE and "half" (only one
+part switched) must stay 0.
+
 ### The same path for the brain (MCP)
 
 The actuator only handles what it recognises as a switching command with

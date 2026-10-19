@@ -21,6 +21,7 @@ from voice_assistant.audio.satellit import mit_satelliten
 from voice_assistant.config import (
     ACTUATOR_LOG_PATH,
     ACTUATOR_TOR_LOG_PATH,
+    ACTUATOR_UND_LOG_PATH,
     DIARIZATION_JOIN_TIMEOUT,
     ABORT_BEEP_PATH,
     TIMER_KLINGEL_PATH,
@@ -51,7 +52,7 @@ from voice_assistant.config import (
     WakewordConfig,
     load_profile,
 )
-from voice_assistant.services import aktuator_schatten, telegram
+from voice_assistant.services import aktuator_schatten, aktuator_und, telegram
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.actuator import (
     Actuator,
@@ -422,6 +423,20 @@ def _log_tor(meta: dict) -> None:
             f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     except Exception as exc:  # Logging darf den Loop nie crashen
         print(f"⚠️  tor-log: {exc}")
+
+
+def _log_und(text: str, z) -> None:
+    """Eine JSONL-Zeile je zerlegtem Satz (actuator_und.log): Teile, ihre
+    Ausgaenge, und ob geschaltet wurde. Best-effort."""
+    try:
+        meta = {"ts": datetime.now().isoformat(timespec="seconds"), "transcript": text,
+                "teile": [{"text": t, "ausgang": e.ausgang, "wer": e.wer, "ms": round(e.ms)}
+                          for t, e in zip(z.teile, z.entscheidungen)],
+                "ausfuehrbar": z.ausfuehrbar, "grund": z.grund}
+        with open(ACTUATOR_UND_LOG_PATH, "a") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        print(f"⚠️  und-log: {exc}")
 
 
 def _log_timer_turn(meta: dict) -> None:
@@ -2527,7 +2542,21 @@ def run() -> None:
                         # Gemmas Torfrage landet weiter in actuator_tor.log.
                         tor_urteil = None
                         akt_wer, akt_ms = "gemma", 0.0
+                        # Doppelbefehl („…ein und mach … zu“): jeder Teil
+                        # einzeln, geschaltet nur, wenn alle ausfuehrbar sind,
+                        # sonst geht der ganze Satz an den Brain — nie als ein
+                        # Satz an den Klassifikator, der mischte Ziel und
+                        # Aktion der Haelften (services/aktuator_und.py).
+                        zerlegung = None
                         if actuator is not None and actuator.ready and not aktuator_gesperrt:
+                            zerlegung = aktuator_und.entscheiden(actuator, text)
+                            if zerlegung is not None:
+                                _log_und(text, zerlegung)
+                                akt_ms = zerlegung.ms
+                                if zerlegung.ausfuehrbar:
+                                    verdict = VERDICT_AUSFUEHRBAR
+                        if (actuator is not None and actuator.ready and not aktuator_gesperrt
+                                and zerlegung is None):
                             entscheidung = aktuator_schatten.entscheiden(actuator, text)
                             intent, verdict, unklar_grund = (entscheidung.intent, entscheidung.verdict,
                                                              entscheidung.grund)
@@ -2549,7 +2578,119 @@ def run() -> None:
                             # Entscheidung und im eigenen Thread — schaltet nie.
                             aktuator_schatten.schatten_starten(actuator, text, current_wakeword.bundle,
                                                                entscheidung)
-                        if verdict == VERDICT_AUSFUEHRBAR:
+                        if zerlegung is not None and zerlegung.ausfuehrbar:
+                            # Alle Teile ausfuehrbar: nacheinander schalten, die
+                            # Antworten der Gegenstelle zu einer Ansage. Jeder
+                            # Teil bekommt seine Zeile in actuator_turns.log (mit
+                            # dem Teil als transcript, der ganze Satz in "satz").
+                            # Will die Gegenstelle bei einem Teil eine
+                            # Bestaetigung, kommt die Rueckfrage am Ende, wie
+                            # beim einzelnen Befehl; ein zweiter solcher Teil
+                            # wird nicht geschaltet, sondern zurueckgewiesen.
+                            turn_epoch = time.time()
+                            _save_last_recording(recorded_chunks)
+                            _flush_endpoint(text, ausgang="aktuator")
+                            n_teile = len(zerlegung.teile)
+                            teil_logs, gesagt = [], []
+                            handshake, rueckfrage = None, None
+                            for nr, (teil, e) in enumerate(
+                                    zip(zerlegung.teile, zerlegung.entscheidungen), 1):
+                                request_id = str(uuid.uuid4())
+                                resp = actuator.execute(e.intent, request_id)
+                                status = (resp or {}).get("status", "keine_antwort")
+                                print(
+                                    f"[{now:.1f}s] 🔌 Aktuator {nr}/{n_teile}: "
+                                    f"{e.intent.get('ziel')}/{e.intent.get('aktion')} "
+                                    f"({e.wer} {e.ms:.0f} ms) → {status}"
+                                )
+                                teil_logs.append({
+                                    "phase": "intent",
+                                    "request_id": request_id,
+                                    "transcript": teil,
+                                    "satz": text,
+                                    "teil": f"{nr}/{n_teile}",
+                                    "wakeword": current_wakeword.bundle,
+                                    "intent": e.intent,
+                                    "klassifikator": e.wer,
+                                    "latency_ms": round(e.ms),
+                                    "status": status,
+                                    "ausgefuehrt": (resp or {}).get("ausgefuehrt"),
+                                    "grund": (resp or {}).get("grund"),
+                                    "gesprochen": (resp or {}).get("gesprochen"),
+                                    "vorher": (resp or {}).get("vorher"),
+                                    "unklar_round": unklar_round,
+                                })
+                                if resp is None:
+                                    gesagt.append(f"Bei „{teil}“ antwortet die Haussteuerung nicht.")
+                                elif status == "zurueckgestellt" and handshake is None:
+                                    handshake = {"intent": e.intent, "request_id": request_id,
+                                                 "transcript": teil, "speaker": None,
+                                                 "speaker_status": "ausstehend"}
+                                    rueckfrage = resp.get("gesprochen") or "Bist du sicher?"
+                                elif status == "zurueckgestellt":
+                                    gesagt.append(f"„{teil}“ sag bitte noch einmal einzeln.")
+                                else:
+                                    gesagt.append(resp.get("gesprochen") or "")
+                            _log_outcome(
+                                "aktuator",
+                                status=",".join(z["status"] for z in teil_logs),
+                                ziel=",".join(str(z["intent"].get("ziel")) for z in teil_logs),
+                                aktion=",".join(str(z["intent"].get("aktion")) for z in teil_logs),
+                                transcript=text,
+                            )
+
+                            def _und_nachtrag(v, teil_logs=teil_logs, handshake=handshake):
+                                for z in teil_logs:
+                                    _log_actuator_turn({**z, "speaker": v.name,
+                                                        "speaker_status": v.status})
+                                    if overseer is not None:
+                                        overseer.check_turn({
+                                            "ts": datetime.now().isoformat(timespec="seconds"),
+                                            "request_id": z["request_id"],
+                                            "transcript": z["transcript"],
+                                            "speaker": v.name,
+                                            "speaker_status": v.status,
+                                            "intent": z["intent"],
+                                            "status": z["status"],
+                                            "ausgefuehrt": z["ausgefuehrt"],
+                                            "gesprochen": z["gesprochen"],
+                                            "unklar_round": z["unklar_round"],
+                                        })
+                                if handshake is not None:
+                                    handshake["speaker"] = v.name
+                                    handshake["speaker_status"] = v.status
+                            _sprecher_nachtragen(turn_spk_q, turn_mood_q, current_wakeword.bundle,
+                                                 turn_epoch, _und_nachtrag)
+                            ansage = " ".join(t for t in gesagt if t)
+                            if ansage:
+                                speaker.speak(ansage)
+                            if handshake is not None:
+                                speaker.speak(rueckfrage)
+                                pending_confirm = handshake
+                                audio_source.flush()
+                                wakeword.reset()
+                                if os.path.exists(FOLLOWUP_BEEP_PATH):
+                                    audio_sink.play_wav(FOLLOWUP_BEEP_PATH)
+                                audio_source.flush()
+                                leds.set_phase(LED_FOLLOWUP)
+                                state = STATE_FOLLOWUP
+                                state_start = time.time()
+                                recorded_chunks = []
+                                pre_roll_chunks = 0
+                                silence_counter = 0
+                                max_internal_pause = 0
+                                speech_detected = False
+                                followup_rms_sum = 0.0
+                                followup_rms_count = 0
+                                followup_vad_speech = 0
+                            else:
+                                leds.set_phase(LED_IDLE if all(z["status"] != "keine_antwort"
+                                                               for z in teil_logs) else LED_ERROR)
+                                followup_round = 0
+                                pending_reply_text[0] = None
+                                state = STATE_PAUSE
+                                state_start = time.time()
+                        elif verdict == VERDICT_AUSFUEHRBAR:
                             # Erst schalten und ansagen, den Sprecher danach im
                             # Hintergrund ermitteln und protokollieren — er wird
                             # nur MITGESCHRIEBEN (Node-RED liefert den fertigen
@@ -2777,6 +2918,12 @@ def run() -> None:
                                     f"[{now:.1f}s] 🔌 Aktuator übersprungen ("
                                     + ("Barge-in" if war_bargein else f"Follow-up-Runde {followup_round}")
                                     + ") → Brain"
+                                )
+                            elif zerlegung is not None:
+                                print(
+                                    f"[{now:.1f}s] 🔌 Aktuator: Doppelbefehl "
+                                    f"{' + '.join(zerlegung.teile)!r} nicht sicher "
+                                    f"({zerlegung.grund}, {akt_ms:.0f} ms) → Brain"
                                 )
                             elif tor_urteil is not None and not tor_urteil.ja:
                                 p = "?" if tor_urteil.p_ja is None else f"{tor_urteil.p_ja:.3f}"

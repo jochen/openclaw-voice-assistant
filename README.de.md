@@ -702,6 +702,20 @@ des kleinen Modells entstehen zur Laufzeit aus `/capabilities`. Ein neues Gerät
 dort anlegen genügt — es ist sofort sprechbar, ohne Neustart und ohne
 Prompt-Änderung.
 
+**Zwei Befehle in einem Satz** („schalte das Abendlicht ein und mach den
+Wohnzimmerrollo zu“): Das kleine Modell bildet einen Intent je Satz und
+mischte dabei Ziel und Aktion der beiden Hälften („Küchenlicht aus und das
+Flurlicht an“ → Flurlicht **aus**). `services/aktuator_und.py` zerlegt solche
+Sätze deshalb vorher fest, ohne Modell, an „und“, Komma und Satzende, und
+schickt jeden Teil einzeln durch die Klassifikation. „Tischlicht und Sofalicht
+aus“ wird dabei zu zwei Teilen mit derselben Aktion. Geschaltet wird nur, wenn
+**alle** Teile ausführbar sind; sonst geht der ganze Satz an den Brain (auch
+bei „wenn“, „nicht“ oder einer Zeitangabe). Die Wortlisten sind deutsch, für
+eine andere Sprache sind sie zu ersetzen. Gemessen mit
+`tools/aktuator_und_test.py` (Sätze aus dem eigenen gelabelten Set geklebt
+plus handgeschriebene); FALSCH und „halb“ (nur ein Teil geschaltet) müssen 0
+bleiben.
+
 ### Derselbe Weg für den Brain (MCP)
 
 Der Aktuator erledigt nur, was er sicher als Schaltbefehl erkennt. Alles

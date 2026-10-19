@@ -1236,6 +1236,10 @@ ACTUATOR_TOR_LOG_PATH = os.path.join(WORKSPACE, "actuator_tor.log")
 # die des Schatten-Klassifikators nebeneinander. Auswertung:
 # tools/aktuator_vergleich.py --schatten
 ACTUATOR_SCHATTEN_LOG_PATH = os.path.join(WORKSPACE, "actuator_schatten.log")
+# Doppelbefehle mit „und“ (services/aktuator_und.py): je zerlegtem Satz die
+# Teile, ihre Ausgaenge und ob geschaltet wurde oder der Brain dran ist.
+# Eigene Datei aus demselben Grund wie actuator_tor.log.
+ACTUATOR_UND_LOG_PATH = os.path.join(WORKSPACE, "actuator_und.log")
 
 # Aufnahme-Hard-Cap (Silence-Detection beendet normal früher).
 # 30 s erlaubt einen längeren Enrolment-Satz: "lerne meine Stimme, ich bin Jochen,

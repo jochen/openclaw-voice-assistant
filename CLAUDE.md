@@ -142,6 +142,7 @@ voice_assistant/
     actuator.py          Voice-Aktuator: Schaltbefehle lokal statt via Brain
     laya_intent.py       Laya-Fragen (Tor/Ziel/Aktion), Wert-Leser, -> Intent (nur stdlib)
     aktuator_schatten.py Schattenbetrieb: zweiter Klassifikator urteilt mit, schaltet nie
+    aktuator_und.py      Doppelbefehle mit „und“ zerlegen, jeder Teil einzeln
     leds.py              WledLeds + RespeakerRing + LedDirector
     telegram.py
     speaches.py          SpeachesState + Start-Check
@@ -298,13 +299,22 @@ einem einzigen Namen lehnt Regel A völlig legitime Sätze ab — gemessen, sieh
 die Messreihe. Zweites Werkzeug dafür: `tools/gruppenbeleg_replay.py` spielt
 die Regel über die echten Turns in `actuator_turns.log`.
 
-**Doppelbefehle mit „und“ (Messung seit 2026-10-19, noch kein Bau).** Der
-Aktuator bildet einen Intent je Satz. Bei „…Küchenlicht aus und das
-Flurlicht an“ schaltet er nicht nur halb, sondern mischt oft Ziel und Aktion
-der beiden Hälften (flurlicht/aus). Gemessen mit `tools/aktuator_und_test.py`
-(Set privat in `testsets/aktuator_und/`, aus dem Tor-Set geklebt plus
-handgeschrieben; Nulllinie im Docstring: 34 FALSCH von 253). Eine Zerlegung
-wird gegen dieses Werkzeug gebaut, FALSCH muss 0 werden.
+**Doppelbefehle mit „und“ (`services/aktuator_und.py`, seit 2026-10-19).**
+Der Aktuator bildet einen Intent je Satz und mischte bei „…Küchenlicht aus und
+das Flurlicht an“ Ziel und Aktion der Hälften (Flurlicht aus). Jetzt zerlegt
+`zerlegen()` fest (an „und“, Komma, Satzende; Aktion vom Ende des nächsten
+Teils geliehen: „Tischlicht und Sofalicht aus“), jeder Teil geht durch
+`aktuator_schatten.entscheiden`. Geschaltet wird nur, wenn alle Teile
+ausführbar sind und kein Ziel doppelt ist, sonst der ganze Satz an den Brain
+(nie als ein Satz an den Klassifikator). „wenn“, „nicht“, Zeitangaben → Brain.
+Gesperrt wie der Aktuator (kein Follow-up, kein Barge-in). Kein Schatten für
+zerlegte Sätze. Jeder Teil steht als eigene Zeile in `actuator_turns.log`
+(`teil`, `satz`), jede Zerlegung in `actuator_und.log`. Will die Gegenstelle
+bei einem Teil eine Bestätigung, kommt die Rückfrage nach den anderen.
+**Regeländerungen nur gegen `tools/aktuator_und_test.py`** (Set privat in
+`testsets/aktuator_und/`: aus dem Tor-Set geklebt plus handgeschrieben;
+`--einzel` prüft, dass das Tor-Set nicht schlechter wird). Zahlen im
+Docstring. Tests: `tests/test_aktuator_und.py`.
 
 **Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
 implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige
