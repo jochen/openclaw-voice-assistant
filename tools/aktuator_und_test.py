@@ -72,6 +72,26 @@ Messreihe (gilt fuer capabilities- und Laya-Checkpoint-Version)
                 „Küchenlicht aus … Wohnzimmerrollo zu“ → Wohnzimmerlicht aus
                 (ein drittes Geraet). Doppelbefehle schalten heute also nicht
                 nur halb, sondern in gut einem Fuenftel falsch.
+
+    2026-10-19  Set neu erzeugt (Anrede der zweiten Haelfte weg, „Ja. Ja,
+                und …“ nicht mehr als Gerede), sonst wie oben. Dann
+                services/aktuator_und.py (--kette zerlegt, der Default).
+                                     richtig verpasst  halb FALSCH
+                Laya  heute                51       44   124     34
+                Laya  zerlegt             215       38     0      0
+                Gemma heute                39        7   193     14
+                Gemma zerlegt             212       38     0      3
+                Laya zerlegt: Median 158 ms je Satz (zwei Anfragen), Gemma
+                2425 ms. Die 38 verpassten sind sicher (Brain): Haelften,
+                die der Klassifikator auch allein nicht schafft (Verhoerer,
+                Regel A, „Wohnzimmer … dazu“) oder Restteile („das da“).
+                Die 3 FALSCH bei Gemma waren ohne Zerlegung genauso FALSCH,
+                es sind Gemma-Fehler an einer Haelfte: „Esstischrohlos auf“
+                → ein einzelnes Rollo statt der Gruppe, „Küchenbeleuchtung aus“
+                → ein, und der Bericht „Er hat das Kinderzimmerlicht angemacht …“ (kein
+                Aktionswort, wird gar nicht zerlegt). Live entscheidet Laya.
+                --einzel: 27 der 371 Tor-Saetze werden zerlegt, Ergebnis
+                unveraendert (Laya und Gemma je 26 richtig, 1 verpasst).
 """
 
 from __future__ import annotations
@@ -140,13 +160,20 @@ def kleben(a: str, b: str, verbinder: str) -> str:
     return _vorne(a) + verbinder + _hinten(b)
 
 
+def _nur_fuellwoerter(satz: str) -> bool:
+    """„Ja. Ja.“ ist kein Gerede neben einem Befehl, sondern Fuellung."""
+    from voice_assistant.services.aktuator_und import _fuelle
+    return _fuelle(satz)
+
+
 def erzeugen(seed: int = 1, n_befehle: int = 120, n_gemischt: int = 60,
              n_gerede: int = 20) -> list[dict]:
     tor = _lesen(_TOR_SET)
     befehle = [f for f in tor if f.get("schalten") is True and f.get("ziel") and f.get("aktion")
                and "alexa" not in f["satz"].lower()]
     gerede = [f for f in tor if f.get("schalten") is False
-              and 2 <= len(f["satz"].split()) <= 12 and "alexa" not in f["satz"].lower()]
+              and 2 <= len(f["satz"].split()) <= 12 and "alexa" not in f["satz"].lower()
+              and not _nur_fuellwoerter(f["satz"])]
     rng = random.Random(seed)
     zeilen, gesehen = [], set()
 
@@ -209,6 +236,22 @@ def kette_heute(akt, satz: str) -> tuple[list[dict] | None, str, float]:
     return [dict(e.intent)], e.ausgang, e.ms
 
 
+def kette_zerlegt(akt, satz: str) -> tuple[list[dict] | None, str, float]:
+    """Mit Zerlegung (services/aktuator_und.py); ohne Doppelbefehl wie heute."""
+    from voice_assistant.services import aktuator_und
+    z = aktuator_und.entscheiden(akt, satz)
+    if z is None:
+        return kette_heute(akt, satz)
+    if any(e.ausfall for e in z.entscheidungen):
+        return None, "Ausfall", z.ms
+    if not z.ausfuehrbar:
+        return [], f"Brain: {z.grund}", z.ms
+    return [dict(i) for i in z.intents], " + ".join(z.teile), z.ms
+
+
+_KETTEN = {"heute": kette_heute, "zerlegt": kette_zerlegt}
+
+
 def _zeige(liste: list[dict] | None) -> str:
     if liste is None:
         return "Ausfall"
@@ -219,20 +262,21 @@ def _zeige(liste: list[dict] | None) -> str:
                      for s in liste)
 
 
-def messen(akt, faelle: list[dict], alle: bool, json_aus: str | None) -> int:
+def messen(akt, faelle: list[dict], alle: bool, json_aus: str | None, kette: str) -> int:
     klassen = ("richtig", "verpasst", "halb", "FALSCH", "Ausfall")
     je_art: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     gesamt = collections.Counter()
     ms, zeilen = [], []
     for f in faelle:
-        geschaltet, ausgang, t = kette_heute(akt, f["satz"])
+        geschaltet, ausgang, t = _KETTEN[kette](akt, f["satz"])
         k = bewerte(f, geschaltet)
         art = f"{f['quelle']}:{f['art']}"
         je_art[art][k] += 1
         gesamt[k] += 1
         ms.append(t)
         zeilen.append({**f, "ist": geschaltet, "ausgang": ausgang, "klasse": k, "ms": t})
-    print(f"{len(faelle)} Saetze, capabilities {akt.version}, Kette {akt.cfg.klassifikator}\n")
+    print(f"{len(faelle)} Saetze, capabilities {akt.version}, {akt.cfg.klassifikator}, "
+          f"Kette {kette}\n")
     print(f"{'':28s} " + " ".join(f"{k:>8s}" for k in klassen))
     for art in sorted(je_art):
         print(f"{art:28s} " + " ".join(f"{je_art[art][k]:8d}" for k in klassen))
@@ -249,8 +293,54 @@ def messen(akt, faelle: list[dict], alle: bool, json_aus: str | None) -> int:
                   f"           soll {soll}\n           ist  {_zeige(z['ist'])}  [{z['ausgang']}]")
     if json_aus:
         with open(json_aus, "w", encoding="utf-8") as f:
-            json.dump({"capabilities": akt.version, "faelle": zeilen}, f, ensure_ascii=False, indent=1)
+            json.dump({"capabilities": akt.version, "kette": kette, "faelle": zeilen}, f, ensure_ascii=False, indent=1)
     return 1 if gesamt["FALSCH"] or gesamt["Ausfall"] else 0
+
+
+def einzel(akt, alle: bool) -> int:
+    """Das Tor-Set (ein Befehl je Satz, oder keiner) mit und ohne Zerlegung:
+    die Zerlegung darf dort nichts schlechter machen."""
+    from tools.aktuator_vergleich import bewerte as bewerte_einzel
+    from voice_assistant.services import aktuator_und
+    with akt._lock:
+        namen = [n for z in (akt.digest or {}).values() for n in (z.get("namen") or [])]
+    faelle = [f for f in _lesen(_TOR_SET) if f.get("schalten") is not None]
+    zerlegt = [f for f in faelle if aktuator_und.zerlegen(f["satz"], namen) is not None]
+    print(f"Tor-Set: {len(faelle)} Saetze, davon {len(zerlegt)} zerlegt "
+          f"(nur die werden verglichen, der Rest laeuft unveraendert)\n")
+    vorher, nachher = collections.Counter(), collections.Counter()
+    for f in zerlegt:
+        e_alt = _einzel_heute(akt, f["satz"])
+        k_alt = bewerte_einzel(f, *e_alt)
+        geschaltet, ausgang, _ = kette_zerlegt(akt, f["satz"])
+        k_neu = _bewerte_liste(f, geschaltet)
+        vorher[k_alt] += 1
+        nachher[k_neu] += 1
+        if alle or k_alt != k_neu or k_neu != "richtig":
+            print(f"  {k_alt:8s} → {k_neu:8s} {f['satz'][:90]}\n"
+                  f"           {ausgang}")
+    print(f"\nvorher  {dict(vorher)}\nnachher {dict(nachher)}")
+    return 1 if nachher["FALSCH"] > vorher["FALSCH"] else 0
+
+
+def _einzel_heute(akt, satz: str):
+    from voice_assistant.services.aktuator_schatten import entscheiden
+    e = entscheiden(akt, satz)
+    return e.intent, e.verdict
+
+
+def _bewerte_liste(f: dict, geschaltet: list[dict] | None) -> str:
+    """Wie aktuator_vergleich.bewerte, fuer eine Liste von Schaltungen."""
+    if geschaltet is None:
+        return "Ausfall"
+    if f.get("schalten") and f.get("ziel"):
+        if not geschaltet:
+            return "verpasst"
+        soll = _schluessel({"ziel": f["ziel"], "aktion": f.get("aktion"), "wert": f.get("wert")})
+        ok = len(geschaltet) == 1 and (soll == _schluessel(geschaltet[0]) or (
+            f.get("wert") is None and soll[:2] == _schluessel(geschaltet[0])[:2]))
+        return "richtig" if ok else "FALSCH"
+    return "FALSCH" if geschaltet else "richtig"
 
 
 def main() -> int:
@@ -259,6 +349,12 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--nur", choices=("erzeugt", "hand"), help="nur einen Teil des Sets messen")
     ap.add_argument("--alle", action="store_true", help="auch die richtigen Faelle zeigen")
+    ap.add_argument("--kette", choices=sorted(_KETTEN), default="zerlegt",
+                    help="heute = ein Intent je Satz (Nulllinie), zerlegt = mit aktuator_und")
+    ap.add_argument("--klassifikator", choices=("laya", "gemma"),
+                    help="Default: actuator.klassifikator des Profils")
+    ap.add_argument("--einzel", action="store_true",
+                    help="Gegenprobe: Tor-Set mit und ohne Zerlegung")
     ap.add_argument("--json", help="Ergebnis je Satz hierhin schreiben")
     args = ap.parse_args()
 
@@ -284,11 +380,18 @@ def main() -> int:
 
     from voice_assistant.config import load_profile
     from voice_assistant.services.actuator import Actuator
-    akt = Actuator(load_profile().actuator)
+    cfg = load_profile().actuator
+    if args.klassifikator:
+        cfg.klassifikator = args.klassifikator
+    akt = Actuator(cfg)
     if not akt.refresh():
         print("capabilities-refresh fehlgeschlagen — laeuft die Gegenstelle?")
         return 2
-    return messen(akt, faelle, args.alle, args.json)
+    if cfg.klassifikator == "gemma":
+        akt.aufwaermen()   # Kaltstart je Prompt 8–12 s auf der Vega, sonst Ausfaelle
+    if args.einzel:
+        return einzel(akt, args.alle)
+    return messen(akt, faelle, args.alle, args.json, args.kette)
 
 
 if __name__ == "__main__":
