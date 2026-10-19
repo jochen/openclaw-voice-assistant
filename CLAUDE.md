@@ -298,6 +298,14 @@ einem einzigen Namen lehnt Regel A völlig legitime Sätze ab — gemessen, sieh
 die Messreihe. Zweites Werkzeug dafür: `tools/gruppenbeleg_replay.py` spielt
 die Regel über die echten Turns in `actuator_turns.log`.
 
+**Doppelbefehle mit „und“ (Messung seit 2026-10-19, noch kein Bau).** Der
+Aktuator bildet einen Intent je Satz. Bei „…Küchenlicht aus und das
+Flurlicht an“ schaltet er nicht nur halb, sondern mischt oft Ziel und Aktion
+der beiden Hälften (flurlicht/aus). Gemessen mit `tools/aktuator_und_test.py`
+(Set privat in `testsets/aktuator_und/`, aus dem Tor-Set geklebt plus
+handgeschrieben; Nulllinie im Docstring: 34 FALSCH von 253). Eine Zerlegung
+wird gegen dieses Werkzeug gebaut, FALSCH muss 0 werden.
+
 **Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
 implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige
 Vertrag beider Endpunkte samt Begründung jeder Design-Entscheidung, eine
