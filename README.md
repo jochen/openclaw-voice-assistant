@@ -336,6 +336,30 @@ the bridge declines (several rooms playing, nothing to resume) goes to the
 brain unchanged.
 Measure changes with `tools/musik_parser_test.py` (FALSE must stay 0).
 
+## Mute the microphone for a while (`mikro:`, optional)
+
+For visitors, or while you play recordings at the computer that must not
+trigger the assistant: "Gaston, stell dich taub" ("play deaf") switches the
+XVF3800's mute (the `Microphone Mute` switch of the ESPHome firmware;
+`mode: respeaker` only). **Always with a time limit unless asked otherwise**
+(`standard_minuten`, default 120; "for half an hour" in the sentence changes
+it, "until I switch you back on" removes it): a forgotten mute leaves the
+assistant silently dead, and nobody notices until they need it. When the
+limit runs out, the assistant says so and listens again. The state survives a
+restart (`mikro.json`), because the mute sits in the device. The button on the
+device is respected and only logged.
+
+Ways in, all through one class (`services/mikro_stumm.py`):
+- Voice, a fixed recognizer (`services/mikro_parser.py`, German patterns).
+  Switching back on by voice only works from a satellite (phone), the muted
+  main microphone cannot hear it.
+- MQTT (`mqtt_host`, `mqtt_topic`): `{"action": ...}` toggles, so the topic
+  of a zigbee2mqtt button works directly, or a home-automation flow sends
+  `{"stumm": true|false|"umschalten", "minuten": n, "ansage": false}`.
+- `POST /mikro` on the local speak server, and the brain's MCP tool `mikro`.
+
+Every switch with its source is in `~/.openclaw/workspace/mikro.log`.
+
 ## Wake-word level gate (`wake_rms_min`)
 
 Besides the score gate, there is an optional **level gate**: the RMS of the

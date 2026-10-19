@@ -18,6 +18,10 @@ Endpoints:
                         aktion: stellen | verlaengern | noch | loeschen | abfragen | klingeln
                         name "*" = alle; der Text ist die Ansage, gesprochen wird nicht
   POST /timer/still   → Klingeln beenden ({"klingelte": bool})
+  GET  /mikro         → {stumm, bis, bis_text, von_uns} (services/mikro_stumm.py)
+  POST /mikro         → {stumm: true|false|"umschalten", minuten?, unbegrenzt?,
+                        ansage?, quelle?} → {ok, text, stumm, bis}; gesprochen
+                        wird nur mit ansage true (der Brain spricht selbst)
 """
 
 from __future__ import annotations
@@ -50,6 +54,7 @@ from voice_assistant.services.tts import ReplySpeaker
 # (gleiches Muster wie der modul-globale announce_queue-Zustand).
 _voice_controller = None
 _kuechentimer = None
+_mikro = None
 
 
 def _resolve_model_for_voice(available: list[dict], voice: str) -> str | None:
@@ -99,6 +104,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(503, {"error": "Küchentimer ist nicht aktiv"})
             else:
                 self._send_json(200, _kuechentimer.schnappschuss())
+            return
+        if path == "/mikro":
+            if _mikro is None:
+                self._send_json(503, {"error": "Mikro-Schalter ist nicht aktiv"})
+            else:
+                self._send_json(200, _mikro.schnappschuss())
             return
         if path == "/voices":
             query = urllib.parse.parse_qs(parsed.query)
@@ -358,6 +369,18 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, {"klingelte": _kuechentimer.klingeln_aus()})
             return
+        if self.path == "/mikro":
+            body = self._read_json_body()
+            if _mikro is None:
+                self._send_json(503, {"error": "Mikro-Schalter ist nicht aktiv"})
+            elif "stumm" not in body:
+                self._send_json(400, {"error": "stumm fehlt (true, false oder \"umschalten\")"})
+            else:
+                erg = _mikro.nachricht(body, quelle=str(body.get("quelle") or "http"), ansage=False)
+                print(f"[speak-server] Mikro {body}: {erg.text}")
+                self._send_json(200 if erg.ok else 409, {"ok": erg.ok, "text": erg.text,
+                                                         "stumm": erg.stumm, "bis": erg.bis})
+            return
         if self.path == "/aussprache":
             self._handle_aussprache_setzen()
             return
@@ -391,10 +414,11 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(202, {"queued": True, "length": len(text)})
 
 
-def start_speak_server(voice_controller=None, kuechentimer=None) -> threading.Thread:
-    global _voice_controller, _kuechentimer
+def start_speak_server(voice_controller=None, kuechentimer=None, mikro=None) -> threading.Thread:
+    global _voice_controller, _kuechentimer, _mikro
     _voice_controller = voice_controller
     _kuechentimer = kuechentimer
+    _mikro = mikro
     server = HTTPServer((SPEAK_SERVER_HOST, SPEAK_SERVER_PORT), _Handler)
     t = threading.Thread(target=server.serve_forever, name="speak-server", daemon=True)
     t.start()

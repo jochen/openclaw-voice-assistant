@@ -156,6 +156,8 @@ voice_assistant/
     container.py         Podman-Container im eigenen Scope starten (rootlessport-Falle)
     timer_parser.py      Timer-Befehle fest aus dem Transkript (ohne Modell)
     kuechentimer.py      Küchentimer: Zustand, Ablauf, Senken (TIMER_INTERFACE.md)
+    mikro_parser.py      „stell dich taub“ fest aus dem Transkript (ohne Modell)
+    mikro_stumm.py       Mute des XVF3800 mit Zeitgrenze (Sprache, MQTT, Brain)
 ```
 
 ### Wakeword-Studio-CLI (`wakeword_studio/`)
@@ -525,6 +527,34 @@ gesagten Raum dort (pi51-Vorschlag, Jochen). Log: `musik_turns.log`.
 `testsets/musik_steuerung/`), FALSCH muss 0 bleiben. Echte Befehle gibt es
 bisher nur für stop/next/resume. Tests: `tests/test_musik_parser.py`,
 `tests/test_musik_befehle.py`.
+
+### Mikro stumm (`mikro:`, seit 2026-10-19)
+
+Jochens Anlass: Besuch, und beim Anhören von Aufnahmen am Rechner lösten die
+abgespielten Sätze Trigger aus. `services/mikro_stumm.py` schaltet den
+Mute-Schalter des XVF3800 (`RespeakerClient.mute_setzen`, Entity „Microphone
+Mute“, die Firmware liest ihn jede Sekunde). Der Audiostrom läuft weiter, aus
+Nullen (umgebung.py lernt daraus keine Ruhe, Mic-Watchdog bleibt still).
+**Zeitgrenze als Standard** (`standard_minuten` 120, Jochen): ein vergessener
+Mute macht Gaston still tot. Ohne Grenze nur auf ausdrücklichen Wunsch
+(„bis ich dich wieder anmache“). Zustand in `mikro.json` über Neustarts, weil
+der Mute im Gerät sitzt. Der Knopf am Gerät wird respektiert (beendet eine
+Zeitgrenze, bekommt selbst keine), nur geloggt. Eingänge, alle in diese eine
+Klasse:
+- Sprache: `services/mikro_parser.py`, Zweig in STATE_PROCESSING vor der
+  Musik, Erst-Turn, **auch am Satelliten** (nur von dort geht „hör wieder
+  zu“). Uhrzeiten („bis 22 Uhr“) → Brain. Gegen 758 Log-Transkripte und
+  60 131 Testset-Sätze: kein einziger Treffer.
+- MQTT (`mqtt_topic`, hier `gaston/mikro`): `{"action": …}` schaltet um
+  (Zigbee-Knopf über Node-RED, oder das zigbee2mqtt-Topic direkt),
+  `{"stumm", "minuten", "ansage"}` gezielt. Retained zählt nicht.
+- `POST /mikro` am Sprech-Server (nur 127.0.0.1), darüber das MCP-Werkzeug
+  `mikro`. Spricht nur mit `ansage: true`, der Brain antwortet selbst.
+Log: `mikro.log` (Quelle sprache/mqtt/brain/zeit/geraet). Live geprüft
+2026-10-19 (1 min per `POST /mikro`): Gerät meldet stumm, die rote Mute-LED
+in der Mitte des Rings leuchtet (keine eigene Ring-Phase nötig), nach Ablauf
+„Ich höre wieder zu.“. MQTT noch nicht mit echter Nachricht. Tests:
+`tests/test_mikro_stumm.py`, `tests/test_mikro_parser.py`.
 
 ### Dienst-Wächter (`dienstwaechter:`, seit 2026-10-06)
 

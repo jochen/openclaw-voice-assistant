@@ -71,7 +71,7 @@ from voice_assistant.services.sprecher_verifikation import SprecherVerifikation
 from voice_assistant.services.mood import MoodAnalyzer
 from voice_assistant.services.enroll_server import start_enroll_server
 from voice_assistant.services.speak_server import start_announce_worker, start_speak_server
-from voice_assistant.services import musik_parser, timer_parser
+from voice_assistant.services import mikro_parser, musik_parser, timer_parser
 from voice_assistant.services.kuechentimer import STOPP_NACHLAUF_S as TIMER_STOPP_NACHLAUF_S
 from voice_assistant.services.kuechentimer import ist_stopp as ist_timer_stopp
 from voice_assistant.services.voice_control import VoiceController
@@ -902,6 +902,28 @@ def _start_musik_ducking(profile: Profile):
     return ducker
 
 
+def _start_mikro(profile: Profile):
+    """Mikro stumm schalten (services/mikro_stumm.py). Nur mit ReSpeaker:
+    der Mute-Schalter sitzt im XVF3800."""
+    cfg = profile.mikro
+    if not cfg.enabled:
+        return None
+    if profile.mode != "respeaker":
+        print("⚠️  mikro: braucht mode respeaker — aus")
+        return None
+    from voice_assistant.audio.respeaker import get_client
+    from voice_assistant.config import MIKRO_LOG_PATH, MIKRO_STATE_PATH
+    from voice_assistant.services.mikro_stumm import MikroSchalter
+    schalter = MikroSchalter(
+        get_client(profile.respeaker), cfg.standard_minuten, MIKRO_STATE_PATH, MIKRO_LOG_PATH,
+        ansagen=lambda text: announce_queue.put((text, False)))
+    if cfg.mqtt_host and cfg.mqtt_topic:
+        schalter.mqtt_starten(cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_topic)
+    print(f"🔇 Mikro: stumm schalten aktiv (Standard {cfg.standard_minuten:.0f} min, "
+          f"MQTT: {cfg.mqtt_topic or 'keins'})")
+    return schalter
+
+
 def _start_kuechentimer(profile: Profile, audio_sink):
     """Küchentimer starten (services/kuechentimer.py). Fehler dürfen den
     Start nie verhindern — ohne Timer gehen Timer-Sätze an den Brain."""
@@ -1183,10 +1205,12 @@ def run() -> None:
     # --- Küchentimer (Zustand hier, Anzeige/Klingeln auf Senken) ---
     kuechentimer = _start_kuechentimer(profile, audio_sink)
     musik_ducker = _start_musik_ducking(profile)
+    mikro = _start_mikro(profile)
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
-    start_speak_server(voice_controller=voice_controller, kuechentimer=kuechentimer)
+    start_speak_server(voice_controller=voice_controller, kuechentimer=kuechentimer,
+                       mikro=mikro)
 
     def _ansage_daempfen():
         # Geht die Ansage ans Handy (audio/satellit.py, ziel), bleibt die Musik
@@ -2259,6 +2283,34 @@ def run() -> None:
                         leds.set_phase(LED_IDLE)
                         followup_round = 0
                         unklar_round = 0
+                        pending_reply_text[0] = None
+                        state = STATE_PAUSE
+                        state_start = time.time()
+                    elif (followup_round == 0 and not unklar_round and not war_bargein
+                          and pending_timer is None and mikro is not None
+                          and (mikro_befehl := mikro_parser.parse(text)) is not None):
+                        # --- „Gaston, stell dich taub“ (services/mikro_stumm.py) ---
+                        # Auch am Satelliten: nur von dort geht „hör wieder
+                        # zu“, das stumme Haupt-Mikrofon hört den Satz nicht.
+                        bargein_abgebrochen_audio = None
+                        _flush_endpoint(text, ausgang="mikro")
+                        if mikro_befehl.stumm:
+                            mikro_erg = mikro.stumm(mikro_befehl.sekunden, mikro_befehl.unbegrenzt,
+                                                    quelle="sprache")
+                        else:
+                            mikro_erg = mikro.an(quelle="sprache")
+                        print(f"[{now:.1f}s] 🔇 Mikro: {mikro_befehl} → {mikro_erg.text}")
+                        _log_outcome("mikro", stumm=mikro_befehl.stumm, transcript=text)
+                        _sprecher_nachtragen(
+                            turn_spk_q, turn_mood_q, current_wakeword.bundle, time.time(),
+                            lambda v, text=text, erg=mikro_erg, sat=_satelliten_turn():
+                            mikro.protokoll(
+                                transcript=text, ok=erg.ok, stumm=erg.stumm, bis=erg.bis,
+                                satellit=sat,
+                                speaker=v.name, speaker_status=v.status))
+                        speaker.speak(mikro_erg.text)
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
                         pending_reply_text[0] = None
                         state = STATE_PAUSE
                         state_start = time.time()

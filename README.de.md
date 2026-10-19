@@ -342,6 +342,32 @@ Bridge sonst ablehnt (mehrere Räume spielen, nichts zum Fortsetzen), geht
 unverändert an den Brain. Änderungen nur gegen `tools/musik_parser_test.py`
 (FALSCH muss 0 bleiben).
 
+## Mikrofon eine Zeit lang stumm (`mikro:`, optional)
+
+Bei Besuch, oder wenn am Rechner Aufnahmen laufen, die nichts auslösen
+sollen: „Gaston, stell dich taub“ schaltet den Mute des XVF3800 (Schalter
+`Microphone Mute` der ESPHome-Firmware; nur `mode: respeaker`). **Immer mit
+Zeitgrenze, außer man will ausdrücklich keine** (`standard_minuten`, Vorgabe
+120; „für eine halbe Stunde“ im Satz ändert sie, „bis ich dich wieder
+anmache“ nimmt sie weg): ein vergessener Mute macht den Assistenten still
+tot, und das merkt man erst, wenn man ihn braucht. Läuft die Zeit ab, sagt
+er es und hört wieder zu. Der Zustand überlebt einen Neustart (`mikro.json`),
+denn der Mute sitzt im Gerät. Der Knopf am Gerät wird respektiert und nur
+geloggt.
+
+Wege hinein, alle durch eine Klasse (`services/mikro_stumm.py`):
+- Sprache, ein fester Erkenner (`services/mikro_parser.py`, deutsche Muster).
+  Wieder an per Sprache geht nur über einen Satelliten (Handy), das stumme
+  Haupt-Mikrofon hört den Satz nicht.
+- MQTT (`mqtt_host`, `mqtt_topic`): `{"action": …}` schaltet um, also passt
+  auch das Topic eines zigbee2mqtt-Knopfs direkt, oder ein Flow der
+  Hausautomation schickt `{"stumm": true|false|"umschalten", "minuten": n,
+  "ansage": false}`.
+- `POST /mikro` am lokalen Sprech-Server, und darüber das MCP-Werkzeug
+  `mikro` des Brains.
+
+Jede Schaltung samt Quelle steht in `~/.openclaw/workspace/mikro.log`.
+
 ## Pegel-Gate fürs Wakewort (`wake_rms_min`)
 
 Neben dem Score-Gate gibt es ein optionales **Pegel-Gate**: der RMS des

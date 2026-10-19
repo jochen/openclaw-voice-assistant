@@ -109,6 +109,12 @@ class RespeakerClient:
         self._player_key: int | None = None
         self._beam_key: int | None = None
         self._kanal2_key: int | None = None
+        # Mute-Schalter des XVF3800 ("Microphone Mute", services/mikro_stumm.py).
+        # mute: zuletzt gemeldeter Zustand, None = unbekannt/nicht verbunden.
+        # Die Firmware liest ihn jede Sekunde, auch nach einem Druck auf den
+        # Knopf am Geraet.
+        self._mute_key: int | None = None
+        self.mute: bool | None = None
         # Mitschnitt des zweiten Kanals (data2): None = aus, sonst Liste der
         # Chunks seit mitschnitt_start(). Gefuellt im asyncio-Thread, gelesen
         # im Wiedergabe-Thread — daher der Lock.
@@ -165,6 +171,8 @@ class RespeakerClient:
         self._button_key = None
         self._player_key = None
         self._kanal2_key = None
+        self._mute_key = None
+        self.mute = None
         self._data2_gemeldet = False
         self.led_phase_key = None
         self.boot_step_key = None
@@ -251,6 +259,9 @@ class RespeakerClient:
             if hasattr(e, "name") and "Voice Direction" in e.name:
                 self._beam_key = e.key
                 log.info("Beam sensor key=%d", e.key)
+            if hasattr(e, "name") and e.name == "Microphone Mute":
+                self._mute_key = e.key
+                log.info("Mute switch key=%d", e.key)
             if hasattr(e, "name") and "XVF-Ausgang links" in e.name:
                 self._kanal2_key = e.key
                 log.info("XVF-Ausgang-links select key=%d", e.key)
@@ -332,6 +343,8 @@ class RespeakerClient:
                     self._player_state = getattr(state, "state", None)
                     self._player_cv.notify_all()
                 log.debug("Media-Player: state=%s", self._player_state)
+            elif self._mute_key is not None and key == self._mute_key:
+                self.mute = bool(getattr(state, "state", False))
 
         self._api.subscribe_states(on_state)
 
@@ -411,6 +424,20 @@ class RespeakerClient:
     #
     # Zweiter Gewinn: eine Announce-Wiedergabe war nicht abbrechbar, ein
     # Media-Player-STOP ist es.
+
+    def mute_setzen(self, stumm: bool) -> bool:
+        """Mikrofon am XVF3800 stumm schalten oder freigeben (aus fremdem
+        Thread, wie _player_command). False = nicht verbunden oder die
+        Firmware hat keinen Mute-Schalter."""
+        loop, api, key = self._loop, self._api, self._mute_key
+        if loop is None or api is None or key is None:
+            return False
+        try:
+            loop.call_soon_threadsafe(lambda: api.switch_command(key, stumm))
+            return True
+        except Exception as exc:
+            log.warning("switch_command (Mute) failed: %s", exc)
+            return False
 
     def _player_command(self, **kwargs) -> bool:
         """Media-Player-Befehl aus einem fremden Thread absetzen.
