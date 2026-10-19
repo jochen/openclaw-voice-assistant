@@ -70,6 +70,12 @@ bloß das Wort „Stopp".
 - `review_audio.py` — Clips zum Anhören exportieren und die Sortierung als
   **harte Ohr-Labels** zurücklesen (`wake_review.jsonl`). Ein Ohr-Urteil
   sticht jede Regel und jede STT — es ist die stärkste Label-Quelle.
+  **Vor dem Anhören das Mikro stumm schalten**, sonst lösen die
+  abgespielten Clips selbst Trigger aus und landen als neue Fehltrigger im
+  Archiv (Jochen, 2026-10-19): `curl -X POST 127.0.0.1:18792/mikro -d
+  '{"stumm": true, "minuten": 30, "ansage": false}'`, danach
+  `{"stumm": false}` (oder „Gaston, stell dich taub“; siehe `mikro:` in
+  CLAUDE.md).
 - `wake_rms_replay.py` — Pegel-Gate gegen das Archiv messen (siehe unten).
 - Trigger-Archiv: `~/.openclaw/workspace/voice/triggers/`
 - Labels (stärkste Quelle zuerst): `~/.openclaw/workspace/wake_review.jsonl`
