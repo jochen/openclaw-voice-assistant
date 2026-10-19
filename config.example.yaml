@@ -158,6 +158,20 @@ profiles:
     #   marker_mqtt_port: 1883
     #   marker_topic: "zigbee2mqtt/DEIN_TASTER"
 
+    # Mikro stumm schalten — optional, nur mode respeaker (Mute-Schalter des
+    # XVF3800). "Gaston, stell dich taub (für 30 Minuten)", MQTT oder das
+    # MCP-Werkzeug mikro. Immer mit Zeitgrenze, außer ausdrücklich ohne: ein
+    # vergessener Mute macht den Assistenten still tot. MQTT: {"action": …}
+    # schaltet um (passt direkt auf einen zigbee2mqtt-Knopf), oder
+    # {"stumm": true|false|"umschalten", "minuten": n, "ansage": false}.
+    # Siehe voice_assistant/services/mikro_stumm.py.
+    # mikro:
+    #   enabled: false
+    #   standard_minuten: 120
+    #   mqtt_host: ""                   # leer = kein MQTT-Eingang
+    #   mqtt_port: 1883
+    #   mqtt_topic: "gaston/mikro"
+
     # Wakewords — optional. Fehlt der Block komplett: ein Eintrag 'hey_jarvis'
     # mit den Profil-Defaults oben (Rückwärtskompatibilität). Mehrere Einträge
     # erlauben parallel aktive Wakewords, die je auf eine eigene OpenClaw-
