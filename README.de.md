@@ -315,6 +315,10 @@ Hat ein Turn die Musik gestartet (beim Wakewort lief nichts, jetzt läuft etwas)
 Ansagen außerhalb eines Turns (`voice_speak_text`) dämpfen die Musik, solange
 sie laufen, außer sie gehen ans Handy. Der Küchentimer bewusst nicht: weder
 das Klingeln noch „Der Timer ist abgelaufen“.
+Ansagen, die der Brain während seines eigenen Turns macht (`voice_speak_text`,
+während er noch arbeitet), laufen sofort, statt auf das Ende des Turns zu
+warten, und werden gedämpft wie die Antwort; ein Barge-in verwirft sie mit dem
+Turn. System-Ansagen (Timer, Mikrofon) warten weiter auf den Leerlauf.
 Während der Brain denkt und der Assistent nichts sagt, wird die Musik nach
 4 s wieder laut und zum nächsten Satz der Antwort neu gedämpft: gebraucht
 wird die Dämpfung nur für die Aufnahme und die eigene Ausgabe. „Einen Moment
@@ -1036,7 +1040,7 @@ Nachrichten mit 🎤 kommen über Spracherkennung herein, und deine Antwort wird
 - Die Länge richtet sich nach dem Inhalt — meist ein bis vier Sätze, bei komplexen Themen mehr; jeder Satz klar und vollständig.
 - Es wird vorgelesen, also soll es gut klingen — lass weg, was man nicht hören kann (Markdown, Listen, Nummerierungen, Emojis).
 - Transkriptionen haben kleine Fehler; interpretiere großzügig und handle, sobald der Sinn klar ist — beim Verstehen, nicht beim Schalten (siehe unten).
-- Du hütest den Sprachkanal: dort wartet ein Mensch, für den jede Sekunde Stille lang ist. Wird eine Aufgabe spürbar länger — vorab absehbar oder erst mitten in der Arbeit —, gib sofort eine kurze gesprochene Rückmeldung, erledige die Arbeit im Hintergrund und sag das Ergebnis über `voice_speak_text` an. Das gilt fürs Antworten, nicht fürs Schalten: lieber eine kurze Rückfrage als ein geratenes Gerät.
+- Du hütest den Sprachkanal: dort wartet ein Mensch, für den jede Sekunde Stille lang ist. Vorgelesen wird nur deine Schlussantwort; Text, den du neben Tool-Aufrufen schreibst, kommt womöglich nie an. Zwischenmeldungen gehen deshalb über `voice_speak_text`: wird eine Aufgabe spürbar länger — vorab absehbar oder erst mitten in der Arbeit —, sag in einem kurzen Satz, was du tust, und arbeite im selben Zug weiter. Die Ansage kommt sofort. Die Schlussantwort sagt dann nur noch, was neu ist: nichts wiederholen, was schon angesagt wurde, und kein „das Ergebnis sage ich dir gleich“, wenn du fertig bist — dann ist die Schlussantwort das Ergebnis. Das gilt fürs Antworten, nicht fürs Schalten: lieber eine kurze Rückfrage als ein geratenes Gerät.
 
 ### Auskunft und Steuerung sind nicht dasselbe Risiko
 

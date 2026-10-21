@@ -365,15 +365,17 @@ class AnnounceWorkerTest(unittest.TestCase):
                 def set_phase(_):
                     pass
 
-            def speak(self, text):
+            def speak(self, text, **kw):
                 gesprochen.append((text, gedaempft[0]))
                 if len(gesprochen) == 2:
                     fertig.set()
 
+        import queue
+        q = queue.Queue()
         state.current_state[0] = state.STATE_LISTENING
-        speak_server.start_announce_worker(Sprecher(), daempfen=daempfen)
-        state.announce_queue.put(("Der Timer ist abgelaufen.", False, False))
-        state.announce_queue.put("Der Bericht ist fertig.")
+        speak_server.start_announce_worker(Sprecher(), daempfen=daempfen, warteschlange=q)
+        q.put(("Der Timer ist abgelaufen.", False, False))
+        q.put("Der Bericht ist fertig.")
         self.assertTrue(fertig.wait(5))
         self.assertEqual(gesprochen, [("Der Timer ist abgelaufen.", False),
                                       ("Der Bericht ist fertig.", True)])

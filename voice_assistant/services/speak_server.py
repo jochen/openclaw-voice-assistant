@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import queue
 import threading
 import time
 import urllib.error
@@ -40,8 +41,10 @@ from voice_assistant.config import (
 )
 from voice_assistant.state import (
     STATE_LISTENING,
+    STATE_WAITING,
     announce_queue,
     current_state,
+    turn_control,
 )
 from voice_assistant.services import aussprache, telegram
 from voice_assistant.services.tts import ReplySpeaker
@@ -407,43 +410,65 @@ def start_announce_worker(
     telegram_bot_token: str = "",
     telegram_chat_id: str = "",
     daempfen=None,
+    warteschlange: "queue.Queue | None" = None,
 ) -> threading.Thread:
-    """Drainiert announce_queue, aber nur wenn der Voice Assistant im LISTENING-State ist.
+    """Drainiert announce_queue (Tests: eigene warteschlange), wenn der Voice Assistant im LISTENING-State ist.
 
-    Ansagen (z.B. von voice_speak_text bei Hintergrund-Tasks) werden zusätzlich
-    in den Telegram-Chat gespiegelt, damit die geteilte Voice+Chat-Session
-    vollständig bleibt.
+    Ansagen des Brains (reiner Text, voice_speak_text) laufen auch schon in
+    STATE_WAITING, also waehrend sein Turn noch laeuft: ein OpenClaw-Turn
+    endet erst, wenn das Modell ohne Tool-Aufruf antwortet, und "im
+    Hintergrund weiterarbeiten" hat der Brain kein Werkzeug (sessions_spawn
+    ist fuer main gesperrt). Seine Zwischenmeldungen kamen deshalb erst nach
+    dem Turn, 2026-10-21 bis zu fuenf Minuten veraltet. Im Turn haengen sie an
+    dessen Nummer: ein Barge-in verwirft sie. Die Musik daempft dann die
+    Turn-Logik von selbst (tts_lock), nicht daempfen().
+
+    Ansagen werden zusätzlich in den Telegram-Chat gespiegelt, damit die
+    geteilte Voice+Chat-Session vollständig bleibt.
     """
-    from voice_assistant.services.leds import LED_IDLE
+    from voice_assistant.services.leds import LED_IDLE, LED_OPENCLAW
+
+    q = warteschlange or announce_queue
 
     def _run() -> None:
         while True:
-            text = announce_queue.get()  # blockiert bis was da ist
+            text = q.get()  # blockiert bis was da ist
             try:
                 _ansagen(text)
             finally:
                 # state.ansage_wartet() zählt bis hierher mit.
-                announce_queue.task_done()
+                q.task_done()
 
     def _ansagen(text) -> None:
         # (text, False): nicht nach Telegram spiegeln — z. B. "Der Timer
         # ist abgelaufen", das gehört in die Küche, nicht in den Chat.
         # (text, spiegeln, False): Musik nicht daempfen (Timer).
         spiegeln = musik = True
-        if isinstance(text, tuple):
+        vom_brain = not isinstance(text, tuple)
+        if not vom_brain:
             text, spiegeln, *rest = text
             musik = rest[0] if rest else True
-        # Warten bis wir im LISTENING-State sind (nicht aufnehmen, nicht antworten)
-        while current_state[0] != STATE_LISTENING:
+        # Warten bis wir im LISTENING-State sind (nicht aufnehmen, nicht
+        # antworten) — Ansagen des Brains auch, waehrend er noch denkt.
+        while True:
+            zustand = current_state[0]
+            if zustand == STATE_LISTENING or (vom_brain and zustand == STATE_WAITING):
+                break
             time.sleep(0.25)
-        print(f"📢  Announcing: '{text[:80]}{'...' if len(text) > 80 else ''}'")
+        im_turn = zustand == STATE_WAITING
+        turn = turn_control.turn if im_turn else None
+        print(f"📢  Announcing{' (im Turn)' if im_turn else ''}: "
+              f"'{text[:80]}{'...' if len(text) > 80 else ''}'")
         if spiegeln and telegram_bot_token and telegram_chat_id:
             telegram.send(telegram_bot_token, telegram_chat_id, text, prefix="🔊 ")
         # daempfen(): Kontext, der die Musik leiser macht, oder None.
-        kontext = daempfen() if musik and daempfen else None
+        kontext = daempfen() if musik and daempfen and not im_turn else None
         with kontext or contextlib.nullcontext():
-            reply_speaker.speak(text)
-        reply_speaker.leds.set_phase(LED_IDLE)
+            reply_speaker.speak(text, turn=turn)
+        if current_state[0] == STATE_WAITING:
+            reply_speaker.leds.set_phase(LED_OPENCLAW)
+        elif current_state[0] == STATE_LISTENING:
+            reply_speaker.leds.set_phase(LED_IDLE)
 
     t = threading.Thread(target=_run, name="announce-worker", daemon=True)
     t.start()

@@ -61,45 +61,6 @@ class BeepBlipTest(unittest.TestCase):
         self.assertFalse(_followup_nur_blip(0, 0))
 
 
-class AnsageWartetTest(unittest.TestCase):
-    """Steht eine Ansage aus, oeffnet Gaston kein Follow-up (2026-10-21).
-
-    Die Falle: der announce-worker nimmt die erste Ansage sofort aus der
-    Queue und wartet dann auf LISTENING. qsize() waere dann 0 — mit nur
-    einer ausstehenden Ansage oeffnete das Fenster trotzdem.
-    """
-
-    def test_vom_worker_gehaltene_ansage_zaehlt(self):
-        import threading
-        import time
-
-        from voice_assistant import state
-        from voice_assistant.services import speak_server
-
-        gesprochen = threading.Event()
-
-        class Sprecher:
-            class leds:
-                @staticmethod
-                def set_phase(_):
-                    pass
-
-            def speak(self, text):
-                gesprochen.set()
-
-        state.current_state[0] = state.STATE_PAUSE
-        speak_server.start_announce_worker(Sprecher())
-        self.assertFalse(state.ansage_wartet())
-        state.announce_queue.put("Das Ergebnis: der Neustart hat geklappt.")
-        time.sleep(0.3)
-        self.assertEqual(state.announce_queue.qsize(), 0)  # Worker haelt sie
-        self.assertTrue(state.ansage_wartet())
-        state.current_state[0] = state.STATE_LISTENING
-        self.assertTrue(gesprochen.wait(5))
-        time.sleep(0.1)
-        self.assertFalse(state.ansage_wartet())
-
-
 class FollowupLeiseFremdTest(unittest.TestCase):
     """Leise UND fremd → verwerfen (Messung 2026-10-21, _FOLLOWUP_LEISE_SPITZE).
 

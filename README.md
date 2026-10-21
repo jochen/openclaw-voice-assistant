@@ -310,6 +310,10 @@ If a turn started the music (nothing played when the wake word came, something p
 Announcements from outside a turn (`voice_speak_text`) duck the music while
 they play, unless they go to the phone. Kitchen timers deliberately don't:
 neither the ringing nor "the timer has expired".
+Announcements the brain makes during its own turn (`voice_speak_text` while it
+is still working) play right away instead of waiting for the turn to end, and
+are ducked like the reply; a barge-in drops them along with the turn. System
+announcements (timer, microphone) still wait until the assistant is idle.
 While the brain is thinking and the assistant says nothing, the music comes
 back up after 4 s and is ducked again for the next sentence of the answer:
 ducking is only needed for the recording and for our own output. "One
@@ -1006,7 +1010,7 @@ Messages starting with 🎤 arrive via speech recognition, and your reply is **r
 - Length follows the content — usually one to four sentences, more when the topic needs it; each sentence clear and complete.
 - It's spoken, so it should sound good — leave out what can't be heard (markdown, lists, numbering, emojis).
 - Transcriptions have small errors; interpret generously and act once the intent is clear — when understanding, not when actuating (see below).
-- You are the keeper of the voice channel: a person is waiting at the speaker, and every second of silence feels long. When a task turns out to take longer — foreseeable up front or only mid-task — give a short spoken acknowledgement right away, do the work in the background, and announce the result via `voice_speak_text`. That mandate is about answering, not about actuating: a short question back beats a guessed device.
+- You are the keeper of the voice channel: a person is waiting at the speaker, and every second of silence feels long. Only your final reply is read out; text you write alongside tool calls may never reach the person. So progress goes through `voice_speak_text`: when a task takes noticeably longer — foreseeable up front or only mid-task — say in one short sentence what you are doing and keep working in the same run. The announcement plays right away. The final reply then only says what is new: don't repeat what was announced, and don't promise "I'll tell you the result shortly" when you are done — then the final reply is the result. That mandate is about answering, not about actuating: a short question back beats a guessed device.
 
 ### Answering and actuating are not the same risk
 
