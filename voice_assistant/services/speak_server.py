@@ -419,24 +419,31 @@ def start_announce_worker(
     def _run() -> None:
         while True:
             text = announce_queue.get()  # blockiert bis was da ist
-            # (text, False): nicht nach Telegram spiegeln — z. B. "Der Timer
-            # ist abgelaufen", das gehört in die Küche, nicht in den Chat.
-            # (text, spiegeln, False): Musik nicht daempfen (Timer).
-            spiegeln = musik = True
-            if isinstance(text, tuple):
-                text, spiegeln, *rest = text
-                musik = rest[0] if rest else True
-            # Warten bis wir im LISTENING-State sind (nicht aufnehmen, nicht antworten)
-            while current_state[0] != STATE_LISTENING:
-                time.sleep(0.25)
-            print(f"📢  Announcing: '{text[:80]}{'...' if len(text) > 80 else ''}'")
-            if spiegeln and telegram_bot_token and telegram_chat_id:
-                telegram.send(telegram_bot_token, telegram_chat_id, text, prefix="🔊 ")
-            # daempfen(): Kontext, der die Musik leiser macht, oder None.
-            kontext = daempfen() if musik and daempfen else None
-            with kontext or contextlib.nullcontext():
-                reply_speaker.speak(text)
-            reply_speaker.leds.set_phase(LED_IDLE)
+            try:
+                _ansagen(text)
+            finally:
+                # state.ansage_wartet() zählt bis hierher mit.
+                announce_queue.task_done()
+
+    def _ansagen(text) -> None:
+        # (text, False): nicht nach Telegram spiegeln — z. B. "Der Timer
+        # ist abgelaufen", das gehört in die Küche, nicht in den Chat.
+        # (text, spiegeln, False): Musik nicht daempfen (Timer).
+        spiegeln = musik = True
+        if isinstance(text, tuple):
+            text, spiegeln, *rest = text
+            musik = rest[0] if rest else True
+        # Warten bis wir im LISTENING-State sind (nicht aufnehmen, nicht antworten)
+        while current_state[0] != STATE_LISTENING:
+            time.sleep(0.25)
+        print(f"📢  Announcing: '{text[:80]}{'...' if len(text) > 80 else ''}'")
+        if spiegeln and telegram_bot_token and telegram_chat_id:
+            telegram.send(telegram_bot_token, telegram_chat_id, text, prefix="🔊 ")
+        # daempfen(): Kontext, der die Musik leiser macht, oder None.
+        kontext = daempfen() if musik and daempfen else None
+        with kontext or contextlib.nullcontext():
+            reply_speaker.speak(text)
+        reply_speaker.leds.set_phase(LED_IDLE)
 
     t = threading.Thread(target=_run, name="announce-worker", daemon=True)
     t.start()

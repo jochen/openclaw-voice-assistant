@@ -61,5 +61,80 @@ class BeepBlipTest(unittest.TestCase):
         self.assertFalse(_followup_nur_blip(0, 0))
 
 
+class AnsageWartetTest(unittest.TestCase):
+    """Steht eine Ansage aus, oeffnet Gaston kein Follow-up (2026-10-21).
+
+    Die Falle: der announce-worker nimmt die erste Ansage sofort aus der
+    Queue und wartet dann auf LISTENING. qsize() waere dann 0 — mit nur
+    einer ausstehenden Ansage oeffnete das Fenster trotzdem.
+    """
+
+    def test_vom_worker_gehaltene_ansage_zaehlt(self):
+        import threading
+        import time
+
+        from voice_assistant import state
+        from voice_assistant.services import speak_server
+
+        gesprochen = threading.Event()
+
+        class Sprecher:
+            class leds:
+                @staticmethod
+                def set_phase(_):
+                    pass
+
+            def speak(self, text):
+                gesprochen.set()
+
+        state.current_state[0] = state.STATE_PAUSE
+        speak_server.start_announce_worker(Sprecher())
+        self.assertFalse(state.ansage_wartet())
+        state.announce_queue.put("Das Ergebnis: der Neustart hat geklappt.")
+        time.sleep(0.3)
+        self.assertEqual(state.announce_queue.qsize(), 0)  # Worker haelt sie
+        self.assertTrue(state.ansage_wartet())
+        state.current_state[0] = state.STATE_LISTENING
+        self.assertTrue(gesprochen.wait(5))
+        time.sleep(0.1)
+        self.assertFalse(state.ansage_wartet())
+
+
+class FollowupLeiseFremdTest(unittest.TestCase):
+    """Leise UND fremd → verwerfen (Messung 2026-10-21, _FOLLOWUP_LEISE_SPITZE).
+
+    Die Zahlen sind echte Faelle aus dem Journal: Spitze vor der
+    STT-Normalisierung und Status der Sprecher-Verifikation.
+    """
+
+    def test_gemessene_faelle(self):
+        from voice_assistant.assistant import _followup_leise_fremd
+        hintergrund = [622, 1306, 1420, 1462, 1594, 1859, 2121]
+        for spitze in hintergrund:
+            self.assertTrue(_followup_leise_fremd(spitze, "unbekannt"), spitze)
+        # Die leisesten echten Antworten waren alle erkannt.
+        for spitze in (2341, 2469, 2484):
+            self.assertFalse(_followup_leise_fremd(spitze, "bekannt"), spitze)
+        # Kurze echte Antworten sind oft unbekannt, aber laut.
+        self.assertFalse(_followup_leise_fremd(9893, "unbekannt"))  # "Dem Monitor ein"
+        self.assertFalse(_followup_leise_fremd(3013, "unbekannt"))  # "ja"
+
+    def test_ausfall_verschluckt_nichts(self):
+        from voice_assistant.assistant import _followup_leise_fremd
+        self.assertFalse(_followup_leise_fremd(622, "ausgefallen"))
+        self.assertFalse(_followup_leise_fremd(622, "nicht_eingerichtet"))
+
+    def test_spitze_wie_stt_normalisierung(self):
+        import numpy as np
+
+        from voice_assistant.assistant import _spitze
+        chunks = [np.array([10, -622, 300], dtype=np.int16),
+                  np.array([], dtype=np.int16),
+                  np.array([-32768], dtype=np.int16)]
+        self.assertEqual(_spitze(chunks[:2]), 622)
+        self.assertEqual(_spitze(chunks), 32768)  # kein int16-Ueberlauf
+        self.assertEqual(_spitze([]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

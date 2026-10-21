@@ -225,5 +225,15 @@ pending_reply_text: list[str | None] = [None]
 # Extern angefragte Ansagen (speak_server → announce_worker)
 # Einträge: Text, oder (Text, False) für "nicht nach Telegram spiegeln".
 announce_queue: "queue.Queue[str | tuple[str, bool] | tuple[str, bool, bool]]" = queue.Queue()
+
+
+def ansage_wartet() -> bool:
+    """Steht eine Ansage aus (in der Queue oder vom Worker gehalten)?
+
+    unfinished_tasks statt qsize(): der announce-worker nimmt die erste
+    Ansage sofort aus der Queue und wartet dann auf LISTENING; erst sein
+    task_done() nach dem Sprechen zählt sie ab.
+    """
+    return announce_queue.unfinished_tasks > 0
 # Aktueller State der Hauptschleife — wird von assistant.py gesetzt
 current_state: list[int] = [STATE_LISTENING]
