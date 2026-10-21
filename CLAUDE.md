@@ -682,11 +682,23 @@ auslösbar sein als der Ruf selbst.
 **Das Stopp-Wort wird nicht am Wakeword-Ereignis erkannt, sondern danach am
 Transkript.** Der Trigger feuert auf „Gaston", das „Stopp" davor steckt im
 Pre-Roll (`_PRE_ROLL_SEC`, dieselbe Begründung wie beim durchgesprochenen
-Kommando). Folge: „Stopp Gaston" und „Gaston, Stopp" wirken gleich, und ein
-Barge-in **ohne** Stopp-Wort ist einfach ein neuer Auftrag. Deshalb braucht der
-Fall auch keinen neuen State: WAITING → RECORDING → PROCESSING, und dort
+Kommando). Folge: „Stopp Gaston" und „Gaston, Stopp" wirken gleich. Der
+Fall braucht keinen neuen State: WAITING → RECORDING → PROCESSING, und dort
 entscheidet das vorhandene Stopp-Muster (mit `bargein_round` gilt das
 mildere Ein-Wort-Muster wie bei Follow-up und Klärungs-Rückfrage).
+
+**Ein Barge-in ist nur noch Abbruch, nie ein neuer Auftrag (seit
+2026-10-21, Jochen: „nach einem stop gaston einfach nur schluss“).** Vorher
+ging ein Barge-in ohne erkanntes Stopp-Wort an den Brain. Am 2026-10-21
+18:19–18:21 las Qwen das „Stopp Gaston“ viermal nicht („Staubgastur. Kannst
+immer alle probieren.“, „Gast hoch.“, ein Satz an jemand anderen,
+„Gaston.“), jeder Barge-in wurde ein neuer Turn und musste wieder
+abgebrochen werden, der letzte mit Antwort und Follow-up. Unter 25
+Barge-ins im Journal (seit 2026-09-20) war kein echter neuer Auftrag. Das
+Stopp-Muster entscheidet nur noch über „Okay“ und Fehltrigger-Label; ohne
+Stopp-Wort endet der Turn still (`ausgang=bargein_ohne_stopp`, bzw.
+`bargein_still`). Damit sind die Barge-in-Sperren in Aktuator, Timer, Musik
+und Mikro nur noch Absicherung.
 
 **Was „abbrechen" umfasst** (`state.TurnControl`, `workers._finish_cancelled`):
 Wiedergabe sofort aus (`AudioSink.stop()`), ThinkingWorker aus, SSE-Verbindung

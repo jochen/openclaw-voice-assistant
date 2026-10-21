@@ -497,10 +497,16 @@ running turn:
 The stop word itself is **not** matched on the wake word event — it is matched
 on the transcript afterwards. The trigger fires on the wake word, and the
 "stop" you said just before it sits in the pre-roll buffer. That is why both
-"stop <wake word>" and "<wake word>, stop" work, and why a barge-in *without* a
-stop word is simply treated as a new request — the classic interruption. That
-request goes to the backend, never to the voice actuator: a barge-in exists to
-cancel, not to switch.
+"stop <wake word>" and "<wake word>, stop" work. We first treated a barge-in
+*without* a recognised stop word as a new request (the classic interruption).
+In practice that backfired: on the short clip after the trigger the STT often
+misses the stop word ("Staubgastur", "Gast hoch"), so each of those became a
+new turn that had to be cancelled again — four times in a row, while people
+kept saying "stop" and others in the room kept talking. Among 25 barge-ins in
+our log not one was a genuine new request. So a barge-in now **only cancels**;
+whoever wants something else calls the wake word again after the abort tone.
+The transcript still decides whether there is a spoken "okay" and a
+false-trigger label (only if a stop word is in it).
 
 ```yaml
 profiles:
