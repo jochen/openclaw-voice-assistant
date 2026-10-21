@@ -25,8 +25,9 @@ Das Wort „Stopp" pruefen wir NICHT hier, sondern spaeter am Transkript: der
 Trigger feuert auf „Gaston", und das davor gesprochene „Stopp" steckt im
 Pre-Roll (``_PRE_ROLL_SEC``, dieselbe Begruendung wie beim durchgesprochenen
 Kommando). Deshalb funktionieren „Stopp Gaston" und „Gaston, Stopp"
-gleichermassen, und deshalb ist ein Barge-in ohne Stopp-Wort einfach ein
-neuer Auftrag statt eines Abbruchs.
+gleichermassen. Das Transkript entscheidet aber nur noch ueber Label und
+Quittung: ein Barge-in ist immer nur ein Abbruch, nie ein neuer Auftrag
+(seit 2026-10-21, Begruendung in assistant.py am Zweig ``elif war_bargein``).
 
 Ein eigenes, nachtrainiertes Bundle („stopp_gaston") ist hier kein Sonderfall,
 sondern ein Eintrag unter ``barge_in.wakewords`` — der Code kennt keinen

@@ -2482,16 +2482,26 @@ def run() -> None:
                         followup_rms_sum = 0.0
                         followup_rms_count = 0
                         followup_vad_speech = 0
-                    elif war_bargein_still:
-                        # Reiner Abbruch, aber die STT fand im kurzen Stueck
-                        # kein Stopp-Wort (oder gar nichts). Kein neuer Auftrag
-                        # — dafuer haette nach dem Trigger jemand sprechen
-                        # muessen. Ohne Stopp-Wort auch kein Fehltrigger-Label
-                        # und keine Quittung: der Beep hat den Abbruch schon
-                        # angezeigt, das "Okay" sagt "Stopp verstanden".
+                    elif war_bargein:
+                        # Ein Barge-in bricht nur ab, er ist nie ein neuer
+                        # Auftrag (Jochen 2026-10-21: "nach einem stop gaston
+                        # einfach nur schluss"). Bis dahin ging ein Barge-in
+                        # ohne erkanntes Stopp-Wort an den Brain. Am
+                        # 2026-10-21 18:19-18:21 las die STT das "Stopp
+                        # Gaston" viermal nicht ("Staubgastur. Kannst immer
+                        # alle probieren.", "Gast hoch.", ein Satz an jemand
+                        # anderen, "Gaston.") — jeder wurde ein neuer Turn,
+                        # der wieder abgebrochen werden musste, der letzte
+                        # mit Antwort und Follow-up. Unter 25 Barge-ins im
+                        # Journal war kein echter neuer Auftrag; wer einen
+                        # hat, ruft nach dem Abbruch-Ton noch einmal.
+                        # Ohne Stopp-Wort kein Fehltrigger-Label und keine
+                        # Quittung: der Beep hat den Abbruch schon angezeigt,
+                        # das "Okay" sagt "Stopp verstanden".
+                        ausgang = "bargein_still" if war_bargein_still else "bargein_ohne_stopp"
                         print(f"[{now:.1f}s] 🛑 Abbruch ohne weiteren Auftrag: '{text}'")
-                        _log_outcome("bargein_still", transcript=text, via="bargein")
-                        _flush_endpoint(text, ausgang="bargein_still", via="bargein")
+                        _log_outcome(ausgang, transcript=text, via="bargein")
+                        _flush_endpoint(text, ausgang=ausgang, via="bargein")
                         try:
                             turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
                         except queue.Empty:
@@ -2562,11 +2572,6 @@ def run() -> None:
                             state = STATE_PAUSE
                             state_start = time.time()
                     elif text:
-                        # Kein Stopp-Wort: der Barge-in war ein neuer Auftrag,
-                        # kein Urteil ueber den abgebrochenen Trigger. Das
-                        # Fehltrigger-Label waere hier falsch — wer eine lange
-                        # Antwort unterbricht, um etwas anderes zu fragen, sagt
-                        # damit nicht, dass der erste Ruf keiner war.
                         bargein_abgebrochen_audio = None
                         # --- Aktuator-Vorlauf: Schaltkommando? Dann Brain überspringen. ---
                         # Nur bei direkter Erstansprache per Wakewort oder als

@@ -512,10 +512,17 @@ dann ab:
 Das Stopp-Wort wird **nicht** am Wakeword-Ereignis erkannt, sondern danach am
 Transkript. Der Trigger feuert auf das Wakewort, und das „Stopp", das davor
 gesprochen wurde, steckt im Pre-Roll-Puffer. Deshalb funktionieren
-„Stopp <Wakewort>" und „<Wakewort>, Stopp" gleichermaßen — und deshalb ist ein
-Barge-in *ohne* Stopp-Wort einfach ein neuer Auftrag, also das gewohnte
-Dazwischenreden. Dieser Auftrag geht ans Backend, nie an den Voice-Aktuator:
-ein Barge-in ist zum Abbrechen da, nicht zum Schalten.
+„Stopp <Wakewort>" und „<Wakewort>, Stopp" gleichermaßen. Zuerst galt ein
+Barge-in *ohne* erkanntes Stopp-Wort als neuer Auftrag, also das gewohnte
+Dazwischenreden. Im Betrieb ging das schief: aus dem kurzen Stück nach dem
+Trigger liest die STT das Stopp-Wort oft nicht („Staubgastur“, „Gast hoch“),
+und jedes davon wurde ein neuer Turn, der wieder abgebrochen werden musste —
+viermal hintereinander, während weiter „Stopp“ gerufen und im Raum geredet
+wurde. Unter 25 Barge-ins in unserem Log war kein einziger echter neuer
+Auftrag. Deshalb **bricht ein Barge-in nur noch ab**; wer etwas anderes will,
+ruft nach dem Abbruch-Ton noch einmal das Wakewort. Das Transkript entscheidet
+nur noch über das gesprochene „Okay“ und das Fehltrigger-Label (beides nur
+mit Stopp-Wort).
 
 ```yaml
 profiles:
