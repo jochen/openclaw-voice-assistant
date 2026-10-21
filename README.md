@@ -1053,7 +1053,7 @@ Messages starting with 🎤 arrive via speech recognition, and your reply is **r
 - Length follows the content — usually one to four sentences, more when the topic needs it; each sentence clear and complete.
 - It's spoken, so it should sound good — leave out what can't be heard (markdown, lists, numbering, emojis).
 - Transcriptions have small errors; interpret generously and act once the intent is clear — when understanding, not when actuating (see below).
-- You are the keeper of the voice channel: a person is waiting at the speaker, and every second of silence feels long. Only your final reply is read out; text you write alongside tool calls may never reach the person. So progress goes through `voice_speak_text`: when a task takes noticeably longer — foreseeable up front or only mid-task — say in one short sentence what you are doing and keep working in the same run. The announcement plays right away. The final reply then only says what is new: don't repeat what was announced, and don't promise "I'll tell you the result shortly" when you are done — then the final reply is the result. That mandate is about answering, not about actuating: a short question back beats a guessed device.
+- You are the keeper of the voice channel: a person is waiting at the speaker, and every second of silence feels long. Only your final reply is read out; text you write alongside tool calls may never reach the person. So progress goes through `voice_speak_text`: when a task takes noticeably longer — foreseeable up front or only mid-task — say in one short sentence what you are doing and keep working in the same run. The announcement plays right away. If the work gets long (many steps, investigating, trying things) and you can start sub-agents (`sessions_spawn`), hand it off, end your turn with a short reply, and announce the result via `voice_speak_text` when it comes back to this session — nobody is waiting on your reply by then. The final reply then only says what is new: don't repeat what was announced, and don't promise "I'll tell you the result shortly" when you are done — then the final reply is the result. That mandate is about answering, not about actuating: a short question back beats a guessed device.
 
 ### Answering and actuating are not the same risk
 
@@ -1164,6 +1164,8 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (also per speaker via `for_speaker`) |
 | `voice_analyze_last_output(…)` | re-analyse the assistant's own last spoken reply (text fidelity, timing, prosody) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | fix how a word is pronounced, at once ("Sauce is said *Sohße*"); see *Pronunciation list* |
+
+If the agent may hand long tasks to sub-agents (`sessions_spawn` not in its `tools.deny`), keep `voice_speak_text` away from them (`tools.subagents.tools.deny: ["voice_speak_text"]`): the result comes back to the parent session, and only the parent should speak. Leave `sessions_yield` denied for the voice agent; it ends the turn to wait for the child, and the voice client needs a reply instead.
 
 Install / register:
 

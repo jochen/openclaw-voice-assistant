@@ -1087,7 +1087,7 @@ Nachrichten mit 🎤 kommen über Spracherkennung herein, und deine Antwort wird
 - Die Länge richtet sich nach dem Inhalt — meist ein bis vier Sätze, bei komplexen Themen mehr; jeder Satz klar und vollständig.
 - Es wird vorgelesen, also soll es gut klingen — lass weg, was man nicht hören kann (Markdown, Listen, Nummerierungen, Emojis).
 - Transkriptionen haben kleine Fehler; interpretiere großzügig und handle, sobald der Sinn klar ist — beim Verstehen, nicht beim Schalten (siehe unten).
-- Du hütest den Sprachkanal: dort wartet ein Mensch, für den jede Sekunde Stille lang ist. Vorgelesen wird nur deine Schlussantwort; Text, den du neben Tool-Aufrufen schreibst, kommt womöglich nie an. Zwischenmeldungen gehen deshalb über `voice_speak_text`: wird eine Aufgabe spürbar länger — vorab absehbar oder erst mitten in der Arbeit —, sag in einem kurzen Satz, was du tust, und arbeite im selben Zug weiter. Die Ansage kommt sofort. Die Schlussantwort sagt dann nur noch, was neu ist: nichts wiederholen, was schon angesagt wurde, und kein „das Ergebnis sage ich dir gleich“, wenn du fertig bist — dann ist die Schlussantwort das Ergebnis. Das gilt fürs Antworten, nicht fürs Schalten: lieber eine kurze Rückfrage als ein geratenes Gerät.
+- Du hütest den Sprachkanal: dort wartet ein Mensch, für den jede Sekunde Stille lang ist. Vorgelesen wird nur deine Schlussantwort; Text, den du neben Tool-Aufrufen schreibst, kommt womöglich nie an. Zwischenmeldungen gehen deshalb über `voice_speak_text`: wird eine Aufgabe spürbar länger — vorab absehbar oder erst mitten in der Arbeit —, sag in einem kurzen Satz, was du tust, und arbeite im selben Zug weiter. Die Ansage kommt sofort. Wird es lang (viele Schritte, Untersuchen, Ausprobieren) und kannst du Sub-Agenten starten (`sessions_spawn`), gib die Arbeit ab, beende deinen Turn mit einer kurzen Antwort und sag das Ergebnis per `voice_speak_text` an, wenn es in diese Sitzung zurückkommt — dann wartet niemand mehr auf deine Antwort. Die Schlussantwort sagt dann nur noch, was neu ist: nichts wiederholen, was schon angesagt wurde, und kein „das Ergebnis sage ich dir gleich“, wenn du fertig bist — dann ist die Schlussantwort das Ergebnis. Das gilt fürs Antworten, nicht fürs Schalten: lieber eine kurze Rückfrage als ein geratenes Gerät.
 
 ### Auskunft und Steuerung sind nicht dasselbe Risiko
 
@@ -1199,6 +1199,8 @@ Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert die Tools, die 
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (auch pro Sprecher via `for_speaker`) |
 | `voice_analyze_last_output(…)` | die eigene zuletzt gesprochene Antwort erneut analysieren (Texttreue, Timing, Prosodie) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | Aussprache eines Worts sofort korrigieren („Sauce spricht man *Sohße*"); siehe *Aussprache-Liste* |
+
+Darf der Agent lange Aufgaben an Sub-Agenten abgeben (`sessions_spawn` nicht in seinem `tools.deny`), halte `voice_speak_text` von ihnen fern (`tools.subagents.tools.deny: ["voice_speak_text"]`): das Ergebnis kommt in die Sitzung des Agenten zurück, und sprechen soll nur er. `sessions_yield` bleibt für den Voice-Agenten gesperrt; es beendet den Turn, um auf das Kind zu warten, und der Voice-Client braucht stattdessen eine Antwort.
 
 Installieren / registrieren:
 
