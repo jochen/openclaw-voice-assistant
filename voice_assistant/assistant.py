@@ -63,6 +63,7 @@ from voice_assistant.services.actuator import (
 from voice_assistant.services.diarization import (
     STATUS_AUSGEFALLEN,
     STATUS_BEKANNT,
+    STATUS_UNBEKANNT,
     SpeachesDiarizer,
     SpeakerVerdict,
 )
@@ -101,6 +102,7 @@ from voice_assistant.state import (
     STATE_RECORDING,
     STATE_WAITING,
     announce_queue,
+    ansage_wartet,
     current_state,
     pending_reply_text,
     reply_done_event,
@@ -134,6 +136,17 @@ _FOLLOWUP_START_SEC = 10.0
 # Sprachanteil, den eine Follow-up-Aufnahme fuer die STT braucht (echte
 # Aeusserungen >= 50 %, Hintergrund ~14 %, der eigene Beep allein ~12 %).
 _FOLLOWUP_MIN_VAD = 0.20
+# Leise UND fremd: eine Follow-up-Aufnahme, deren Spitze (vor der
+# STT-Normalisierung) darunter liegt und deren Sprecher `unbekannt` ist, geht
+# nicht an den Brain. Gemessen 2026-10-21 ueber 83 Follow-ups mit
+# Sprecher-Verifikation (Journal seit 2026-10-05, nach Text und Kontext
+# beurteilt, nicht gehoert): die 7 mit Spitze < 2200 waren alle Fernseher,
+# Hintergrund oder Halluzination ("Ich bin ein kleiner Junge." bei 622),
+# Aehnlichkeit <= 0,23; die leisesten echten Antworten (2341-2783) alle
+# `bekannt`. Die Verifikation allein taugt nicht: kurze echte Antworten
+# liegen tief ("Dem Monitor ein", 9893, 0,10). Gain-abhaengig (ReSpeaker),
+# nach Hardware-Wechsel neu messen. Satelliten sind ausgenommen (andere Skala).
+_FOLLOWUP_LEISE_SPITZE = 2500
 _ACK_DELAY_SEC = 0.4
 # Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
 # straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
@@ -711,6 +724,20 @@ def _followup_nur_blip(vad_speech: int, chunks: int) -> bool:
     """Endet ein Follow-up auf Stille, waere die Aufnahme aber zu sprachearm
     fuer die STT? Dann war die "Sprache" nur ein Blip (meist der eigene Beep)."""
     return chunks > 0 and vad_speech / chunks < _FOLLOWUP_MIN_VAD
+
+
+def _spitze(chunks: list) -> int:
+    """Groesster Betrag der Aufnahme — dieselbe Zahl wie "STT-Normalisierung: Peak"."""
+    return max((int(np.abs(c.astype(np.int32)).max()) for c in chunks if c.size), default=0)
+
+
+def _followup_leise_fremd(spitze: int, status: str | None) -> bool:
+    """Follow-up verwerfen? Nur wenn leise UND gemessen fremd.
+
+    `ausgefallen` zaehlt nicht: ein toter Dienst soll keine leisen Antworten
+    verschlucken, er ist kein Hinweis auf den Fernseher.
+    """
+    return spitze < _FOLLOWUP_LEISE_SPITZE and status == STATUS_UNBEKANNT
 
 
 def _signal_stats(rms: list[float], speech_frames: int, total_frames: int) -> dict:
@@ -1373,6 +1400,10 @@ def run() -> None:
     # Wakewort enthielt (siehe _ist_nur_wakewort). Verhindert eine Schleife,
     # falls auch die zweite Aufnahme nur "Gaston" ergibt.
     nur_wakewort_runde = False
+    # Spitze der letzten Follow-up-Aufnahme; leise → Sprecher abwarten
+    # (_FOLLOWUP_LEISE_SPITZE).
+    followup_spitze = 0
+    followup_leise = False
     # Pegel/VAD-Verlauf der laufenden Aufnahme (Rohstoff fürs Nachtunen).
     turn_rms: list[float] = []
     turn_frames_speech = 0
@@ -2203,7 +2234,35 @@ def run() -> None:
                     bargein_round = 0
                     war_bargein_still = bargein_still
                     bargein_still = False
-                    if pending_confirm is not None:
+                    leise_verdict = None
+                    if followup_leise:
+                        # Nur bei leiser Aufnahme auf den Sprecher warten (~50 ms),
+                        # und das Urteil zuruecklegen: die Zweige unten holen es
+                        # sich selbst.
+                        followup_leise = False
+                        try:
+                            leise_verdict = turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                            turn_spk_q.put(leise_verdict)
+                        except queue.Empty:
+                            pass
+                    if leise_verdict is not None and _followup_leise_fremd(
+                            followup_spitze, leise_verdict.status):
+                        # Fernseher oder Halluzination auf Rauschen statt einer
+                        # Antwort (2026-10-21 21:39 "Ich bin ein kleiner Junge.").
+                        print(f"[{now:.1f}s] 🔇 Follow-up leise ({followup_spitze}) und "
+                              f"fremd → verworfen: '{text}'")
+                        write_current_speaker(leise_verdict, current_wakeword.bundle)
+                        _flush_endpoint(text, ausgang="followup_leise_fremd")
+                        if nur_wakewort_runde:
+                            _log_outcome("nur_wakewort")
+                        leds.set_phase(LED_IDLE)
+                        pending_confirm = None
+                        pending_timer = None
+                        pending_reply_text[0] = None
+                        followup_round = 0
+                        state = STATE_LISTENING
+                        print(f"[{now:.1f}s] 🎤 Ready – waiting for wakeword...")
+                    elif pending_confirm is not None:
                         # Ja/Nein-Antwort auf eine Aktuator-Rückfrage (Handshake).
                         try:
                             turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
@@ -3291,6 +3350,15 @@ def run() -> None:
                         # etwas will, ruft das Wakewort, das daempft sofort.
                         print(f"[{now:.1f}s] 🎵 Musik in diesem Turn gestartet — kein Follow-up")
                         pending_reply_text[0] = None
+                    if pending_reply_text[0] is not None and ansage_wartet():
+                        # Der Brain hat waehrend des Turns per voice_speak_text
+                        # etwas angesagt, das noch nicht gesprochen ist ("das
+                        # Ergebnis sage ich dir gleich"). Erst die Ansage, kein
+                        # Mikro-Fenster davor: 2026-10-21 21:39 hoerte so ein
+                        # Follow-up nur Rauschen, Qwen machte daraus "Ich bin
+                        # ein kleiner Junge.", und die Ansage kam danach.
+                        print(f"[{now:.1f}s] 📢 Ansage steht aus — kein Follow-up")
+                        pending_reply_text[0] = None
                     if followup_round < MAX_FOLLOWUP_ROUNDS and pending_reply_text[0] is not None:
                         followup_round += 1
                         print(f"[{now:.1f}s] 🔄 Follow-up round {followup_round}/{MAX_FOLLOWUP_ROUNDS}")
@@ -3391,6 +3459,7 @@ def run() -> None:
                         followup_vad_speech / followup_rms_count
                         if followup_rms_count else 0.0
                     )
+                    followup_spitze = _spitze(recorded_chunks)
                     endpoint_meta = {
                         "phase": "followup",
                         "reason": "silence" if stop else "no_speech" if still else "timeout",
@@ -3403,6 +3472,7 @@ def run() -> None:
                         "max_internal_pause_s": round(max_internal_pause * _chunk_sec, 2),
                         "avg_rms": round(avg_rms, 4),
                         "vad_ratio": round(vad_ratio, 2),
+                        "spitze": followup_spitze,
                         "followup_round": followup_round,
                         **({"nach_nur_wakewort": True} if nur_wakewort_runde and followup_round == 0 else {}),
                         **_signal_stats(turn_rms, turn_frames_speech, turn_frames_total),
@@ -3417,6 +3487,8 @@ def run() -> None:
                     ):
                         leds.set_phase(LED_STT)
                         state = STATE_PROCESSING
+                        followup_leise = (followup_spitze < _FOLLOWUP_LEISE_SPITZE
+                                          and not _satelliten_turn())
                         turn_stt_q = queue.Queue()
                         turn_spk_q = queue.Queue()
                         turn_mood_q = queue.Queue()

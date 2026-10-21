@@ -1124,6 +1124,8 @@ Follow-up, das Wort wird vor TTS und Telegram entfernt. Tests:
 
 **Der eigene Beep ist keine Antwort** (`_followup_nur_blip`, seit 2026-10-15): er kommt im Mikrofon an, der VAD sah 7 Chunks (0,28 s) Sprache, und nach 2 s Stille ging das Fenster zu, bevor jemand antwortete. 16 von 275 Follow-ups im endpoint.log, alle mit VAD-Anteil ≤ 0,14 und leisem Pegel; echte kurze Antworten („ja“) lagen bei ≥ 0,28. Wäre die Aufnahme beim Stille-Ende ohnehin am VAD-Gate gescheitert, wird sie ohne den Blip weitergeführt.
 
+**Kein Follow-up, solange eine Ansage aussteht; leise und fremd wird verworfen (seit 2026-10-21).** Anlass 21:39: der Brain hatte „das Ergebnis sage ich dir gleich“ geschickt, die `voice_speak_text`-Ansagen warteten, das Fenster hörte Rauschen (Spitze 622), Qwen machte daraus „Ich bin ein kleiner Junge.“. `state.ansage_wartet()` zählt über `announce_queue.unfinished_tasks` (nicht `qsize()`: der Worker hält die erste Ansage schon in der Hand). Und eine Follow-up-Aufnahme mit Spitze < `_FOLLOWUP_LEISE_SPITZE` (2500) UND Sprecher `unbekannt` geht nicht an den Brain (`ausgang=followup_leise_fremd`, `spitze` im endpoint.log). Nur die Kombination trägt: kurze echte Antworten sind oft `unbekannt` („Dem Monitor ein“, 0,10), aber laut. Messung über 83 Follow-ups im Kommentar an der Konstante; nicht gehört, Follow-ups werden nicht archiviert. Tests: `tests/test_kein_followup.py`.
+
 **Warum überhaupt zwei Sätze:** Bei laufendem Fernseher endete die Aufnahme
 nie — die Sprechpausen einer Störquelle sind ~1,7 s lang und setzen den
 Stille-Zähler vor der 2-s-Schwelle zurück. Ein Turn lief so 21,9 s bis zum
