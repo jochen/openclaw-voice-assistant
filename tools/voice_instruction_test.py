@@ -57,6 +57,19 @@ Messreihe (glm über OpenClaw 2026.10.5, Incognito-Sessions, je Satz 3 Läufe):
   'unbekannt' erlaubt, seit demselben Tag). "lang" dauerte in D 81–142 s,
   in A 56–64 s; bei drei Läufen nicht deutbar, im Betrieb beobachten.
   -> D ist der Betriebsweg.
+
+Ungleiche Bedingungen (nachträglich im Gateway-Journal gefunden): Active
+Memory spielt seit 2026-10-24 11:40 über "lane-1" bis zu 3 Gedächtnis-
+Einträge ein, deren trigger-Wörter in der Nachricht stehen (Abgleich ohne
+Modell; je mehr Wörter einer trigger-Phrase vorkommen, desto eher). Variante
+A trägt die lange Regel im input und
+traf damit Wörter wie "Stimme", "vorlesen", "Aufnahme": jeder A-Turn bekam
+3 fachfremde Einträge, D keine (nur "anlernen" 1). Der Recall mit Modell
+lief für Incognito-Sessions nie. Die Laufzeit von "lang" erklärt das eher
+nicht: B (auch ohne Einspielung) brauchte 34–43 s, D verbrauchte etwa
+doppelt so viele Token wie A, drehte also mehr Werkzeugrunden. Wer neu
+misst: im Journal nach "lane-1 injected" sehen und die Einspielungen den
+Läufen zuordnen.
 """
 from __future__ import annotations
 
