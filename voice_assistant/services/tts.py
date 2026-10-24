@@ -155,6 +155,12 @@ def _apply_verbalization(text: str) -> str:
         #    Muss VOR der allgemeinen Zahlregel laufen!
         time_pat = re.compile(r"\b(\d{1,2})[.:](\d{2})\s*Uhr\b")
         text = time_pat.sub(_verbalize_time, text)
+        #    Mit Doppelpunkt auch ohne "Uhr" ("Es ist gerade 11:55." wurde sonst
+        #    "elf:fünfundfünfzig", 2026-10-24). Nur gültige Uhrzeiten mit zwei
+        #    Minutenziffern: "2:1" (Spielstand) und "16:9" bleiben unberührt.
+        #    Der Punkt bleibt an "Uhr" gebunden, "12.30" allein ist mehrdeutig.
+        time_colon_pat = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
+        text = time_colon_pat.sub(_verbalize_time, text)
 
         # c1) Ordinalzahlen vor Monatsnamen: "30. Mai"
         ord_date_pat = re.compile(
