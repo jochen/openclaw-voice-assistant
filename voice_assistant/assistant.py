@@ -1199,6 +1199,8 @@ def run() -> None:
         confirmation_prefix=profile.locale.confirmation_prefix,
         no_reply_fallback=profile.locale.no_reply_fallback,
         voice_instruction=profile.locale.openclaw_voice_instruction,
+        instructions_feld=profile.openclaw_instructions,
+        voice_erinnerung=profile.locale.openclaw_voice_erinnerung,
         diarizer=diarizer,
         mood_analyzer=mood_analyzer,
         use_stream=profile.openclaw_stream,

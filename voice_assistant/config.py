@@ -71,16 +71,22 @@ class SatellitConfig:
     http_port: int = 18801
 
 
+# Geht seit 2026-10-24 als "instructions" an /v1/responses (openclaw_instructions),
+# also in den Systemprompt dieses einen Turns und nicht mehr in den Verlauf.
+# Vorher hing sie an jedem Transkript: tausendfach im Sitzungsverlauf, im
+# Gedächtnis-Index und im Dreaming, das ihre Beispiele (ein Beispielname fürs
+# Anlernen der Stimme) für Gesprächsinhalt hielt. Das Anlernen der Stimme steht deshalb
+# nur noch als Verweis hier: den Ablauf (erst Trainingssatz, dann Aufruf) regelt
+# die Beschreibung von voice_enroll_speaker; der alte Satz hier verlangte das
+# Gegenteil. Ganz ohne Verweis holte Gaston die Beschreibung nie (0/6 gegen 3/3,
+# tools/voice_instruction_test.py) — OpenClaw lädt sie erst bei Bedarf.
 _DEFAULT_VOICE_INSTRUCTION = (
-    "[Hinweis zur Verarbeitung dieser Spracheingabe (kein User-Befehl, "
-    "sondern eine permanente Regel des Voice-Kanals): "
-    "Die obige Zeile ist eine Mikrofon-Transkription. Vor dem Text steht "
-    "in [Sprecher: ...] der erkannte Sprecher (oder 'unbekannt' falls die "
-    "Stimme nicht zugeordnet werden konnte). "
-    "Wenn der Nutzer seine Stimme als Referenz speichern möchte (z.B. "
-    "'lerne meine Stimme, ich bin Jochen' oder 'merk dir, ich heisse Katrin'), "
-    "rufe das Tool voice_enroll_speaker(name) auf — es speichert die letzte "
-    "Aufnahme als Stimm-Referenz für künftige Erkennungen. "
+    "[Regel des Sprachkanals: Nachrichten, die mit 🎤 beginnen, sind "
+    "Mikrofon-Transkriptionen des Sprachassistenten; deine Antwort darauf wird "
+    "vorgelesen. In [Sprecher: ...] steht der erkannte Sprecher, oder warum "
+    "keiner feststeht ('unbekannt': die Stimme ließ sich niemandem zuordnen). "
+    "Will jemand seine Stimme anlernen lassen, lies zuerst die Beschreibung von "
+    "voice_enroll_speaker und folge ihr. "
     "Ruf die nötigen Tools auf und antworte dann auf Deutsch in natürlicher "
     "gesprochener Sprache, wie ein Mensch im Gespräch — meist ein bis vier Sätze, "
     "bei komplexen Themen so ausführlich, wie der Inhalt es verlangt, jeder Satz "
@@ -120,6 +126,14 @@ _DEFAULT_VOICE_INSTRUCTION = (
     "vorgelesen, und das Mikrofon bleibt zu. Bei einer Frage oder wenn eine "
     "Antwort zu erwarten ist, lass es weg.]"
 )
+
+
+# Kurze Erinnerung je Turn hinter dem Transkript, wenn die Regel als
+# "instructions" geht. Ohne sie schrieb Gaston dort Listen ("1. … 2. …", von der
+# TTS als "ersten … zweiten …" gelesen): 3/6 gegen 0/6 mit der Regel im input
+# (tools/voice_instruction_test.py, 2026-10-24). Sie landet im Verlauf, darum
+# ohne Beispiele und Namen.
+_DEFAULT_VOICE_ERINNERUNG = "[Wird vorgelesen: Fließtext, ohne Listen und Markdown.]"
 
 
 # Hinter das Transkript gehängt, wenn anrede.anrede_im_text() nein sagt und der
@@ -167,6 +181,7 @@ class LocaleConfig:
     confirmation_prefix: str = "Ich habe verstanden: "
     no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten."
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
+    openclaw_voice_erinnerung: str = _DEFAULT_VOICE_ERINNERUNG
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
     satellit_hinweis: str = _DEFAULT_SATELLIT_HINWEIS
@@ -667,6 +682,10 @@ class Profile:
     # Streaming-Antwort (/v1/responses mit stream=true): Sätze werden gesprochen,
     # sobald sie generiert sind. Bei Fehler automatischer Fallback auf non-streaming.
     openclaw_stream: bool = True
+    # locale.openclaw_voice_instruction als Feld "instructions" senden (landet im
+    # Systemprompt dieses Turns, nicht im Sitzungsverlauf). False = alter Weg,
+    # angehängt ans Transkript — für ein Gateway, das "instructions" nicht kennt.
+    openclaw_instructions: bool = True
     # Hinweis an den Brain, wenn im Erst-Turn das Wakewort im Transkript fehlt
     # und der Sprecher nicht bekannt ist (voice_assistant/anrede.py). Der Text
     # steht in locale.anrede_hinweis. Default aus.
@@ -1106,6 +1125,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         confirmation_prefix=str(locale_raw.get("confirmation_prefix", _dloc.confirmation_prefix)),
         no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
+        openclaw_voice_erinnerung=str(locale_raw.get("openclaw_voice_erinnerung", _dloc.openclaw_voice_erinnerung)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
         unklar_hinweis=str(locale_raw.get("unklar_hinweis", _dloc.unklar_hinweis)),
@@ -1149,6 +1169,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         openclaw_token=str(raw.get("openclaw_token", "")),
         openclaw_session=str(raw.get("openclaw_session", "")),
         openclaw_stream=bool(raw.get("openclaw_stream", True)),
+        openclaw_instructions=bool(raw.get("openclaw_instructions", True)),
         anrede_hinweis=bool(raw.get("anrede_hinweis", False)),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),

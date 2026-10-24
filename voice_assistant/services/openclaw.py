@@ -63,7 +63,8 @@ GATEWAY_LEER_PLATZHALTER = "No response from OpenClaw."
 # 2026-10-15: nach "gefaellt mir" stand das Fenster 30 s offen, obwohl nichts
 # mehr kam). Gaston haengt es an eine Antwort, die nichts offen laesst; es wird
 # vor Sprache und Telegram entfernt. Die Regel steht in der Sprach-Direktive
-# (config._DEFAULT_VOICE_INSTRUCTION), die jede Spracheingabe begleitet.
+# (config._DEFAULT_VOICE_INSTRUCTION), die jede Spracheingabe begleitet
+# (als "instructions", siehe _payload).
 # Seit 2026-10-16 NO_FOLLOWUP statt KEIN_FOLLOWUP (Jochen): parallel zu
 # NO_REPLY, das der Brain mit KEIN_FOLLOWUP zu KEIN_REPLY vermischt hatte.
 # KEIN_FOLLOWUP wird weiter erkannt, es steht noch in den Session-Verlaeufen.
@@ -141,6 +142,32 @@ def notify_abort(token: str, session: str) -> None:
         print(f"⚠️  Abbruch-Vermerk an OpenClaw fehlgeschlagen: {e}")
 
 
+def _payload(voice_input: str, session: str, voice_instruction: str,
+             instructions_feld: bool, erinnerung: str = "") -> dict:
+    """Request-Body für /v1/responses.
+
+    Die Voice-Anweisung geht als "instructions": das Gateway setzt sie in den
+    Systemprompt dieses einen Turns (unter "## Conversation Context") und
+    speichert sie nicht im Sitzungsverlauf. Angehängt ans Transkript stand sie
+    bei jeder Sprachnachricht im Verlauf, im Gedächtnis-Index und im Dreaming
+    (gemessen 2026-10-24, OpenClaw 2026.10.5). instructions_feld=False ist der
+    alte Weg, für ein Gateway ohne "instructions".
+
+    erinnerung: kurzer Satz hinter dem Transkript, nur auf dem neuen Weg — die
+    Regel im Systemprompt allein wirkte schwächer aufs Format
+    (config._DEFAULT_VOICE_ERINNERUNG).
+    """
+    body = {"model": "openclaw/main", "input": voice_input, "user": session}
+    if voice_instruction:
+        if instructions_feld:
+            body["instructions"] = voice_instruction
+            if erinnerung:
+                body["input"] = f"{voice_input}\n\n{erinnerung}"
+        else:
+            body["input"] = f"{voice_input}\n\n{voice_instruction}"
+    return body
+
+
 def query(
     text: str,
     token: str,
@@ -152,6 +179,8 @@ def query(
     hinweis: str | None = None,
     on_done=None,
     wrap: bool = True,
+    instructions_feld: bool = True,
+    erinnerung: str = "",
 ) -> str | None:
     """Send a voice turn to /v1/responses and return the final reply.
 
@@ -165,9 +194,11 @@ def query(
     mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     hinweis: fertiger Hinweis-Block zur Aufnahme (z. B. locale.anrede_hinweis),
-        steht zwischen Transkript und Voice-Instruction.
+        steht hinter dem Transkript.
     on_done: optional callback invoked before returning (e.g. to stop the thinking worker).
     wrap: False = text unverändert senden (Systemnachrichten statt Mikrofon-Transkription).
+    instructions_feld: voice_instruction als "instructions" senden statt ans
+        Transkript zu hängen (siehe _payload).
     """
     speaker_label = speaker_label or (speaker if speaker else "unbekannt")
     voice_input = f"🎤 [Sprecher: {speaker_label}] {text}" if wrap else text
@@ -181,14 +212,8 @@ def query(
         )
     if hinweis:
         voice_input = f"{voice_input}\n\n{hinweis}"
-    if voice_instruction:
-        voice_input = f"{voice_input}\n\n{voice_instruction}"
     payload = json.dumps(
-        {
-            "model": "openclaw/main",
-            "input": voice_input,
-            "user": session,
-        }
+        _payload(voice_input, session, voice_instruction, instructions_feld, erinnerung)
     ).encode("utf-8")
     req = urllib.request.Request(
         OPENCLAW_RESPONSES_URL,
@@ -263,6 +288,8 @@ def query_stream(
     on_first_text: Callable[[], None] | None = None,
     control=None,  # state.TurnControl | None
     turn: int | None = None,
+    instructions_feld: bool = True,
+    erinnerung: str = "",
 ) -> tuple[str | None, bool]:
     """Streaming-Variante von query(): liest SSE-Events und liefert fertige Sätze
     via on_sentence-Callback, sobald split_into_sentences eine Satzgrenze erkennt.
@@ -272,7 +299,7 @@ def query_stream(
     mood: akustische Stimmungsdimensionen als dict {"arousal", "valence", "dominance"}
         (floats 0–1), oder None wenn keine SER-Messung verfügbar.
     hinweis: fertiger Hinweis-Block zur Aufnahme (z. B. locale.anrede_hinweis),
-        steht zwischen Transkript und Voice-Instruction.
+        steht hinter dem Transkript.
     on_sentence: wird für jeden abgeschlossenen Satz aufgerufen (kann parallel sprechen).
     on_first_text: wird einmalig beim ersten Delta aufgerufen (z.B. ThinkingWorker stoppen).
     control/turn: Abbruch-Schranke des Turns (state.TurnControl). Die offene
@@ -299,16 +326,9 @@ def query_stream(
         )
     if hinweis:
         voice_input = f"{voice_input}\n\n{hinweis}"
-    if voice_instruction:
-        voice_input = f"{voice_input}\n\n{voice_instruction}"
-
     payload = json.dumps(
-        {
-            "model": "openclaw/main",
-            "input": voice_input,
-            "user": session,
-            "stream": True,
-        }
+        {**_payload(voice_input, session, voice_instruction, instructions_feld, erinnerung),
+         "stream": True}
     ).encode("utf-8")
 
     req = urllib.request.Request(

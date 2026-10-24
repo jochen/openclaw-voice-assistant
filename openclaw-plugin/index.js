@@ -457,7 +457,10 @@ export default definePluginEntry({
         "Die süßen Äpfel und die reifen Birnen schmecken köstlich. " +
         "Heute früh schien die Sonne, jetzt zieht Regen auf.' " +
         "Dieser Satz deckt alle deutschen Vokale, Umlaute, Diphthonge und typische Konsonanten ab " +
-        "und liefert ein deutlich besseres Stimm-Embedding als kurze Alltagssätze.",
+        "und liefert ein deutlich besseres Stimm-Embedding als kurze Alltagssätze. " +
+        "Einen NEUEN Namen darf auch ein Sprecher 'unbekannt' anlernen — so beginnt jedes Anlernen. " +
+        "Eine BESTEHENDE Referenz erneuert nur ein erkannter Sprecher; das prüft der Server selbst " +
+        "und lehnt sonst mit Begründung ab.",
       parameters: {
         type: "object",
         additionalProperties: false,

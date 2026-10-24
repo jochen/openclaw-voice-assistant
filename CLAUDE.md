@@ -1207,14 +1207,39 @@ Bundle gegen den Korpus (`messen` — die Vorher-Zahl fürs Nachtraining).
 
 ## OpenClaw Request Format
 
-Voice-Anfragen werden mit einer Prompt-Direktive umhüllt (Default:
-`config.py:_DEFAULT_VOICE_INSTRUCTION`, pro Profil überschreibbar):
+Voice-Anfragen tragen eine Prompt-Direktive (Default:
+`config.py:_DEFAULT_VOICE_INSTRUCTION`, pro Profil überschreibbar), **seit
+2026-10-24 im Feld `instructions`** (`openclaw._payload`, Schalter
+`openclaw_instructions`). Das Gateway setzt sie unter „## Conversation
+Context“ in den Systemprompt dieses einen Turns und speichert sie nicht.
+Im `input` steht nur, was zur Aufnahme gehört, plus eine kurze Erinnerung
+(`locale.openclaw_voice_erinnerung`):
 
 ```
 🎤 [Sprecher: jochen] {user_text}
 
-[Hinweis zur Verarbeitung dieser Spracheingabe ...]
+[Akustische Stimmungsmessung …]   (optional)
+[Hinweis zur Aufnahme …]          (optional: Anrede, Satellit, unklar)
+
+[Wird vorgelesen: Fließtext, ohne Listen und Markdown.]
 ```
+
+Ohne die Erinnerung schrieb Gaston Listen (die TTS liest „1.“ als „ersten“),
+und ohne den Verweis auf `voice_enroll_speaker` in der Regel holte er dessen
+Beschreibung nie und nannte den Trainingssatz nicht. Gemessen, siehe Werkzeug.
+Ein unbekannter Sprecher darf einen neuen Namen anlernen, eine bestehende
+Referenz überschreibt nur ein erkannter (`enroll_server.ueberschreiben_verweigert`,
+Jochen 2026-10-24; Regel auch in AGENTS.md und in der Werkzeugbeschreibung).
+
+Vorher hing die Direktive am Transkript: bei jeder Sprachnachricht im
+Sitzungsverlauf, im Gedächtnis-Index und im Dreaming, das ihre Beispiele für
+Gesprächsinhalt hielt (ein Beispielname wurde zum Traummotiv; Bericht
+im MemPalace `gaston-voice-assistant/decisions`, 2026-10-24). Daraus: **keine
+Werkzeug-Anleitungen in die Direktive**, die gehören in die
+Werkzeugbeschreibung (OpenClaw lädt sie bei Bedarf, der Name steht immer in
+der Werkzeugliste). **Änderungen an der Direktive nur gegen
+`tools/voice_instruction_test.py`** (Incognito-Sessions, hinterlassen nichts
+im Verlauf; Messreihe im Docstring).
 
 Die Direktive ist im Mandats-Stil formuliert (Ziel/Blickweise statt
 Einzelregeln): gesprochene Antwort in Fließtext, Zahlen/Daten ausgeschrieben,

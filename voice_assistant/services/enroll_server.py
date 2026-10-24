@@ -7,6 +7,13 @@ Endpoints:
   POST   /enroll          Body {"name": "jochen"} → kopiert last_recording.wav nach speakers/jochen.wav
   GET    /speakers        → {"speakers": ["jochen", "katrin", ...]}
   DELETE /speakers/<name> → löscht Referenz
+
+Eine BESTEHENDE Referenz überschreibt nur ein erkannter Sprecher (Jochen,
+2026-10-24): sonst könnte sich ein Fremder als "jochen" anlernen und danach
+die Sprecher-Schranke passieren (SPEAKER_STATE.md). Einen neuen Namen darf
+auch ein unbekannter Sprecher anlernen — wer zum ersten Mal angelernt wird,
+ist immer unbekannt. Entschieden wird hier und nicht nur in AGENTS.md: was
+nur im Prompt steht, wird wegargumentiert.
 """
 
 from __future__ import annotations
@@ -15,10 +22,12 @@ import json
 import os
 import shutil
 import threading
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from voice_assistant.config import (
+    CURRENT_SPEAKER_PATH,
     ENROLL_SERVER_HOST,
     ENROLL_SERVER_PORT,
     LAST_RECORDING_PATH,
@@ -36,6 +45,33 @@ def _safe_name(name: str) -> str:
         elif c in (" ", "."):
             out.append("_")
     return "".join(out)
+
+
+# Wie claw-power (SPEAKER_STATE.md): nur ein frischer Turn zählt. Zwischen
+# Trainingssatz und Werkzeug-Aufruf liegen Sekunden, nicht Minuten.
+_FENSTER_S = 120
+
+
+def ueberschreiben_verweigert(path: str = CURRENT_SPEAKER_PATH,
+                              jetzt: float | None = None) -> str | None:
+    """Grund, warum eine bestehende Referenz NICHT überschrieben wird, sonst None.
+
+    Fehlt die Datei, ist sie kaputt oder alt, zählt das als nicht erkannt —
+    eine Lücke darf nie als Erlaubnis durchgehen.
+    """
+    jetzt = time.time() if jetzt is None else jetzt
+    try:
+        with open(path, encoding="utf-8") as f:
+            st = json.load(f)
+        status = st.get("status")
+        alter = jetzt - float(st.get("epoch", 0))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return "kein Sprecher-Zustand lesbar"
+    if alter > _FENSTER_S:
+        return f"letzter Sprach-Turn ist {int(alter)} s alt"
+    if status != "bekannt":
+        return f"letzter Sprach-Turn: Sprecher {st.get('label') or status}"
+    return None
 
 
 def _list_speakers() -> list[str]:
@@ -88,6 +124,15 @@ class _Handler(BaseHTTPRequestHandler):
         os.makedirs(SPEAKER_ORIGINALS_DIR, exist_ok=True)
 
         dst = os.path.join(SPEAKERS_DIR, f"{name}.wav")
+        if os.path.isfile(dst):
+            grund = ueberschreiben_verweigert()
+            if grund:
+                print(f"🚫 Enrolment verweigert: {name} existiert, {grund}")
+                self._send_json(403, {"error": (
+                    f"Für '{name}' gibt es schon eine Stimm-Referenz. Erneuern darf sie "
+                    f"nur ein erkannter Sprecher ({grund}). Entweder einen neuen Namen "
+                    "anlernen oder ein erkannter Sprecher gibt den Auftrag.")})
+                return
         shutil.copy2(LAST_RECORDING_PATH, dst)
 
         ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")

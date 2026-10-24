@@ -49,6 +49,8 @@ class Workers:
         confirmation_prefix: str = "Ich habe verstanden: ",
         no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten.",
         voice_instruction: str = "",
+        instructions_feld: bool = True,
+        voice_erinnerung: str = "",
         diarizer: SpeachesDiarizer | None = None,
         mood_analyzer: MoodAnalyzer | None = None,
         use_stream: bool = True,
@@ -65,6 +67,8 @@ class Workers:
         self.confirmation_prefix = confirmation_prefix
         self.no_reply_fallback = no_reply_fallback
         self.voice_instruction = voice_instruction
+        self.instructions_feld = instructions_feld
+        self.voice_erinnerung = voice_erinnerung
         self.diarizer = diarizer
         self.mood_analyzer = mood_analyzer
         self.use_stream = use_stream
@@ -312,6 +316,8 @@ class Workers:
                 on_sentence=guarded_feed,
                 on_first_text=self.thinking.stop,
                 control=turn_control,
+                instructions_feld=self.instructions_feld,
+                erinnerung=self.voice_erinnerung,
                 turn=turn,
             )
             spoke = session.end()
@@ -381,6 +387,8 @@ class Workers:
                 mood=mood,
                 hinweis=hinweis,
                 on_done=self.thinking.stop,
+                instructions_feld=self.instructions_feld,
+                erinnerung=self.voice_erinnerung,
             )
         full_reply = bereinigt(full_reply)
 
