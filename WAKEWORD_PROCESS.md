@@ -1188,3 +1188,23 @@ von Runde 6, nicht aus der Streuung. Verdacht zuerst auf die Qualitätsregel
 die 66 neuen Auto-Negative sollten FP/h eher senken. Nächster Versuch:
 Runde 6 ohne Qualitätsregel (die 76 aus `val/positive_zweifel` ×10 in
 positive_train), sonst unverändert.
+
+Haus-Clips der Runde-5-Läufe (Paket R6, Live-Gate):
+
+| | v5 (L1) | L2 | L3 | L4 |
+|---|---|---|---|---|
+| FP/h | 0,09 | 0,19 | 0,09 | 0,00 |
+| echte Rufe Vorrunde /130 | 116 | 120 | 112 | 104 |
+| FT Vorrunde /46 | 16 | 18 | 14 | 14 |
+| Studio /20 | 19 | 20 | 17 | 16 |
+| flüssige Sätze /27 | 10 | 22 | 9 | 9 |
+| echte Rufe neu /94 | 82 | 87 | 77 | 70 |
+| FT neu /20 | 20 | 18 | 19 | 19 |
+| Geräusch /4 | 4 | 4 | 2 | 2 |
+
+Auch mit den alten Daten wandert jeder Lauf auf einer Linie zwischen
+„hört mehr“ (L2: 120 Rufe, 22 Sätze) und „ist strenger“ (L4: 104 Rufe,
+FP/h 0). v5 liegt in der Mitte. Runde 6 hält dagegen die Rufe stabil bei
+119–120 und senkt die neuen Fehltrigger (12–15 statt 18–20) — bezahlt mit FP/h
+auf Fremd-Audio. Die Geräusch-Zahl (2 von 4) schafft auch Runde 5 in zwei von
+vier Läufen, sie ist bei n=4 kein Beleg für die neuen Daten.
