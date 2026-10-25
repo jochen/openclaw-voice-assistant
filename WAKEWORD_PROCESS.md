@@ -1020,6 +1020,29 @@ Clip und Folge, Torfrage nein, kein Selbst-Label). Neu: bei den Auto-Negativen
 wird der Raum mitgeschrieben (`umgebung.laut`), Kandidaten aus dem ruhigen
 Raum sind das Klapper-Material. Keine gestellten Geräusch-Aufnahmen (Jochen).
 
+**Ohr-Review 2026-10-25 (121 v5-Trigger mit STT-Label):** 100 echte Rufe,
+17 Fremdes (12 Person im Raum, 6 Geräusch, 1 Musik; Husten, Schnarchen),
+2 unklar. Von 53 STT-„rauschen“ waren 41 echte Rufe — wie in Runde 5 taugt
+die STT auf Trigger-Clips nicht als Negativ-Label. Ein Selbst-Label lag
+falsch: `20261018_151852` (nach „Stopp“ als Fehltrigger gezählt) war ein
+„Stopp Gaston“; im ruhigen Raum bleiben damit 8 von 12 harten Fehltriggern,
+die v4 nicht ausgelöst hätte. `20261011_113145` („Gastoncode“, gesagt, aber
+nicht gemeint) bleibt als Sonderfall draußen.
+
+**Jochens Hinweis zur Qualität der echten Rufe:** viele sind zweifelhaft,
+oft mit Geräuschen davor und danach; kommentiert hat er nur die
+auffälligsten („klopfen und dann gaston“, „mit Musik“). Folge für die
+Auswahl, festgelegt vor dem Training: ins **Training** kommen nur Positive,
+bei denen im geschnittenen 1,8-s-Stück medium ODER Qwen eine Gaston-Form
+hört, und keine mit Geräusch- oder Musik-Notiz. Die übrigen echten Rufe
+gehen nur in die Validierung (eigene Gruppe `positive_zweifel`, gemessen,
+nicht Teil der Schranke). Grund: ein Positiv mit einem Klopfer im
+Schnittfenster lehrt das Modell, dass Klopfen zu „Gaston“ gehört — genau
+die Fehlerklasse, um die es geht. Ob das schon in Runde 5 passiert ist (42
+per Ohr gerettete Rufe, deren Clip die STT nicht verstand, gingen dort ins
+Training), ist nicht gemessen; der Vergleich der Gruppe
+`negative_geraeusch` zwischen v5 und v6 zeigt es indirekt.
+
 **Split.** Die Val-Tage von Runde 5 bleiben Val (sonst ist die v5-Zahl
 nicht mehr gültig, v5 hätte diese Tage im Training nie gesehen, v6 schon).
 Von den Tagen ab 12.10. kommen nach Seed 20260916 ganze Tage dazu,
