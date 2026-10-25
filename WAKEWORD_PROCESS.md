@@ -1170,3 +1170,21 @@ FP/h 0,37–0,84). Alle vier liegen bei FP/h über v5 — für Runde 5 ist die
 Streuung nie gemessen, ob v5 ein Glückslauf war, ist offen. Konsequenz: ein
 Einzellauf ist keine Messung. Weiter so lange Läufe würfeln, bis einer
 besteht, wäre Auswahl am Val-Set (die Schranke würde zum Trainingskriterium).
+
+### Wiederholung Runde 5 (2026-10-25 21:55) — v5 war kein Glückslauf
+
+Gleicher Versuch mit den gesicherten R5-Features (`backup_r5_20261025`),
+3× `--train_model`. FP/h 3-Frame @0,35:
+
+| | L1 | L2 | L3 | L4 |
+|---|---|---|---|---|
+| Runde 5 | 0,09 (v5) | 0,19 | 0,09 | 0,00 |
+| Runde 6 | 0,84 | 0,56 | 0,56 | 0,37 |
+
+Interne FP/h Runde 5: 0,97 / 2,12 / 1,24 / 0,53, Runde 6: 3,81 / 3,10 /
+3,27 / 1,77. Die Reihen überlappen nicht: der Anstieg kommt aus der Auswahl
+von Runde 6, nicht aus der Streuung. Verdacht zuerst auf die Qualitätsregel
+(76 schwierige Rufe nicht trainiert, das Modell zieht die Grenze weiter);
+die 66 neuen Auto-Negative sollten FP/h eher senken. Nächster Versuch:
+Runde 6 ohne Qualitätsregel (die 76 aus `val/positive_zweifel` ×10 in
+positive_train), sonst unverändert.
