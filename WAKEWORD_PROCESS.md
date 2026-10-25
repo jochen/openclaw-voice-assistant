@@ -1057,9 +1057,9 @@ Train oder Val wie alles andere.
 | Fehltrigger R5-Val (21 + 25) | 16 | **≤ 16** |
 | Studio-Takes (20) | 19 | **≥ 18** |
 | FP/h generisch (`eval_debounce.py`) | 0,09 | **≤ 0,5** |
-| echte Rufe neue Val-Tage | wird vor dem Training gemessen | **≥ v5 − 2 %** |
-| Fehltrigger neue Val-Tage (hart) | wird vor dem Training gemessen | **≤ v5** |
-| `negative_geraeusch` Val | wird vor dem Training gemessen | **höchstens halb so viele wie v5, mindestens 1 weniger** |
+| echte Rufe neue Val-Tage (94) | 82 | **≥ v5 − 2 % → ≥ 80** |
+| Fehltrigger neue Val-Tage (hart, 20) | 20 | **≤ v5 → ≤ 20** |
+| `negative_geraeusch` Val (4) | 4 | **höchstens halb so viele wie v5, mindestens 1 weniger → ≤ 2** |
 
 Die drei offenen Vorher-Zahlen misst `wake_corpus messen` mit v5 auf dem
 fertigen Paket, eingetragen werden sie hier, bevor das Training startet. Die
@@ -1070,6 +1070,44 @@ Richtung), nicht nur als Quote.
 **Alle erfüllt →** Deploy wie Runde 5, Korpus vorher sichern, Bericht mit
 Rollback-Befehl. **Eins verfehlt →** kein Deploy, Kandidat daneben,
 Entscheidung bei Jochen.
+
+### Paket und Vorher-Zahlen Runde 6 (2026-10-25, vor dem Training)
+
+Gebaut mit `tools/wake_paket.py bauen` (neu, hält die Handarbeit von Runde 5
+fest), Paket `~/wake-pakete/gaston_r6_paket` (Familienstimmen, nicht im
+Repo). Neue Val-Tage: 11., 12., 16., 17., 19., 23.10. Training: 394
+Positive (368 echte Rufe, 26 Timer-Sätze), 282 Negative (169 Auto, davon
+103 aus Runde 5; 92 hart; 21 mit Ohr-Herkunft, darunter 8 Geräusch). Die
+Qualitätsregel nahm 76 von 444 echten Rufen der Trainings-Tage heraus
+(`val/positive_zweifel`), 27 davon Ohr-Rufe. 151 Clips, die seit Runde 5 an
+deren Val-Tagen dazukamen, gehen absichtlich nirgendwohin.
+
+`wake_paket messen`, alle Modelle mit dem heutigen Manifest (Gate gleich,
+nur das Modell verschieden); v2 aus `daf5518^`, v3 aus `16ae2ee^`, v4 aus
+`42797ef^`:
+
+| Gruppe | n | v2 | v3 | v4 | v5 |
+|---|---|---|---|---|---|
+| Vorrunde: echte Rufe | 130 | 62 | 73 | 113 | 116 |
+| Vorrunde: Fehltrigger + auto | 21 + 25 | 7 + 2 | 12 + 4 | 12 + 10 | 10 + 6 |
+| Vorrunde: Studio | 20 | 10 | 12 | 14 | 19 |
+| Vorrunde: flüssige Sätze | 27 | 2 | 3 | 5 | 10 |
+| neu: echte Rufe | 94 | 30 | 41 | 61 | 82 |
+| neu: Fehltrigger hart | 20 | 8 | 9 | 14 | 20 |
+| neu: Geräusch | 4 | 1 | 0 | 2 | 4 |
+| neu: auto | 31 | 0 | 2 | 2 | 16 |
+| `positive_zweifel` | 76 | 20 | 30 | 44 | 62 |
+
+Die Vorrunden-Zeilen von v4 und v5 stimmen exakt mit dem Ergebnis von
+Runde 5 überein, das Werkzeug misst also dasselbe. **Lesart der neuen
+Zeilen:** die Clips stammen aus der v5-Zeit und sind damit von v5
+ausgewählt (Trigger und Near-Misses von v5). Auf den Negativ-Zeilen sieht
+v5 deshalb zwangsläufig schlecht aus, „≤ 20 von 20“ ist als Kriterium
+leer, und der Vergleich mit v2–v4 ist dort schief. Für v6 gegen v5 gilt
+das nicht: v6 hat diese Tage nicht gesehen und muss genau v5s Fehler
+abstellen. Die FP-Seite tragen die Vorrunden-Fehltrigger und FP/h. v3 hatte
+Tage der Vorrunden-Val vermutlich im Training (Runde 3, echte Clips bis
+16.09.); seine Vorrunden-Zahlen sind teils Selbstmessung.
 
 **Wette v6, falls deployt** (formuliert jetzt): nach ~2 Wochen, gleiche
 Zählung wie die v5-Bilanz. (1) Harte Fehltrigger im ruhigen Raum unter
