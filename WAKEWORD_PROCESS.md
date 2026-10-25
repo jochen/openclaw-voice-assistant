@@ -1113,3 +1113,35 @@ Tage der Vorrunden-Val vermutlich im Training (Runde 3, echte Clips bis
 Zählung wie die v5-Bilanz. (1) Harte Fehltrigger im ruhigen Raum unter
 v5s 0,90/Tag. (2) Verlustquote nicht über 44 %. (3) Harte Fehltrigger im
 lauten Raum nicht über 1,45/Tag.
+
+### Ergebnis Runde 6 (2026-10-25 17:40) — FP/h verfehlt, kein Deploy
+
+Training im Fablab 17:00–17:40 (Augment 28 min, Training 11 min; `llm`
+gestoppt, per `trap` im eigenen Scope wieder gestartet, SSH-Sitzung bis dahin
+offen gehalten, weil dort kein Linger gesetzt ist). Runde-5-Clips samt
+v5-Modell in `train_out/backup_r5_20261025/`, Kandidat in
+`train_out/gaston_v6_tflite/` (`onnx2tf -kat x`, float32). Eingespeist 394
+Positive + 282 Negative, je ×10.
+
+| Validierung | v5 | v6 | gepaart | Schranke |
+|---|---|---|---|---|
+| flüssige Sätze (27) | 10 | **19** | +10 / −1 | ≥ 10 ✓ |
+| echte Rufe Vorrunde (130) | 116 | **120** | +6 / −2 | ≥ 114 ✓ |
+| Fehltrigger Vorrunde (21 + 25) | 16 | **16** | 2 neu / 2 weg | ≤ 16 ✓ |
+| Studio (20) | 19 | **18** | −1 („beiläufig“) | ≥ 18 ✓ |
+| FP/h generisch (`eval_debounce.py`, 3-Frame @0,35) | 0,09 | **0,84** | | ≤ 0,5 ✗ |
+| echte Rufe neu (94) | 82 | **80** | +3 / −5 | ≥ 80 ✓ |
+| Fehltrigger neu (20) | 20 | **15** | 0 neu / 5 weg | ≤ 20 ✓ |
+| Geräusch neu (4) | 4 | **2** | 0 neu / 2 weg | ≤ 2 ✓ |
+| `positive_zweifel` (76, nicht Schranke) | 62 | 65 | +5 / −2 | |
+
+Sieben von acht erfüllt, die FP/h nicht: auf dem generischen Fremd-Audio
+löst v6 rund neunmal so oft aus wie v5 (bei jeder Schwelle 0,25–0,5
+zwischen 0,56 und 1,03/h, v5 durchgehend 0,09). Die Trainingsmetrik hatte
+es angekündigt (intern FP/h 3,81 gegen 0,97 in Runde 5 und 0,53 in Runde 4;
+Recall 0,17 gegen 0,20 und 0,24). Nach der Regel: kein Deploy, Kandidat
+daneben, Entscheidung bei Jochen. v5 läuft unverändert.
+
+Ursache offen. Nicht unterschieden: Streuung des Trainings (ein Lauf je
+Runde, nie wiederholt) gegen eine Wirkung der neuen Auswahl (Qualitätsregel
+nimmt 76 schwierige Positive heraus, 66 neue Auto-Negative).
