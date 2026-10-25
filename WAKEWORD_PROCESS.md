@@ -1145,3 +1145,28 @@ daneben, Entscheidung bei Jochen. v5 läuft unverändert.
 Ursache offen. Nicht unterschieden: Streuung des Trainings (ein Lauf je
 Runde, nie wiederholt) gegen eine Wirkung der neuen Auswahl (Qualitätsregel
 nimmt 76 schwierige Positive heraus, 66 neue Auto-Negative).
+
+### Wiederholung Runde 6 (2026-10-25 20:50) — Streuung groß, kein Lauf besteht
+
+Drei weitere Läufe nur mit `--train_model` auf denselben Features (train.py
+setzt keinen Seed). Schranke wie oben, Live-Gate, FP/h 3-Frame @0,35:
+
+| | v5 | L1 (v6) | L2 | L3 | L4 | Schranke |
+|---|---|---|---|---|---|---|
+| FP/h generisch | 0,09 | 0,84 | 0,56 | 0,56 | 0,37 | ≤ 0,5 |
+| interne FP/h | 0,97 | 3,81 | 3,10 | 3,27 | 1,77 | – |
+| echte Rufe Vorrunde /130 | 116 | 120 | 119 | 119 | 119 | ≥ 114 |
+| FT Vorrunde /46 | 16 | 16 | 17 | 17 | 15 | ≤ 16 |
+| Studio /20 | 19 | 18 | 17 | 20 | 15 | ≥ 18 |
+| flüssige Sätze /27 | 10 | 19 | 16 | 19 | 11 | ≥ 10 |
+| echte Rufe neu /94 | 82 | 80 | 86 | 82 | 80 | ≥ 80 |
+| FT neu /20 | 20 | 15 | 14 | 12 | 12 | ≤ 20 |
+| Geräusch /4 | 4 | 2 | 2 | 2 | 2 | ≤ 2 |
+
+Kein Lauf erfüllt alles: L4 scheitert am Studio (15), L2 an FT und Studio,
+L3 an FP/h und FT. Die Streuung allein eines Laufs ist größer als die meisten
+Abstände, auf die die Schranke prüft (Studio 15–20, flüssige Sätze 11–19,
+FP/h 0,37–0,84). Alle vier liegen bei FP/h über v5 — für Runde 5 ist die
+Streuung nie gemessen, ob v5 ein Glückslauf war, ist offen. Konsequenz: ein
+Einzellauf ist keine Messung. Weiter so lange Läufe würfeln, bis einer
+besteht, wäre Auswahl am Val-Set (die Schranke würde zum Trainingskriterium).
