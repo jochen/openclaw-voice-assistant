@@ -963,3 +963,92 @@ Vergleich gleich schief ist. Nach ~2 Wochen:
    Sätzen ein Artefakt des einen Sprechers.
 3. **Ein-Satz-Anteil** der Trigger (`ack`-Entscheidung im `wake_events.log`)
    soll steigen — das ist die Wirkung, um die es ging.
+
+### Bilanz der Beobachtungswette v5 (2026-10-25): nach Wortlaut nicht bestanden, kein Rollback
+
+Gezählt mit `labels_fuer_clips` (Ohr > Selbst > STT), v4 = 02.–11.10. (9 Tage),
+v5 = 11.–25.10. (14,5 Tage):
+
+| | v4 | v5 | Kriterium |
+|---|---|---|---|
+| Fehltrigger/Tag, nur Selbst-Labels | 0,78 | 1,79 | 1 ✗ |
+| Fehltrigger/Tag, Ohr + Selbst | 1,33 | 2,34 | |
+| Verlustquote | 38 % | 44 % | 2 ✗ |
+| Ein-Satz-Anteil der Trigger | 85 % | 73 % | 3 ✗ |
+
+Die Bezugszahl der Wette (~3/Tag, ~37 %, STT-Lesung vom 07.10.) ist nicht
+nachvollziehbar gezählt; verglichen wird deshalb mit derselben Zählung heute.
+Die Labels sind trotzdem ungleich: die v4-Trigger sind nach dem Review für
+Runde 5 fast ganz Ohr/Selbst, bei v5 sind 112 von 279 nur STT. Das
+Umgebungspegel-Experiment (ab 17.10.) erklärt es nicht: v5 vor dem 17.10.
+schon 42 % Verlust, 69 % Ein-Satz.
+
+**Offline-Gegenprobe** (v4 aus `42797ef^`, beide Modelle auf denselben Clips
+seit dem Deploy; Raum = gleitender Median aus dem Log bzw. aus `*_vorlauf.wav`,
+„ruhig“ unter 96 = 4 × Ruhe):
+
+- **Ruhiger Raum:** von 13 hart belegten Fehltriggern hätte v4 **9 nicht**
+  ausgelöst (v4 0,03–0,57, v5 0,77–0,93), 7 davon ohne Sprache im Wake-Clip,
+  viermal danach „Stopp, Stopp!“. Per Ohr am 21.10.: Klappern, Aufräumen,
+  Gegenstand auf der Küchenplatte („Lautstärkeform wie Gaston“). Das ist eine
+  **neue Fehlerklasse von v5**, Jochens Eindruck stimmt.
+- **Lauter Raum:** 16 von 21 harten Fehltriggern hätte v4 auch ausgelöst; der
+  Anstieg dort (0,89 → 1,45/Tag) liegt eher an der Umgebung als am Modell.
+- **Echte Rufe:** von 90 hart belegten v5-Triggern hätte v4 11 nicht ausgelöst.
+- **Fernseh-Fehltrigger seltener** (Jochens Eindruck): mit dem Archiv nicht
+  belegbar. Archiviert wird nur, worauf das laufende Modell anspringt; die
+  zwei sauberen Val-Tage der v4-Zeit hatten zu wenige Fehltrigger. Der Scan
+  über die 485 Vorläufe taugt nicht als FP-Rate: die 30 s vor einem Trigger
+  enthalten meist eigene frühere Rufe (beide Modelle ~30 Auslöser/h).
+
+Vermutung, nicht gemessen: die flüssigen Sätze machen den Anlaut
+empfindlicher, und ein Klopfen ähnelt einem harten G/K. Unter den 14
+Auto-Positiven von Runde 5 sind 2 Gerede („Gastraum“, „Gastein“), keine
+Klopfer. Kein Rollback: v4 verlöre die flüssigen Rufe wieder. Stattdessen
+Runde 6 mit Geräusch-Negativen.
+
+## Nachtraining Runde 6 — Schranke, formuliert VOR dem Training (2026-10-25)
+
+Ziel: die Geräusch-Fehltrigger im ruhigen Raum weg, ohne den Gewinn von
+Runde 5 (flüssige Sätze) zu verlieren.
+
+**Material.** Alles Hart-Gelabelte seit dem Paket von Runde 5 (11.10.
+00:19), dazu das Ohr-Review der 121 v5-Trigger, die nur STT-Labels haben
+(Hörseite, Reihenfolge: nur-v5-Fälle zuerst), und Auto-Negative nach der
+Regel von Runde 5 (Near-Miss Peak ≥ 0,5, medium UND Qwen ohne Gaston-Form in
+Clip und Folge, Torfrage nein, kein Selbst-Label). Neu: bei den Auto-Negativen
+wird der Raum mitgeschrieben (`umgebung.laut`), Kandidaten aus dem ruhigen
+Raum sind das Klapper-Material. Keine gestellten Geräusch-Aufnahmen (Jochen).
+
+**Split.** Die Val-Tage von Runde 5 bleiben Val (sonst ist die v5-Zahl
+nicht mehr gültig, v5 hätte diese Tage im Training nie gesehen, v6 schon).
+Von den Tagen ab 12.10. kommen nach Seed 20260916 ganze Tage dazu,
+Ziel 30 %. Neue Val-Gruppe `negative_geraeusch`: Fehltrigger mit
+Ohr-`herkunft` geraeusch und harte Fehltrigger im ruhigen Raum, je nach Tag
+Train oder Val wie alles andere.
+
+| Validierung | v5 (Vorher) | v6 muss |
+|---|---|---|
+| flüssige Sätze `positive_timer` (27) | 10 | **≥ 10** |
+| echte Rufe R5-Val `positive` (130) | 116 | **≥ 114** |
+| Fehltrigger R5-Val (21 + 25) | 16 | **≤ 16** |
+| Studio-Takes (20) | 19 | **≥ 18** |
+| FP/h generisch (`eval_debounce.py`) | 0,09 | **≤ 0,5** |
+| echte Rufe neue Val-Tage | wird vor dem Training gemessen | **≥ v5 − 2 %** |
+| Fehltrigger neue Val-Tage (hart) | wird vor dem Training gemessen | **≤ v5** |
+| `negative_geraeusch` Val | wird vor dem Training gemessen | **höchstens halb so viele wie v5, mindestens 1 weniger** |
+
+Die drei offenen Vorher-Zahlen misst `wake_corpus messen` mit v5 auf dem
+fertigen Paket, eingetragen werden sie hier, bevor das Training startet. Die
+Regeln stehen jetzt und werden danach nicht angepasst. Die Geräusch-Gruppe
+ist klein; ihre Zahl wird gepaart gelesen (welche Clips kippen, in welche
+Richtung), nicht nur als Quote.
+
+**Alle erfüllt →** Deploy wie Runde 5, Korpus vorher sichern, Bericht mit
+Rollback-Befehl. **Eins verfehlt →** kein Deploy, Kandidat daneben,
+Entscheidung bei Jochen.
+
+**Wette v6, falls deployt** (formuliert jetzt): nach ~2 Wochen, gleiche
+Zählung wie die v5-Bilanz. (1) Harte Fehltrigger im ruhigen Raum unter
+v5s 0,90/Tag. (2) Verlustquote nicht über 44 %. (3) Harte Fehltrigger im
+lauten Raum nicht über 1,45/Tag.
