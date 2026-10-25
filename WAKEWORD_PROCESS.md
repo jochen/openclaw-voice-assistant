@@ -1208,3 +1208,13 @@ FP/h 0). v5 liegt in der Mitte. Runde 6 hält dagegen die Rufe stabil bei
 119–120 und senkt die neuen Fehltrigger (12–15 statt 18–20) — bezahlt mit FP/h
 auf Fremd-Audio. Die Geräusch-Zahl (2 von 4) schafft auch Runde 5 in zwei von
 vier Läufen, sie ist bei n=4 kein Beleg für die neuen Daten.
+
+### Runde 6 ohne Qualitätsregel (2026-10-25 23:19) — nicht die Ursache
+
+Die 76 Zweifel-Rufe ×10 zusätzlich in positive_train, augment neu, 3×
+`--train_model`. FP/h 3-Frame @0,35: 0,47 / 0,84 / 0,37 (interne FP/h
+4,16 / 7,08 / 4,96). Gleicher Bereich wie Runde 6 mit Regel (0,37–0,84),
+klar über Runde 5 (0,00–0,19). Die Qualitätsregel erklärt den Anstieg also
+nicht. Was Runde 6 sonst von Runde 5 unterscheidet: die neuen
+Trainings-Positiven der Tage ab 11.10., die 66 neuen Auto-Negative, die
+weggelassenen Auto-Positive der Vorrunde.
