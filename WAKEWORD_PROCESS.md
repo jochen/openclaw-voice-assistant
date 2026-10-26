@@ -1259,3 +1259,30 @@ und v4). Die 257 Selbst-Positiven bringen den Großteil des Recalls. Was FP/h
 treibt, ist damit eingegrenzt, aber nicht getrennt: Selbst-Positive,
 Auto-Negative oder schlicht die Menge. Trennen ginge mit zwei Läufen „sicher
 + Selbst-Positive“ und „sicher + Auto-Negative“.
+
+### Trennläufe (2026-10-26 08:55) — FP/h kommt mit den Selbst-Positiven
+
+Je augment + 2× `--train_model`. A = sicher + 257 Selbst-Positive (ohne
+Auto- und Selbst-Negative), B = sicher + 169 Auto-Negative. Die 11
+„person“-Negativen hat Jochen vorher angehört: in keinem ein Gaston.
+
+| | nur sicher | A L1 / L2 | B L1 / L2 | Runde 6 |
+|---|---|---|---|---|
+| FP/h @0,35 | 0,00 | 0,28 / 0,28 | 0,00 / 0,00 | 0,37–0,84 |
+| echte Rufe Vorrunde /130 | 81–89 | 120 / 121 | 50 / 65 | 119–120 |
+| echte Rufe neu /94 | 45–48 | 86 / 85 | 42 / 44 | 80–86 |
+| Studio /20 | 10–12 | 19 / 19 | 15 / 10 | 15–20 |
+| flüssige Sätze /27 | 4–6 | 12 / 9 | 5 / 3 | 11–19 |
+| FT Vorrunde /46 | 9–13 | 17 / 18 | 9 / 10 | 15–17 |
+| FT neu /20 | 7–10 | 15 / 17 | 6 / 6 | 12–15 |
+| Geräusch /4 | 1 | 2 / 2 | 2 / 2 | 2 |
+
+Lesart: die Auto-Negativen machen das Modell nur strenger (Recall halbiert,
+FP/h bleibt 0) — sie treiben FP/h nicht. Die Selbst-Positiven bringen fast den
+ganzen Recall von Runde 6 und FP/h 0,28. A liegt bei FP/h sogar unter allen
+vier Runde-6-Läufen, obwohl ihm nur die Negativen fehlen; bei zwei Läufen je
+Seite ein Hinweis, kein Beleg. Ob die Selbst-Positiven durch schlechte Clips
+oder durch die Menge wirken, klärt nur das Ohr: Hörseite mit vier Urteilen
+(Gaston klar / halb oder überdeckt / kein / weiß nicht), abgespielt wird der
+Trainingsschnitt. Kriterium (Jochen, 2026-10-26): ist das Wort zu hören, nicht
+ob Gaston gemeint war.
