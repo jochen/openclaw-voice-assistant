@@ -1218,3 +1218,44 @@ klar über Runde 5 (0,00–0,19). Die Qualitätsregel erklärt den Anstieg also
 nicht. Was Runde 6 sonst von Runde 5 unterscheidet: die neuen
 Trainings-Positiven der Tage ab 11.10., die 66 neuen Auto-Negative, die
 weggelassenen Auto-Positive der Vorrunde.
+
+Haus-Clips ohne Qualitätsregel (3 Läufe, `val/positive_zweifel` ist hier
+trainiert und zählt nicht): echte Rufe Vorrunde 126–127/130, neu 90–93/94,
+flüssige Sätze 16–24, Studio 18–19, FT Vorrunde 20–21/46, FT neu 16/20,
+Geräusch 1–2/4. Die Zweifel-Rufe bringen also viel Recall und kosten etwa
+fünf Fehltrigger auf den alten Tagen; an FP/h ändern sie nichts.
+
+### Nur sichere Labels (2026-10-26 00:28) — FP/h weg, Recall auch
+
+Jochens Frage: steckt Fehlerhaftes aus frühen Runden „immer noch drin“?
+Antwort vorab: in den Gewichten nicht — `train.py` lädt kein Vorgänger-Modell,
+jede Runde startet zufällig und trainiert auf 30k synthetisch + den echten
+Clips des aktuellen Pakets (3 940 = 394 × 10). In den Daten schon: jedes Paket
+übernimmt den Train-Teil der Vorrunde. Herkunft der 394 Train-Positiven von
+Runde 6: 111 Ohr, 257 Selbst (aus Handlungen: wiederholt nach Near-Miss,
+Befehl ausgeführt), 26 Timer. Negative: 78 Ohr, 35 Selbst (Stopp-Abbruch),
+169 Auto (nur STT, kein Gaston gehört — dieselbe STT, die 41 von 53 echten
+Rufen „Rauschen“ nannte).
+
+Versuch: nur Ohr-Positive + Timer (137) und Ohr-Negative (78), je ×10, 30k
+synthetisch unverändert, augment einmal, 3× `--train_model`. Nulllinie das
+rein synthetische Modell vom 05.07. (in den Tabellen „v2“, Git `1702b34`):
+
+| | synth. (v2) | nur sicher L1–L3 | Runde 6 | v5 |
+|---|---|---|---|---|
+| FP/h @0,35 | 0,00 | 0,00 / 0,00 / 0,00 | 0,37–0,84 | 0,09 |
+| echte Rufe Vorrunde /130 | 62 | 81 / 89 / 82 | 119–120 | 116 |
+| echte Rufe neu /94 | 30 | 46 / 45 / 48 | 80–86 | 82 |
+| Studio /20 | 10 | 12 / 11 / 10 | 15–20 | 19 |
+| flüssige Sätze /27 | 2 | 4 / 5 / 6 | 11–19 | 10 |
+| FT Vorrunde /46 | 9 | 11 / 9 / 13 | 15–17 | 16 |
+| FT neu /20 | 8 | 10 / 10 / 7 | 12–15 | 20 |
+| Geräusch /4 | 1 | 1 / 1 / 1 | 2 | 4 |
+
+Lesart: kein sauberer Beleg für „schlechte Labels“. Weniger echte Positive
+ergeben ein strengeres Modell — es liegt auf derselben Linie Recall gegen
+Fehlauslöser wie alle anderen, nur weit am strengen Ende (zwischen synth.
+und v4). Die 257 Selbst-Positiven bringen den Großteil des Recalls. Was FP/h
+treibt, ist damit eingegrenzt, aber nicht getrennt: Selbst-Positive,
+Auto-Negative oder schlicht die Menge. Trennen ginge mit zwei Läufen „sicher
++ Selbst-Positive“ und „sicher + Auto-Negative“.
