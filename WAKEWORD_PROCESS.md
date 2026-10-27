@@ -1286,3 +1286,137 @@ oder durch die Menge wirken, klärt nur das Ohr: Hörseite mit vier Urteilen
 (Gaston klar / halb oder überdeckt / kein / weiß nicht), abgespielt wird der
 Trainingsschnitt. Kriterium (Jochen, 2026-10-26): ist das Wort zu hören, nicht
 ob Gaston gemeint war.
+
+### Ohr-Review der Selbst-Positiven und Lauf C (2026-10-27 00:33)
+
+Jochen hat alle 257 Selbst-Positiven im Trainingsschnitt gehört: 227 Gaston
+klar, 28 halb/überdeckt, 0 kein, 2 weiß nicht. Viele klare sind leise, weit
+weg oder andere Familienstimmen. Die Selbst-Regel liefert also fast nur echte
+Gastons; die 11 „person“-Negativen enthalten keins.
+
+Lauf C = sicher + nur die 227 klaren (ohne die 30 halben/unklaren), 2 Läufe:
+
+| | A (alle 257) L1 / L2 | C (227 klar) L1 / L2 |
+|---|---|---|
+| FP/h @0,35 | 0,28 / 0,28 | 0,56 / 1,40 |
+| echte Rufe Vorrunde /130 | 120 / 121 | 123 / 122 |
+| echte Rufe neu /94 | 86 / 85 | 90 / 90 |
+| Studio /20 | 19 / 19 | 18 / 19 |
+| FT Vorrunde /46 | 17 / 18 | 16 / 23 |
+| FT neu /20 | 15 / 17 | 16 / 16 |
+
+Ohne die 30 halben wird das Modell nicht sauberer, eher großzügiger, und
+C2 ist mit 1,40 der höchste Wert aller Läufe. Die Streuung zwischen zwei
+Läufen derselben Daten (0,56 / 1,40) ist größer als jeder Unterschied, den
+das Weglassen von 30 Clips erklären könnte. Robust über alle Versuche sind nur
+zwei Befunde: die Selbst-Positiven bringen Recall und FP/h, die
+Auto-Negativen kosten Recall und senken FP/h nicht messbar.
+
+### Ohr-Review der Auto-Negativen, Stimmen im Paket (2026-10-27)
+
+Jochen hat alle 169 Auto-Negativen (ganzer Clip) gehört: 167 kein Gaston,
+2 weiß nicht, kein einziges „klar“. Dazu die 11 „person“-Negativen, alle kein.
+Die Negativen sind also sauber. Dass sie in Lauf B den Recall halbieren, liegt
+nicht an versteckten Gastons. Sie sind schwere Negative: Nah-Treffer, die dem
+Wort ähnlich klingen. Zu hören war sehr oft der Fernseher, öfter Jochen selbst,
+kaum die anderen Familienstimmen (Jochen).
+
+Jochens Frage daraus: haben wir zu oft auf seine Stimme trainiert? Gezählt mit
+der Sprecher-Verifikation (Schwelle 0,40 / Abstand 0,15, Referenzen nur
+zwei Stimmen; die übrigen Familienstimmen sind nicht angelernt):
+
+| Teil des Pakets | jochen | zweite Stimme | unbekannt |
+|---|---|---|---|
+| train/positive (394, ×10 im Training) | 298 | 2 | 94 |
+| train/negative (282, ×10) | 26 | 2 | 254 |
+| davon auto-Negative (169) | 3 | 0 | 166 |
+| val/positive (94) | 59 | 1 | 34 |
+| val_vorrunde/positive (130) | 103 | 0 | 27 |
+
+„jochen“ ist eine Untergrenze: auf 1,8-s-Schnitten und mit Fernseher im
+Hintergrund bleibt auch seine Stimme oft „unbekannt“ (die Schwelle ist auf
+ganze Aufnahmen gemessen). Selbst so: mindestens drei Viertel der echten Rufe
+sind Jochen, unter den echten Negativen nur jeder Zehnte. Im Training heißt
+das rund 3000 Jochen-Gastons (≈ 9 % aller Positiven neben 30 000
+synthetischen) gegen gut 250 Jochen-Nicht-Gastons. Ein Modell kann daraus
+„Jochens Stimme + ähnlicher Laut“ als Abkürzung lernen. Belegt ist das nicht.
+Prüfen ließe es sich, indem man die Fehltrigger der Validierung nach Sprecher
+aufteilt. Und auch die Validierung ist zu drei Vierteln Jochen, der Recall
+misst also vor allem ihn.
+
+Zweiter Gedanke (Jochen): „Gaston“ ist kurz, zwei Silben ohne „Hey“ oder
+„Okay“ davor. openwakeword empfiehlt längere Wörter, weil ein kurzes Wort
+weniger Merkmale trägt und öfter zufällig in Sprache vorkommt. Die
+Fehltrigger-Rate ist hier also strukturell höher als bei „Hey Jarvis“. Das
+Wort bleibt (bewusste Entscheidung), also muss die Trennschärfe aus Daten
+und Gate kommen.
+
+### Streuung senken statt Glückslauf wählen (Idee, 2026-10-27)
+
+Zwei Läufe derselben Daten lagen bei 0,56 und 1,40 FP/h. Den besten von
+mehreren Läufen zu nehmen, passt das Modell an die Validierung an (der
+Glückslauf ist morgen keiner mehr). Stattdessen: mehrere Läufe derselben Daten
+als Ensemble betreiben und ihre Werte je Frame mitteln. Die Modelle sind
+winzig (~200 kB), drei parallel kosten kaum Rechenzeit. Mitteln glättet die
+zufälligen Ausreißer einzelner Läufe. Die Schranke gälte dann für das
+Ensemble, und mehrere Läufe sind ohnehin nötig, um eine Datenänderung von der
+Streuung zu unterscheiden. Braucht eine Änderung am Assistenten
+(`openwakeword_engine.py`, mehrere Modelle je Bundle), deshalb erst offline
+messen: die vorhandenen Läufe (v6_l2–4, A1/A2, C1/C2 …) per Mittelwert auf
+`validation_set_features.npy` und die Haus-Clips. Noch nicht gemacht.
+
+### Fehltrigger und Recall nach Sprecher (2026-10-27)
+
+Val-Clips des R6-Pakets per Sprecher-Verifikation eingeteilt: `jochen`
+(erkannt), `halb` (unbekannt, aber Ähnlichkeit zu jochen ≥ 0,25, meist er
+leise oder überdeckt), `fremd` (< 0,25: Fernseher, andere Familienstimmen).
+Die zweite angelernte Stimme wurde nur einmal sicher erkannt und fehlt in der Tabelle. Live-Gate
+wie `wake_paket messen`. Skript und Rohdaten: Scratchpad
+`sprecher_aufteilung.py/.json` (nicht im Repo, Familienstimmen).
+
+| Modell | Recall jochen /162 | halb /40 | fremd /21 | FT jochen /14 | halb /10 | fremd /77 |
+|---|---|---|---|---|---|---|
+| v2 rein synthetisch | 37 % | 48 % | 57 % | 57 % | 10 % | 12 % |
+| v5 live | 92 % | 85 % | 67 % | 100 % | 60 % | 47 % |
+| R6 v6 / l4 | 96 / 96 % | 75 / 75 % | 62 / 57 % | 86 / 71 % | 70 / 50 % | 40 / 30 % |
+| nur sicher l1 | 56 % | 60 % | 57 % | 50 % | 20 % | 17 % |
+| A1 / A2 | 97 / 96 % | 92 / 90 % | 52 / 67 % | 71 / 86 % | 60 / 70 % | 35 / 40 % |
+| C1 / C2 | 98 / 96 % | 88 / 90 % | 90 / 90 % | 86 / 86 % | 80 / 80 % | 40 / 57 % |
+
+Lesart:
+- **Das rein synthetische Modell hört Jochen am schlechtesten** (37 % gegen
+  57 % bei fremden Stimmen). Das Nachtraining hat das gedreht: Jochen
+  92–98 %, fremde Stimmen meist nur 52–67 %. Der Recall-Gewinn aller Runden
+  ist vor allem ein Jochen-Gewinn.
+- **Jochens Nicht-Gastons lösen am häufigsten aus**, schon bei v2 (57 %
+  gegen 12 % fremd), bei v5 alle 14. Seine Stimme liegt offenbar von Haus aus
+  nah an der synthetischen Trainingsstimme. Das Nachtraining hebt die
+  Fehltrigger aber bei allen Sprechern, nicht nur bei ihm.
+- **C hört fremde Stimmen deutlich besser** (90 %): die 227 klaren
+  Selbst-Positiven enthalten leise und ferne Rufe anderer Familienmitglieder. Dafür
+  zahlt C mit mehr fremden Fehltriggern (C2 57 %).
+- Grenzen: n klein (14 Jochen-Negative, 21 fremde Rufe); alle Val-Negativen
+  sind Clips, auf die ein Live-Modell reagiert hat, die Raten sind also
+  absolut hoch und nur untereinander vergleichbar; „halb“/„fremd“ ist eine
+  Schätzung, nicht alle Stimmen sind angelernt.
+
+Jochens Vermutung („zu oft meine Stimme“) trifft beim Recall: das Modell ist
+auf ihn zugeschnitten, und die Familie profitiert weniger. Bei den
+Fehltriggern ist es nicht einseitig. Folgerung für das Material: mehr echte
+Rufe der anderen Familienmitglieder, und mehr Nicht-Gastons von Jochen als
+Gegengewicht (er redet viel in der Nähe des Mikros).
+
+Ensemble offline (Mittel der Scores je Frame; Einzelwerte reproduzieren die
+Fablab-Werte exakt):
+
+| | einzeln FP/h | gemittelt | echte Rufe Vorrunde / neu | FT Vorrunde / neu |
+|---|---|---|---|---|
+| R6 (4 Läufe) | 0,84 / 0,56 / 0,56 / 0,37 | 0,56 | 117 / 81 | 17 / 25 |
+| A (2) | 0,28 / 0,28 | 0,19 | 119 / 85 | 16 / 23 |
+| C (2) | 0,56 / 1,40 | 0,93 | 122 / 89 | 19 / 36 |
+| A+C (4) | | 0,56 | 121 / 85 | 17 / 25 |
+
+Mitteln liefert die Mitte der Einzelläufe, nicht den besten. Der Gewinn ist
+die geringere Abhängigkeit vom Zufall eines Laufs. A gemittelt (0,19) ist der
+beste Wert ohne herausgepickten Lauf. Er beruht aber auf zwei Läufen, für
+eine Aussage braucht es mehr.
