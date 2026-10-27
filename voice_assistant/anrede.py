@@ -33,8 +33,12 @@ def _gleicher_anlaut(a: str, b: str) -> bool:
     return a[0] == b[0] or any(a[0] in k and b[0] in k for k in _ANLAUT_KLASSEN)
 
 
-def anrede_im_text(text: str | None, bundle: str | None) -> bool:
+def anrede_im_text(text: str | None, bundle: str | None,
+                   woerter: int | None = _WOERTER) -> bool:
     """True, wenn eines der ersten Wörter das Wakewort (oder ein Verhörer) ist.
+
+    `woerter=None` sucht im ganzen Text: im Wake-Clip steht das Wakewort am
+    Ende, nicht vorn (wake_pruefung.py).
 
     `bundle` ist der Name des Wakewort-Bundles ("gaston"); bei Namen aus
     mehreren Wörtern ("hey_jarvis") zählt das letzte. Ohne brauchbaren Namen
@@ -44,7 +48,7 @@ def anrede_im_text(text: str | None, bundle: str | None) -> bool:
     name = name[-1] if name else ""
     if len(name) < 4:
         return True
-    for wort in _WORT.findall((text or "").lower())[:_WOERTER]:
+    for wort in _WORT.findall((text or "").lower())[:woerter]:
         if wort.startswith(name[:3]):
             return True
         if (len(wort) >= _MIN_LAENGE and _gleicher_anlaut(wort, name)

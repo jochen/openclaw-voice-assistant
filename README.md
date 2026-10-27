@@ -517,6 +517,21 @@ tied to your microphone gain than `wake_rms_min`.
 > daily use the TV practically stopped triggering; with music you have to call
 > a bit louder. Example, not a preset: check the near-misses in your own log.
 
+**Checking after the trigger (`wake_pruefung:`, experimental, log only)**
+Retraining alone did not get the model reliably under our false-trigger
+budget: two training runs on the same data differed by a factor of 2.5. The
+idea now is to let the model hear generously and to sort false triggers out
+afterwards, in a second step. For every trigger the assistant computes the
+*area* of the score curve (sum of scores above the threshold: height times
+duration) and lets the first STT stage (Qwen3-ASR, ~0.1 s) transcribe the
+wake clip. A large area passes; a small one passes only if the wake word (or a
+mishearing with the same onset) is in the text. **Without context:** given the
+wake word as context, the STT writes it even where nobody said it. Measured
+offline on our model's triggers: 5 of 15 false triggers would remain, 61 of 64
+genuine calls. That is too few false triggers for a decision, so for now the
+check only writes `wake_pruefung.jsonl` (text, area, `haette_verworfen`) and
+changes nothing; after listening to those cases it may become a gate.
+
 ## Cancelling a turn while it runs (`barge_in`, optional)
 
 A false wake-word trigger is not the expensive part. The expensive part is

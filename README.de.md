@@ -531,6 +531,22 @@ Mikrofon-Verstärkung als `wake_rms_min`.
 > nicht mehr aus; bei Musik muss man etwas lauter rufen. Beispiel, keine
 > Voreinstellung: die Near-Misses im eigenen Log ansehen.
 
+**Prüfung nach dem Trigger (`wake_pruefung:`, Experiment, nur Log)**
+Nachtraining allein brachte das Modell nicht verlässlich unter unser
+Fehlauslöser-Budget: zwei Trainingsläufe mit denselben Daten lagen um den
+Faktor 2,5 auseinander. Die Idee jetzt: das Modell darf großzügig hören,
+Fehlauslöser sortiert ein zweiter Schritt danach aus. Bei jedem Trigger rechnet
+der Assistent die *Fläche* der Score-Kurve (Summe der Scores über der
+Schwelle: Höhe mal Dauer) und lässt die erste STT-Stufe (Qwen3-ASR, ~0,1 s)
+den Wake-Clip transkribieren. Große Fläche geht durch, kleine nur, wenn das
+Wakewort (oder ein Verhörer mit gleichem Anlaut) im Text steht. **Ohne
+Kontext:** bekommt die STT das Wakewort als Kontext, schreibt sie es auch dort
+hin, wo es niemand gesagt hat. Offline an den Triggern unseres Modells
+gemessen: 5 von 15 Fehlauslösern blieben, 61 von 64 echten Rufen. Das sind zu
+wenige Fehlauslöser für eine Entscheidung, deshalb schreibt die Prüfung vorerst
+nur `wake_pruefung.jsonl` (Text, Fläche, `haette_verworfen`) und ändert
+nichts; nach dem Anhören dieser Fälle wird sie vielleicht ein Gate.
+
 ## Einen Turn abbrechen, während er läuft (`barge_in`, optional)
 
 Ein Wakeword-Fehltrigger ist nicht das Teure. Teuer ist, was danach passiert:

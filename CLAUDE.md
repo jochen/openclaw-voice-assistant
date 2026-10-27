@@ -1199,6 +1199,22 @@ nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.
 
+### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, Branch `feature/wake-schatten`)
+
+Jochens Idee: das Modell darf großzügig hören, eine zweite Stufe sortiert
+Fehlauslöser danach aus. `wake_pruefung.py` rechnet bei jedem Trigger die
+Fläche der Score-Kurve (Summe über der Schwelle) und lässt Qwen den Wake-Clip
+transkribieren (ohne Kontext, der lässt Qwen Gaston erfinden; ~0,1 s). Hohe
+Fläche oder das Wort im Text (`anrede_im_text(..., woerter=None)`, das Wort
+steht im Wake-Clip am Ende) → durch, sonst `haette_verworfen`. **Nur Log**
+(`wake_pruefung.jsonl`), am Turn ändert sich nichts. Offline an v5 gemessen:
+5 von 15 Fehlauslösern blieben, 61 von 64 Rufen (Zahlen und Grenzen in
+`WAKEWORD_PROCESS.md`). Erst nach Ohr-Review der `haette_verworfen`-Fälle
+wird daraus eine Schranke. Verworfen: zweites Modell als Gegenprobe (nicht
+nachvollziehbar), Richtung (Mikro an der Wand, Fernseher und Sprecher aus
+derselben Richtung), Fernseher-Zustand (der Umgebungspegel deckt Lärm schon
+vor dem Trigger ab). Tests: `tests/test_wake_pruefung.py`.
+
 **Gelabelte Clips gehören gesichert, bevor das Archiv sie löscht.**
 `TRIGGER_AUDIO_DIR` räumt beim Service-Start alles älter als
 `TRIGGER_AUDIO_MAX_AGE_DAYS` ab; die Labels dazu leben unbegrenzt weiter. Am

@@ -116,6 +116,7 @@ from voice_assistant.wakeword.respeaker import RespeakerWakeword
 from voice_assistant.anrede import anrede_im_text
 from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
 from voice_assistant.nearmiss_shadow import NearMissShadow
+from voice_assistant.wake_pruefung import TIMEOUT_SEC as _PRUEF_TIMEOUT, WakePruefung
 from voice_assistant.rewind import RewindBuffer
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
@@ -1451,6 +1452,19 @@ def run() -> None:
             turn_laeuft=lambda: current_state[0] != STATE_LISTENING,
         )
         print("👥 Near-Miss-Schatten aktiv (6 s Mitschnitt, nur Log)")
+    # Prüfung nach dem Trigger (profile.wake_pruefung): Fläche der Score-Kurve
+    # + Qwen auf dem Wake-Clip, NUR ins Log (voice_assistant/wake_pruefung.py).
+    wake_pruefung = None
+    if profile.wake_pruefung.enabled:
+        wake_pruefung = WakePruefung(
+            stt=(LlamaCppAsrStt(profile.stt_llamacpp_url, timeout=_PRUEF_TIMEOUT,
+                                sprache=profile.stt_llamacpp_sprache or None)
+                 if profile.stt_llamacpp_url else None),
+            log_path=os.path.join(WORKSPACE, "wake_pruefung.jsonl"),
+            flaeche_grenze=profile.wake_pruefung.flaeche_grenze,
+        )
+        print(f"🔎 Wake-Prüfung im Schatten aktiv (Fläche ≥ {profile.wake_pruefung.flaeche_grenze}"
+              " oder Qwen hört das Wort, nur Log)")
     # Rückspul-Puffer (profile.rewind): letzte Minuten Mikro + Score-Verlauf im
     # RAM; gesichert nur bei Trigger (Vorlauf) und manuellem Marker.
     _rewind_cfg = profile.rewind
@@ -1844,7 +1858,7 @@ def run() -> None:
                                 )
                             # Trigger genauso protokollieren wie den Near-Miss —
                             # ein Sweep braucht beide Klassen im selben Log.
-                            _log_wake_event({
+                            trigger_event = {
                                 "result": "trigger",
                                 **({"umgebung": _um.als_log()} if _um is not None else {}),
                                 "bundle": trigger_audio_bundle,
@@ -1858,7 +1872,10 @@ def run() -> None:
                                 "scores": [round(s, 3) for s in recent_scores],
                                 "beam": float(beam) if beam is not None else None,
                                 "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
-                            })
+                            }
+                            _log_wake_event(trigger_event)
+                            if wake_pruefung is not None:
+                                wake_pruefung.start(trigger_event, list(wake_ring))
                             # Ein-Satz-Kommando: LED SOFORT, kein play_wav.
                             # Pre-Roll aus dem Ring VOR dem clear() abgreifen — er
                             # trägt den Anfang eines durchgesprochenen Kommandos

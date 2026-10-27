@@ -388,7 +388,9 @@ Musik etwas lauter rufen („logisch“), bei Tischgesprächen etwas mehr
 Near-Misses („nicht tragisch“). Ein Fehler unterwegs: ein stummes Mikrofon
 (exakte Nullen) zog den Ruhepegel auf 0 und schaltete die Regel aus, seither
 zählen Nullen nicht als Ruhe. Nicht gebaut: ein Replay gegen gehörte Labels;
-wer die Faktoren ändert, baut es zuerst. Die Regel wirkt **vor** dem Trigger.
+wer die Faktoren ändert, baut es zuerst. Die Regel wirkt **vor** dem Trigger;
+die Prüfung nach dem Trigger (Abschnitt unten, 2026-10-27) ist eine zweite,
+unabhängige Stufe.
 
 ## Prozess (wiederholend)
 
@@ -1450,3 +1452,39 @@ die geringere Abhängigkeit vom Zufall eines Laufs. A gemittelt (0,19) ist der
 beste Wert ohne herausgepickten Lauf. Er beruht aber auf zwei Läufen, für
 eine Aussage braucht es mehr.
 
+### Prüfung nach dem Trigger, im Schatten (2026-10-27)
+
+Statt ein Modell zu trainieren, das von sich aus sauber ist: das Modell darf
+großzügig hören (Ziel später C, Familie 90 %), eine zweite Stufe sortiert
+Fehlauslöser aus (Jochen). Besprochen und verworfen: zweites Modell als
+Gegenprobe (macht das Verhalten unnachvollziehbar), Richtung (Mikro an der
+Wand, Sprecher und Fernseher aus ähnlicher Richtung, Wandreflexionen),
+Fernseher-Zustand aus Home Assistant (Musik genauso; der Umgebungspegel
+wirkt schon vor dem Trigger und trägt).
+
+Offline an den v5-Triggern seit 2026-10-11 (64 echt, 15 Fehlauslöser, 42
+Zweifel; Score-Kurven aus `wake_events.log`, Qwen ohne Kontext auf den
+Wake-Clips des R6-Pakets):
+
+- Qwen braucht je Wake-Clip im Median 0,09 s (p90 0,16, max 0,37), die
+  Wortsuche Mikrosekunden. Laya braucht es dafür nicht. Mit „Gaston“ als
+  Kontext erfindet Qwen das Wort („Was genau?“ → „Gaston.“), deshalb ohne.
+- Qwen findet das Wort in 119/130 (Vorrunde) und 69/94 (neu) echten Rufen,
+  in 7/20 und 5/21 ohr-gelabelten Negativen (darunter „Stopp, Gaston“).
+- Fläche der Score-Kurve allein: 12/15 Fehlauslöser unter 2,7, aber auch
+  13/64 echte Rufe.
+
+| Grenze Fläche | Fehlauslöser übrig | echte Rufe übrig | Zweifel übrig |
+|---|---|---|---|
+| keine Prüfung | 15/15 | 64/64 | 42/42 |
+| 2,5 + Qwen | 6/15 | 62/64 | 34/42 |
+| 2,7 + Qwen | 5/15 | 61/64 | 32/42 |
+
+Grenzen der Messung: 15 Fehlauslöser; ein Teil der echten Rufe ist über die
+STT gelabelt (zirkulär zur Qwen-Prüfung); die Zweifel sind gerade die, in denen
+die STT kein Gaston hörte; die Wortregel ist breit („Gasthof“, „Kastor“ zählen);
+alles an v5, C hat andere Kurven. Deshalb Schatten (`wake_pruefung:` im
+Profil, `voice_assistant/wake_pruefung.py`): jede Prüfung als Zeile in
+`wake_pruefung.jsonl`, mit Text, damit engere Wortregeln offline
+nachrechenbar sind. Nach ein bis zwei Wochen: alle `haette_verworfen` und eine
+Stichprobe der übrigen anhören, dann zählen.

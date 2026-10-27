@@ -156,6 +156,13 @@ profiles:
     #   streng_min_hits: 4
     #   nah_faktor: 6.0
 
+    # Prüfung nach dem Trigger — Experiment, NUR Log (wake_pruefung.jsonl).
+    # Fläche der Score-Kurve + erste STT-Stufe (stt_llamacpp_url) auf dem
+    # Wake-Clip; verworfen wird nichts. Siehe voice_assistant/wake_pruefung.py.
+    # wake_pruefung:
+    #   enabled: false
+    #   flaeche_grenze: 2.7
+
     # Rückspul-Puffer — optional. Hält die letzten Minuten Mikro samt jedem
     # Wakeword-Score im RAM; auf die Platte nur bei einem Anlass: die
     # Sekunden VOR jedem Trigger (vergebliche Versuche davor) und der ganze

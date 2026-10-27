@@ -494,6 +494,18 @@ class UmgebungConfig:
 
 
 @dataclass
+class WakePruefungConfig:
+    """Prüfung nach dem Trigger, im Schatten (voice_assistant/wake_pruefung.py).
+    Seit 2026-10-27. Nur Log, verworfen wird nichts.
+
+    flaeche_grenze: Summe der Scores über der Schwelle, ab der ein Trigger
+    ohne Text-Prüfung als echt gälte (gemessen an v5, WAKEWORD_PROCESS.md).
+    """
+    enabled: bool = False
+    flaeche_grenze: float = 2.7
+
+
+@dataclass
 class MusikDuckingConfig:
     """Musik leiser waehrend eines Turns (services/musik_ducking.py).
 
@@ -786,6 +798,9 @@ class Profile:
 
     # Umgebungspegel — fehlt der Block: kein strengeres Wakewort im Lärm.
     umgebung: UmgebungConfig = field(default_factory=UmgebungConfig)
+
+    # Prüfung nach dem Trigger (Schatten) — fehlt der Block: nichts geprüft.
+    wake_pruefung: WakePruefungConfig = field(default_factory=WakePruefungConfig)
 
     # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
     rewind: RewindConfig = field(default_factory=RewindConfig)
@@ -1086,6 +1101,13 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         ruhe_stunden=float(um_raw.get("ruhe_stunden", _dum.ruhe_stunden)),
     )
 
+    wp_raw = raw.get("wake_pruefung") or {}
+    _dwp = WakePruefungConfig()
+    wake_pruefung = WakePruefungConfig(
+        enabled=bool(wp_raw.get("enabled", _dwp.enabled)),
+        flaeche_grenze=float(wp_raw.get("flaeche_grenze", _dwp.flaeche_grenze)),
+    )
+
     md_raw = raw.get("musik_ducking") or {}
     _dmd = MusikDuckingConfig()
     musik_ducking = MusikDuckingConfig(
@@ -1219,6 +1241,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         watcher=watcher,
         dienstwaechter=dienstwaechter,
         umgebung=umgebung,
+        wake_pruefung=wake_pruefung,
         musik_ducking=musik_ducking,
         timer=timer,
         aussprache=aussprache,
