@@ -471,6 +471,52 @@ provisional, for listening, not a label. **Privacy:** the pre-trigger save
 regularly stores room conversation; agree on it with the people who live
 there.
 
+## Stricter in a noisy room (`umgebung:`, optional)
+
+A level gate can only block quiet false triggers. The expensive ones come from
+a running TV or a full room: loud, and the model scores them just as high as a
+real call (0.94–0.98). They differ in duration: a TV false trigger mostly
+lasts 2–3 frames above the threshold, a real call 3–12. And people behave
+differently in noise anyway: whoever wants to talk to the assistant mutes the
+TV or asks for quiet first, just as with commercial speakers.
+
+So in a loud room the trigger becomes stricter:
+
+- **Quiet level, learned:** the lower tenth of the per-minute medians over the
+  last 24 h (RMS of 300 ms windows while idle). One value per room and
+  microphone, learned instead of configured, so it adapts to the gain. It
+  survives restarts (`umgebung.json` in the workspace). Exact zeros (a muted
+  microphone) do not count as quiet.
+- **Room level, sliding:** median of the last 30 s, without the last 3 s
+  (that is where the wake word itself is).
+- **Loud** = room ≥ `laut_faktor` × quiet (4). Then a trigger needs at least
+  `streng_min_hits` frames (4), **unless** the wake word is at least
+  `nah_faktor` × the room (6): the caller standing next to the microphone gets
+  through.
+
+```yaml
+    umgebung:
+      enabled: true
+      scharf: true          # false: measure and log only, never block
+      laut_faktor: 4.0
+      streng_min_hits: 4
+      nah_faktor: 6.0
+```
+
+Every trigger and near-miss carries the field `umgebung` in
+`wake_events.log`; a blocked streak is a near-miss with
+`failed_on: "umgebung"`. Because both levels are relative, the rule is far less
+tied to your microphone gain than `wake_rms_min`.
+
+> **Where the numbers come from, and what they did.** The factors were found
+> on the same data they were first checked against (345 triggers, rough
+> labels), so we ran the rule as a logged experiment. Eleven days later
+> (2026-10-17 to 10-27): 18 streaks blocked in noise, 11 of them noise/TV,
+> 3 genuine calls (2 of those came through when repeated a few seconds later),
+> 4 unclear or unlabelled. 72 triggers in noise got through, 63 genuine. In
+> daily use the TV practically stopped triggering; with music you have to call
+> a bit louder. Example, not a preset: check the near-misses in your own log.
+
 ## Cancelling a turn while it runs (`barge_in`, optional)
 
 A false wake-word trigger is not the expensive part. The expensive part is

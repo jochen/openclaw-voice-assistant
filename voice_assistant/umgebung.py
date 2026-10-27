@@ -1,4 +1,4 @@
-"""Umgebungspegel: im Lärm triggert das Wakewort strenger (Experiment).
+"""Umgebungspegel: im Lärm triggert das Wakewort strenger (seit 2026-10-17, fest seit 2026-10-27).
 
 Jochens Idee (2026-10-17): Fernseher und volles Fablab lösen Fehltrigger aus.
 Ist es laut, soll das Wakewort strenger sein. Wer Gaston dann rufen will,
@@ -26,6 +26,7 @@ Mit dieser Regel wären 6 von 9 lauten Fernseh-Fehltriggern weggefallen und
 behelfsmäßig (Fernseher = Anrede-Hinweis, echt = Aktuator hat geschaltet),
 und die Regel ist an denselben Daten gefunden. Deshalb ein Experiment, das
 jede Entscheidung mitloggt (``wake_events.log``, Feld ``umgebung``).
+Bilanz nach elf Tagen und Übernahme: WAKEWORD_PROCESS.md, „Umgebungspegel“.
 
 ``scharf: false`` misst und loggt nur, ohne zu blocken.
 """

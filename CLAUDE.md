@@ -1179,7 +1179,7 @@ Skala. Zweite, am 2026-08-22 sichtbar gewordene Schwäche: **eine absolute
 Schwelle muss zugleich für den leisen Morgen und den lauten Abend passen** —
 der teuerste Fehltrigger lag bei RMS 1691, der verlorene echte Ruf bei 336.
 
-### Umgebungspegel (`umgebung:`, Experiment seit 2026-10-17, Branch `feature/umgebungspegel`)
+### Umgebungspegel (`umgebung:`, seit 2026-10-17, auf main seit 2026-10-27)
 
 Jochens Idee: im Lärm (Fernseher, volles Fablab) strenger triggern; wer rufen
 will, schaltet den Fernseher stumm. `umgebung.py` lernt den Ruhepegel selbst
@@ -1189,8 +1189,12 @@ braucht ≥ 4 Frames, außer das Wakewort ist ≥ 6× so laut wie der Raum (Rufe
 am Mikro). Sonst Near-Miss mit `failed_on: "umgebung"`. Jeder Trigger und
 Near-Miss trägt das Feld `umgebung` im `wake_events.log`. Grundlage nur eine
 grobe Messung an denselben Daten (Modul-Docstring): 6 von 9 lauten
-Fernseh-Fehltriggern weg, 5 von 62 echten Rufen im Lärm verloren. Bevor die
-Zahlen fest werden: Replay-Werkzeug gegen gehörte Labels. Der Barge-in ist
+Fernseh-Fehltriggern weg, 5 von 62 echten Rufen im Lärm verloren. Nach elf
+Tagen Betrieb (17.–27.10.): 18 im Lärm geblockt (11 Geräusch/Fernseher,
+3 echte Rufe, davon 2 bei der Wiederholung durchgekommen, 4 unklar/ohne
+Label), 72 im Lärm durchgelassen (63 echt). Jochen: „voller Erfolg“, nach
+main übernommen. Die Faktoren sind weiter nicht gegen ein Replay vermessen;
+wer sie ändert, baut das zuerst. Der Barge-in ist
 nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.

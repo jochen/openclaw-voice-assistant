@@ -483,6 +483,54 @@ oder eine Lücke (Mikro war taub — kein Modellproblem). Auch hier: vorläufig,
 zum Anhören, kein Label. **Datenschutz:** der Trigger-Vorlauf speichert
 regelmäßig Raumgespräch; sprich das mit den Leuten ab, die dort wohnen.
 
+## Im lauten Raum strenger (`umgebung:`, optional)
+
+Ein Pegel-Gate blockt nur leise Fehlauslöser. Die teuren kommen vom laufenden
+Fernseher oder aus einem vollen Raum: laut, und das Modell gibt ihnen genauso
+hohe Scores wie einem echten Ruf (0,94–0,98). Sie unterscheiden sich in der
+Dauer: ein Fernseh-Fehlauslöser liegt meist 2–3 Frames über der Schwelle, ein
+echter Ruf 3–12. Und Menschen verhalten sich im Lärm ohnehin anders: wer mit
+dem Assistenten reden will, schaltet den Fernseher stumm oder bittet um Ruhe,
+wie bei kommerziellen Lautsprechern auch.
+
+Deshalb wird der Trigger im lauten Raum strenger:
+
+- **Ruhepegel, gelernt:** unteres Zehntel der Minuten-Mediane der letzten
+  24 h (RMS von 300-ms-Fenstern im Leerlauf). Ein Wert je Raum und Mikrofon,
+  gelernt statt eingetragen, er passt sich also der Verstärkung an. Er
+  überlebt Neustarts (`umgebung.json` im Workspace). Exakte Nullen (ein
+  stummes Mikrofon) zählen nicht als Ruhe.
+- **Raumpegel, gleitend:** Median der letzten 30 s, ohne die letzten 3 s
+  (dort steckt das Wakewort selbst).
+- **Laut** = Raum ≥ `laut_faktor` × Ruhe (4). Dann braucht ein Trigger
+  mindestens `streng_min_hits` Frames (4), **außer** das Wakewort ist
+  mindestens `nah_faktor` × so laut wie der Raum (6): wer direkt am Mikrofon
+  ruft, kommt durch.
+
+```yaml
+    umgebung:
+      enabled: true
+      scharf: true          # false: nur messen und loggen, nie blocken
+      laut_faktor: 4.0
+      streng_min_hits: 4
+      nah_faktor: 6.0
+```
+
+Jeder Trigger und Near-Miss trägt im `wake_events.log` das Feld `umgebung`;
+ein geblockter Streak ist ein Near-Miss mit `failed_on: "umgebung"`. Weil
+beide Pegel relativ sind, hängt die Regel viel weniger an der
+Mikrofon-Verstärkung als `wake_rms_min`.
+
+> **Woher die Zahlen kommen und was sie bewirkt haben.** Die Faktoren wurden
+> an denselben Daten gefunden, an denen sie zuerst geprüft wurden (345
+> Trigger, grobe Labels), deshalb lief die Regel als protokolliertes
+> Experiment. Nach elf Tagen (2026-10-17 bis 10-27): 18 Streaks im Lärm
+> geblockt, davon 11 Geräusch/Fernseher, 3 echte Rufe (2 davon kamen bei der
+> Wiederholung Sekunden später durch), 4 unklar oder ohne Label. 72 Trigger im
+> Lärm kamen durch, 63 davon echt. Im Alltag löst der Fernseher praktisch
+> nicht mehr aus; bei Musik muss man etwas lauter rufen. Beispiel, keine
+> Voreinstellung: die Near-Misses im eigenen Log ansehen.
+
 ## Einen Turn abbrechen, während er läuft (`barge_in`, optional)
 
 Ein Wakeword-Fehltrigger ist nicht das Teure. Teuer ist, was danach passiert:

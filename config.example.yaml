@@ -144,6 +144,18 @@ profiles:
     # ausgefuehrt). Zeigt Rufe, die das Gate verliert und niemand wiederholt.
     # nearmiss_shadow: false
 
+    # Im lauten Raum strenger — optional. Ruhepegel wird gelernt (24 h),
+    # Raum >= laut_faktor x Ruhe -> Trigger braucht >= streng_min_hits Frames,
+    # außer das Wakewort ist >= nah_faktor x so laut wie der Raum. Jede
+    # Entscheidung steht im wake_events.log (Feld umgebung). Siehe
+    # voice_assistant/umgebung.py und die README.
+    # umgebung:
+    #   enabled: false
+    #   scharf: true                    # false = nur loggen
+    #   laut_faktor: 4.0
+    #   streng_min_hits: 4
+    #   nah_faktor: 6.0
+
     # Rückspul-Puffer — optional. Hält die letzten Minuten Mikro samt jedem
     # Wakeword-Score im RAM; auf die Platte nur bei einem Anlass: die
     # Sekunden VOR jedem Trigger (vergebliche Versuche davor) und der ganze

@@ -361,6 +361,35 @@ Beam) sind der nächste Schritt, siehe `esphome/respeaker.yaml`. Offen bleibt nu
 (Mikrofon-Gain/AGC im XVF3800 selbst) — die ist nicht über die Firmware
 dieses Repos eingestellt und ungemessen.
 
+## Umgebungspegel: im Lärm strenger (2026-10-17, auf main seit 2026-10-27)
+
+Gegen die teuren Fehlauslöser (Fernseher, voller Raum) hilft weder das
+Pegel-Gate (die sind laut) noch der Score (0,94–0,98 wie echte Rufe). Sie sind
+aber kurz: grob gemessen über 345 Trigger mit Vorlauf hatten
+Fernseh-Fehlauslöser im Lärm meist 2–3 Frames, echte Rufe 3–12. Jochens Idee
+dazu: wer im Lärm rufen will, schaltet den Fernseher stumm, also darf das
+Wakewort dann strenger sein. Regel und Begründung stehen in
+`voice_assistant/umgebung.py`: gelernter Ruhepegel, gleitender Raumpegel,
+laut ab 4× Ruhe, dann ≥ 4 Frames, außer der Rufer ist ≥ 6× so laut wie der
+Raum. Vorab geschätzt: 6 von 9 lauten Fernseh-Fehlauslösern weg, 5 von 62
+echten Rufen im Lärm verloren, an denselben Daten gefunden und mit
+behelfsmäßigen Labels, deshalb als Experiment mit Log jeder Entscheidung.
+
+Bilanz nach elf Tagen (17.–27.10., Labels Ohr > Selbst > STT):
+
+| | gesamt | Geräusch/Fernseher | echter Ruf | unklar/ohne |
+|---|---|---|---|---|
+| im Lärm geblockt (Near-Miss `umgebung`) | 18 | 11 | 3 | 4 |
+| im Lärm durchgelassen | 72 | 9 | 63 | 0 |
+
+Von den 3 geblockten Rufen kamen 2 bei der Wiederholung Sekunden später
+durch. Jochens Eindruck: beim Fernsehen fast keine Fehltrigger mehr, bei
+Musik etwas lauter rufen („logisch“), bei Tischgesprächen etwas mehr
+Near-Misses („nicht tragisch“). Ein Fehler unterwegs: ein stummes Mikrofon
+(exakte Nullen) zog den Ruhepegel auf 0 und schaltete die Regel aus, seither
+zählen Nullen nicht als Ruhe. Nicht gebaut: ein Replay gegen gehörte Labels;
+wer die Faktoren ändert, baut es zuerst. Die Regel wirkt **vor** dem Trigger.
+
 ## Prozess (wiederholend)
 
 1. **Sammeln** — passiv aus dem Alltag. Tage bis Wochen.
@@ -1420,3 +1449,4 @@ Mitteln liefert die Mitte der Einzelläufe, nicht den besten. Der Gewinn ist
 die geringere Abhängigkeit vom Zufall eines Laufs. A gemittelt (0,19) ist der
 beste Wert ohne herausgepickten Lauf. Er beruht aber auf zwei Läufen, für
 eine Aussage braucht es mehr.
+
