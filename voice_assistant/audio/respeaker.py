@@ -15,6 +15,7 @@ import collections
 import http.server
 import json
 import logging
+import math
 import os
 import queue
 import shutil
@@ -123,6 +124,13 @@ class RespeakerClient:
         self._data2_gemeldet = False
         self.led_phase_key: int | None = None   # von RespeakerRing gelesen
         self.boot_step_key: int | None = None   # von RespeakerRing.set_boot_step gelesen
+        # Diagnose-Sensoren der Firmware (Laufzeit, WLAN-Signal, Neustart-Grund,
+        # BSSID; seit 2026-10-28), key -> Name. Die Werte bleiben ueber einen
+        # Verbindungsabbruch stehen: nur so faellt auf, dass die Laufzeit
+        # kleiner geworden ist, der ESP also neu gestartet hat.
+        self._diag_keys: dict[int, str] = {}
+        self._diag: dict[str, object] = {}
+        self._diag_frisch: set[str] = set()   # schon gemeldet seit dem Connect
         self.beam_angle: float = 0.0            # aktueller Beam-Winkel in Grad (0–360)
         self._last_led_phase: int = 1           # 1 = LED_IDLE — nach Reconnect wiederherstellen
         self._buf = b""
@@ -176,6 +184,8 @@ class RespeakerClient:
         self._data2_gemeldet = False
         self.led_phase_key = None
         self.boot_step_key = None
+        self._diag_keys = {}
+        self._diag_frisch = set()
         self._in_session = False
         self._last_audio = time.monotonic()
         self._sitzung_neu = None
@@ -265,6 +275,8 @@ class RespeakerClient:
             if hasattr(e, "name") and "XVF-Ausgang links" in e.name:
                 self._kanal2_key = e.key
                 log.info("XVF-Ausgang-links select key=%d", e.key)
+            if getattr(e, "name", None) in self._DIAG_NAMEN:
+                self._diag_keys[e.key] = e.name
 
         quelle = self._cfg.kanal2_quelle
         if quelle:
@@ -345,6 +357,8 @@ class RespeakerClient:
                 log.debug("Media-Player: state=%s", self._player_state)
             elif self._mute_key is not None and key == self._mute_key:
                 self.mute = bool(getattr(state, "state", False))
+            elif key in self._diag_keys:
+                self._diagnose(self._diag_keys[key], getattr(state, "state", None))
 
         self._api.subscribe_states(on_state)
 
@@ -356,6 +370,39 @@ class RespeakerClient:
         await self._press_start_button()
 
         await self._watch_mic(done)  # endet, wenn _on_stop feuert (Verbindungsabbruch)
+
+    _DIAG_NAMEN = ("Laufzeit", "WLAN-Signal", "Neustart-Grund", "WLAN-BSSID")
+    _SIGNAL_SCHRITT = 6.0   # dB Aenderung, ab der das Signal erneut geloggt wird
+
+    def _diagnose(self, name: str, wert: object) -> None:
+        """Diagnose-Werte ins Journal: einmal je Verbindung, danach nur Auffaelliges.
+
+        Anlass 2026-10-28: ~30 Abrisse pro Stunde, und es war nicht zu sagen,
+        ob der ESP neu startet oder nur das WLAN verliert.
+        """
+        if wert is None or (isinstance(wert, float) and math.isnan(wert)):
+            return
+        vorher = self._diag.get(name)
+        self._diag[name] = wert
+        erst = name not in self._diag_frisch
+        self._diag_frisch.add(name)
+        if name == "Laufzeit":
+            if erst and isinstance(vorher, float) and wert < vorher:
+                log.warning("ReSpeaker ist neu gestartet: Laufzeit %.0f s (vorher %.0f s), "
+                            "Neustart-Grund: %s", wert, vorher,
+                            self._diag.get("Neustart-Grund", "?"))
+            elif erst:
+                log.info("ReSpeaker-Laufzeit %.0f s", wert)
+        elif name == "WLAN-Signal":
+            if erst or not isinstance(vorher, float) or \
+                    abs(wert - self._diag.get("_signal_geloggt", wert)) >= self._SIGNAL_SCHRITT:
+                self._diag["_signal_geloggt"] = wert
+                log.info("ReSpeaker-WLAN-Signal %.0f dBm", wert)
+        elif erst or wert != vorher:
+            # Neustart-Grund aendert sich nur durch einen Neustart, die BSSID
+            # bei einem Wechsel des Access Points — beides ist die Zeile wert.
+            log.info("ReSpeaker-%s: %s%s", name, wert,
+                     "" if vorher in (None, wert) else f" (vorher {vorher})")
 
     async def _watch_mic(self, done: asyncio.Future) -> None:
         """Wartet auf das Verbindungsende und holt eine verlorene Mic-Session zurueck.

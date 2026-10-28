@@ -312,6 +312,30 @@ sensor:
       id(sp_energie_max_db) = -100.0f;
       return v;
 
+  # Diagnose (2026-10-28): ab dem 27.10. 23:50 rissen die Verbindungen ~30x
+  # pro Stunde ab, Ping 80-90 % Verlust, auch nach Stromlos-Machen. Ohne
+  # diese Werte war nicht zu unterscheiden, ob der ESP neu startet oder nur
+  # das WLAN verliert. Der Assistent loggt sie (respeaker.py, _diagnose).
+  - platform: uptime
+    name: "Laufzeit"
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: wifi_signal
+    name: "WLAN-Signal"
+    update_interval: 30s
+    entity_category: diagnostic
+
+debug:
+  update_interval: 60s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Neustart-Grund"
+  - platform: wifi_info
+    bssid:
+      name: "WLAN-BSSID"
+
 # voice_assistant — Pi steuert alle LED-Phasen, keine internen Handler
 voice_assistant:
   id: va
