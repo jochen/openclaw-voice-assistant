@@ -1,6 +1,7 @@
 """Geteilte Laufzeit-Objekte (Events, Queues, Locks, State-Konstanten)."""
 
 import queue
+import re
 import threading
 
 
@@ -228,6 +229,76 @@ pending_reply_text: list[str | None] = [None]
 # schon waehrend eines laufenden Turns gesprochen werden (STATE_WAITING);
 # Tupel kommen vom System (Timer, Mikro) und warten auf LISTENING.
 announce_queue: "queue.Queue[str | tuple[str, bool] | tuple[str, bool, bool]]" = queue.Queue()
+
+
+def _satz_schluessel(satz: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", satz.lower()).split())
+
+
+class TurnAnsagen:
+    """Was der Brain im laufenden Turn schon per voice_speak_text gesagt hat.
+
+    Der Brain wiederholte seine Ansage im Turn als Schlussantwort, wortgleich:
+    3 von 3 seit 2026-10-21 (2026-10-30 07:20 „Welche Rollos meinst du …?“
+    zweimal gesprochen, zweimal im Chat), obwohl AGENTS.md genau das verbietet.
+    Deshalb hier im Code: Sätze der Schlussantwort, die so schon angesagt
+    wurden, entfallen (workers._run_openclaw_turn).
+
+    Dazu die Eingabe: die Zeile 🎤 spiegelt der Turn erst vor seiner ersten
+    eigenen Ausgabe, eine Ansage im Turn kam ihr zuvor. Der Turn hinterlegt
+    deshalb seinen Spiegel (eingabe()), die Ansage ruft ihn vorher auf.
+    Nur der jeweils letzte Turn zählt; eine neue Nummer verwirft den alten.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._turn: int | None = None
+        self._saetze: set[str] = set()
+        self._spiegel = None
+
+    def _fuer(self, turn: int) -> None:
+        if self._turn != turn:
+            self._turn = turn
+            self._saetze = set()
+            self._spiegel = None
+
+    def eingabe(self, turn: int | None, spiegel) -> None:
+        if turn is None:
+            return
+        with self._lock:
+            self._fuer(turn)
+            self._spiegel = spiegel
+
+    def angesagt(self, turn: int | None, text: str) -> None:
+        """Vor dem Sprechen einer Ansage im Turn: Eingabe spiegeln, Sätze merken."""
+        if turn is None:
+            return
+        from voice_assistant.services.tts import split_into_sentences
+        with self._lock:
+            self._fuer(turn)
+            spiegel = self._spiegel
+            for satz in split_into_sentences(text):
+                if schluessel := _satz_schluessel(satz):
+                    self._saetze.add(schluessel)
+        if spiegel:
+            spiegel()
+
+    def schon_gesagt(self, turn: int | None, satz: str) -> bool:
+        if turn is None:
+            return False
+        with self._lock:
+            return self._turn == turn and _satz_schluessel(satz) in self._saetze
+
+    def ohne_wiederholung(self, turn: int | None, text: str | None) -> str | None:
+        """text ohne die Sätze, die in diesem Turn schon angesagt wurden."""
+        if not text or turn is None:
+            return text
+        from voice_assistant.services.tts import split_into_sentences
+        rest = [s for s in split_into_sentences(text) if not self.schon_gesagt(turn, s)]
+        return " ".join(rest)
+
+
+turn_ansagen = TurnAnsagen()
 
 
 def ansage_wartet(q: "queue.Queue | None" = None) -> bool:

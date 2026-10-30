@@ -26,6 +26,7 @@ from voice_assistant.state import (
     current_state,
     pending_reply_text,
     reply_done_event,
+    turn_ansagen,
     turn_control,
     turn_stopped,
 )
@@ -251,17 +252,22 @@ class Workers:
         # NO_REPLY-)Antwort feststeht. So bleibt der Chat sauber, wenn OpenClaw
         # die Aufnahme als Fernseher/Hintergrund erkennt und NO_REPLY liefert.
         posted = [False]
+        posted_lock = threading.Lock()
 
         def post_user_input() -> None:
-            if posted[0]:
-                return
-            posted[0] = True
-            telegram.send(
-                self.telegram_bot_token,
-                self.telegram_chat_id,
-                user_text,
-                prefix=f"🎤 [{speaker_label}] ",
-            )
+            # Auch der announce-worker ruft das (Ansage im Turn), daher der Lock.
+            with posted_lock:
+                if posted[0]:
+                    return
+                posted[0] = True
+                telegram.send(
+                    self.telegram_bot_token,
+                    self.telegram_chat_id,
+                    user_text,
+                    prefix=f"🎤 [{speaker_label}] ",
+                )
+
+        turn_ansagen.eingabe(turn, post_user_input)
 
         def finish_no_reply(full_reply: str | None) -> None:
             # OpenClaw hat die Eingabe als nicht-adressiert erkannt: komplett
@@ -302,6 +308,9 @@ class Workers:
                 if not sentence or openclaw.is_no_reply(sentence):
                     return
                 post_user_input()
+                if turn_ansagen.schon_gesagt(turn, sentence):
+                    print(f"🔁 Schon angesagt, entfällt: '{sentence}'")
+                    return
                 session.feed(sentence)
 
             full_reply, timed_out = openclaw.query_stream(
@@ -331,15 +340,20 @@ class Workers:
                 finish_no_reply(full_reply)
                 return
 
-            if spoke:
-                # Antwort wurde (zumindest teilweise) live gesprochen
+            # Was der Brain im Turn schon angesagt hat, kommt nicht noch einmal
+            # (state.TurnAnsagen); antwort_merken behält die ganze Antwort.
+            neu = turn_ansagen.ohne_wiederholung(turn, full_reply)
+
+            if spoke or (full_reply and not neu):
+                # Antwort wurde (zumindest teilweise) live gesprochen, oder sie
+                # war schon ganz angesagt
                 print(f"✅ OpenClaw stream complete: '{full_reply or ''}'")
                 post_user_input()
-                if full_reply:
+                if neu:
                     telegram.send(
                         self.telegram_bot_token,
                         self.telegram_chat_id,
-                        full_reply,
+                        neu,
                         prefix="🔊 ",
                     )
                 antwort_merken(full_reply)
@@ -352,11 +366,11 @@ class Workers:
                 telegram.send(
                     self.telegram_bot_token,
                     self.telegram_chat_id,
-                    full_reply,
+                    neu,
                     prefix="🔊 ",
                 )
                 antwort_merken(full_reply)
-                self.speaker.speak(full_reply, turn=turn)
+                self.speaker.speak(neu, turn=turn)
                 reply_done_event.set()
                 return
 
@@ -403,14 +417,17 @@ class Workers:
         if full_reply:
             print(f"✅ OpenClaw complete: '{full_reply}'")
             post_user_input()
-            telegram.send(
-                self.telegram_bot_token,
-                self.telegram_chat_id,
-                full_reply,
-                prefix="🔊 ",
-            )
+            neu = turn_ansagen.ohne_wiederholung(turn, full_reply)
+            if neu:
+                telegram.send(
+                    self.telegram_bot_token,
+                    self.telegram_chat_id,
+                    neu,
+                    prefix="🔊 ",
+                )
             antwort_merken(full_reply)
-            self.speaker.speak(full_reply, turn=turn)
+            if neu:
+                self.speaker.speak(neu, turn=turn)
         else:
             # Echter Leerlauf/Fehler (kein Sentinel): Eingabe spiegeln + Fallback ansagen
             post_user_input()
