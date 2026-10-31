@@ -1221,6 +1221,8 @@ def run() -> None:
         telegram_chat_id=profile.telegram_chat_id,
         confirmation_prefix=profile.locale.confirmation_prefix,
         no_reply_fallback=profile.locale.no_reply_fallback,
+        brain_fehler=profile.locale.brain_fehler,
+        brain_weg=profile.locale.brain_weg,
         voice_instruction=profile.locale.openclaw_voice_instruction,
         instructions_feld=profile.openclaw_instructions,
         voice_erinnerung=profile.locale.openclaw_voice_erinnerung,

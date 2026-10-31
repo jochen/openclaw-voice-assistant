@@ -180,6 +180,10 @@ class LocaleConfig:
     wakeword_ack: str = "Ja?"
     confirmation_prefix: str = "Ich habe verstanden: "
     no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten."
+    # Der Brain hat den Lauf mit Fehler beendet (z. B. Modell beim Anbieter
+    # weg) bzw. das Gateway ist nicht erreichbar. Der Grund steht im Telegram.
+    brain_fehler: str = "Mein Sprachmodell hat einen Fehler gemeldet, ich kann gerade nicht antworten."
+    brain_weg: str = "Ich erreiche mein Sprachmodell gerade nicht."
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
     openclaw_voice_erinnerung: str = _DEFAULT_VOICE_ERINNERUNG
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
@@ -1156,6 +1160,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         wakeword_ack=str(locale_raw.get("wakeword_ack", _dloc.wakeword_ack)),
         confirmation_prefix=str(locale_raw.get("confirmation_prefix", _dloc.confirmation_prefix)),
         no_reply_fallback=str(locale_raw.get("no_reply_fallback", _dloc.no_reply_fallback)),
+        brain_fehler=str(locale_raw.get("brain_fehler", _dloc.brain_fehler)),
+        brain_weg=str(locale_raw.get("brain_weg", _dloc.brain_weg)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
         openclaw_voice_erinnerung=str(locale_raw.get("openclaw_voice_erinnerung", _dloc.openclaw_voice_erinnerung)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),

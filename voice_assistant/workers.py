@@ -36,6 +36,18 @@ from voice_assistant.state import (
 _MOOD_MAX_SEC = 10.0
 
 
+def _fehler_grund(art: str, meldung: str) -> str:
+    """Telegram-Zeile zu einem Turn ohne Antwort (openclaw.FEHLER_*)."""
+    grund = {
+        openclaw.FEHLER_GEMELDET: "OpenClaw meldet einen Fehler",
+        openclaw.FEHLER_ABGELEHNT: "OpenClaw hat die Anfrage abgelehnt",
+        openclaw.FEHLER_WEG: "OpenClaw nicht erreichbar",
+        openclaw.FEHLER_ZEIT: "Zeitüberschreitung",
+        openclaw.FEHLER_ABGERISSEN: "Verbindung abgerissen",
+    }.get(art, "leere Antwort")
+    return f"Keine Antwort ({grund}): {meldung}" if meldung else f"Keine Antwort ({grund})"
+
+
 class Workers:
     def __init__(
         self,
@@ -48,6 +60,8 @@ class Workers:
         telegram_chat_id: str,
         confirmation_prefix: str = "Ich habe verstanden: ",
         no_reply_fallback: str = "Entschuldigung, ich konnte keine Antwort erhalten.",
+        brain_fehler: str = "Mein Sprachmodell hat einen Fehler gemeldet, ich kann gerade nicht antworten.",
+        brain_weg: str = "Ich erreiche mein Sprachmodell gerade nicht.",
         voice_instruction: str = "",
         instructions_feld: bool = True,
         voice_erinnerung: str = "",
@@ -66,6 +80,8 @@ class Workers:
         self.telegram_chat_id = telegram_chat_id
         self.confirmation_prefix = confirmation_prefix
         self.no_reply_fallback = no_reply_fallback
+        self.brain_fehler = brain_fehler
+        self.brain_weg = brain_weg
         self.voice_instruction = voice_instruction
         self.instructions_feld = instructions_feld
         self.voice_erinnerung = voice_erinnerung
@@ -288,6 +304,11 @@ class Workers:
             else:
                 pending_reply_text[0] = text
 
+        # Warum keine Antwort kam (openclaw.FEHLER_*), fuer Ansage und Telegram.
+        fehler: dict = {}
+        # Non-streaming nachschieben? Nur, wenn sicher kein Lauf begonnen hat.
+        nachschieben = True
+
         # --- Streaming-Pfad: Sätze werden gesprochen, sobald sie generiert sind ---
         timed_out = False
         if self.use_stream:
@@ -319,6 +340,7 @@ class Workers:
                 instructions_feld=self.instructions_feld,
                 erinnerung=self.voice_erinnerung,
                 turn=turn,
+                fehler=fehler,
             )
             spoke = session.end()
             full_reply = bereinigt(full_reply)
@@ -369,14 +391,25 @@ class Workers:
                     session=session_key,
                     on_done=self.thinking.stop,
                 )
-            else:
-                print("⚠️  Streaming ohne Ausgabe → non-streaming Fallback")
+                nachschieben = False
+            elif fehler.get("art") == openclaw.FEHLER_ABGELEHNT:
+                print("⚠️  Stream abgelehnt → non-streaming Fallback")
                 full_reply = None
+            else:
+                # Der Lauf hat begonnen (oder es ist unklar): ein zweiter
+                # Auftrag fuehrte ihn ein zweites Mal aus. Bis 2026-10-31 ging
+                # hier jeder Fehlschlag noch einmal non-streaming raus (Fablab
+                # 2026-10-28: zwei Laeufe je Ruf, beide am selben Modellfehler).
+                print(f"⚠️  Streaming ohne Ausgabe ({fehler.get('art', 'leer')}) "
+                      "→ kein zweiter Auftrag")
+                full_reply = None
+                nachschieben = False
         else:
             full_reply = None
 
-        # --- Non-streaming-Pfad (Flag aus ODER Streaming lieferte nichts) ---
-        if full_reply is None and not (self.use_stream and timed_out):
+        # --- Non-streaming-Pfad (Flag aus ODER Stream abgelehnt) ---
+        if full_reply is None and nachschieben:
+            fehler.clear()
             full_reply = openclaw.query(
                 user_text,
                 token=self.openclaw_token,
@@ -389,6 +422,7 @@ class Workers:
                 on_done=self.thinking.stop,
                 instructions_feld=self.instructions_feld,
                 erinnerung=self.voice_erinnerung,
+                fehler=fehler,
             )
         full_reply = bereinigt(full_reply)
 
@@ -412,9 +446,23 @@ class Workers:
             antwort_merken(full_reply)
             self.speaker.speak(full_reply, turn=turn)
         else:
-            # Echter Leerlauf/Fehler (kein Sentinel): Eingabe spiegeln + Fallback ansagen
+            # Echter Leerlauf/Fehler (kein Sentinel): Eingabe spiegeln, den
+            # Grund dazu (sonst steht im Chat eine Frage ohne Antwort, das
+            # sieht aus wie Schweigen) und je Art eine eigene Ansage.
             post_user_input()
             pending_reply_text[0] = None
-            self.speaker.speak(self.no_reply_fallback, turn=turn)
+            art = fehler.get("art", "")
+            telegram.send(
+                self.telegram_bot_token,
+                self.telegram_chat_id,
+                _fehler_grund(art, fehler.get("meldung", "")),
+                prefix="⚠️ ",
+            )
+            ansage = {
+                openclaw.FEHLER_GEMELDET: self.brain_fehler,
+                openclaw.FEHLER_ABGELEHNT: self.brain_fehler,
+                openclaw.FEHLER_WEG: self.brain_weg,
+            }.get(art, self.no_reply_fallback)
+            self.speaker.speak(ansage, turn=turn)
 
         reply_done_event.set()

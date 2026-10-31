@@ -1272,6 +1272,15 @@ Anfragen laufen per SSE-Streaming; der Read-Timeout
 (`OPENCLAW_STREAM_TIMEOUT`, 600 s) überlebt lange Tool-Phasen ohne Deltas.
 Bei Stream-Timeout wird der Auftrag NICHT erneut gepostet (Doppel-Ausführung),
 sondern per `query_status()` nur das Ergebnis des laufenden Turns abgefragt.
+Dasselbe gilt seit 2026-10-31 für jeden anderen Fehlschlag des Streams
+(`response.failed`, abgerissen, leer): non-streaming nachgeschoben wird nur,
+wenn die Stream-Anfrage mit HTTP-Fehler abgewiesen wurde, also kein Lauf
+begann (`openclaw.FEHLER_ABGELEHNT`). Ein Turn ohne Antwort sagt je Art
+`locale.brain_fehler`, `brain_weg` oder `no_reply_fallback` und schreibt den
+Grund mit der Meldung des Gateways als `⚠️ Keine Antwort (…)` nach Telegram.
+Anlass Fablab 2026-10-28: Modell beim Anbieter weg, zwei Läufe je Ruf, im
+Chat nur die Frage, das sah aus wie Schweigen. Tests:
+`tests/test_brain_fehler.py`.
 
 Der `x-openclaw-session-key`-Header trägt die Session-Kennung (z.B.
 `agent:main:telegram:group:-1003XXXXXXXXX`) und teilt die Session mit dem

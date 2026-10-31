@@ -136,6 +136,8 @@ profiles:
     #   wakeword_ack: "Ja?"
     #   confirmation_prefix: "Ich habe verstanden: "
     #   no_reply_fallback: "Entschuldigung, ich konnte keine Antwort erhalten."
+    #   brain_fehler: "Mein Sprachmodell hat einen Fehler gemeldet, ich kann gerade nicht antworten."
+    #   brain_weg: "Ich erreiche mein Sprachmodell gerade nicht."
     #   openclaw_voice_instruction: >
     #     [VOICE: Call all necessary tools first, then reply in max 2-3 spoken
     #     sentences. No markdown, no lists, no abbreviations.
