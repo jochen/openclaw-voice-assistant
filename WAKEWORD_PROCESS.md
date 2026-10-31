@@ -1719,3 +1719,59 @@ stützt die Ensemble-Idee („Streuung senken statt Glückslauf wählen“) und
 spricht dagegen, eine Schranke an einem einzelnen Lauf zu entscheiden.
 Die r7b-Modelle (`~/wakeword-studio/runden/r7b/` im Fablab) sind nicht mit
 `wake_paket messen` gemessen.
+
+### Ensemble: Score-Mittel statt Glückslauf (2026-10-31 20:30)
+
+Frage (Jochen, nach den Streuungszahlen oben): nimmt das Mitteln mehrerer Läufe
+die Streuung weg, ohne schlechter zu werden? Kein neues Training: die acht
+Läufe von Runde 7 und r7b (je vier voll und C, gleiche Daten). Gemittelt wird
+der Score je Frame (`wakeword_studio/scoring.py`, Manifest mit `model:` als
+Liste); Gewichte lassen sich nicht mitteln, die Läufe haben keinen gemeinsamen
+Start. Gegenprobe: ein Modell mit sich selbst gemittelt scort exakt wie
+einzeln (Test `tests/test_scoring_ensemble.py`). Nur zum Messen, die
+Live-Engine kennt Ensembles nicht.
+
+FP/h generisch (3 Frames @0,35) über alle Teilmengen eines Rezepts:
+
+| | Einzeln (4) | Zweier (6) | Dreier (4) | alle vier |
+|---|---|---|---|---|
+| voll | 0,28–0,75, Median 0,66 | 0,47–0,75 | 0,37–0,56 | **0,47** |
+| C | 0,19–1,22, Median 0,51 | 0,28–0,75 | 0,47–0,75 | **0,56** |
+
+Alle acht gemittelt: 0,37. Das Mittel nimmt die Ausreißer weg und landet
+etwa beim Median, nicht beim besten Lauf.
+
+Gegen das R7-Paket, Live-Gate, Schranke von Runde 7 (unverändert):
+
+| Validierung | v5 | live: voll l2 (R7) | voll4 | C4 | alle8 | muss |
+|---|---|---|---|---|---|---|
+| `positive_timer` (27) | 10 | 13 | 16 | 13 | 11 | ≥ 10 |
+| echte Rufe R5-Val (130) | 116 | 121 | 122 | 120 | 121 | ≥ 114 |
+| Fehltrigger R5-Val (16 + 25) | 11 | **12** | 9 | **13** | 10 | ≤ 11 |
+| Studio-Takes (20) | 19 | 19 | 18 | **17** | **17** | ≥ 18 |
+| FP/h generisch | 0,09 | 0,28 | 0,47 | **0,56** | 0,37 | ≤ 0,5 |
+| echte Rufe neue Val-Tage (115) | 105 | 105 | 107 | 103 | 106 | ≥ 103 |
+| Fehltrigger neue Val-Tage (14) | 14 | 7 | 6 | 6 | 5 | ≤ 14 |
+| `negative_geraeusch` (3) | 3 | 0 | 0 | 1 | 1 | ≤ 1 |
+
+**voll4 besteht alle acht Zeilen**, als einziger gemessener Kandidat der
+Runde ohne Auswahl unter Läufen. C4 verfehlt Fehltrigger und FP/h, alle8 die
+Studio-Takes um einen. Paare zum Vergleich: voll R7 l1+l2 Fehltrigger R5 12,
+FP/h 0,56; voll r7b l1+l2 Fehltrigger 8, FP/h 0,75 — zwei Läufe mitteln
+reicht nicht.
+
+Einzeln gemessen (r7b, neue Streuungsdaten): voll l1 / l2 / C l1 / C l2 —
+Fehltrigger R5 11 / 10 / 11 / 16, FP/h 0,56 / 0,75 / 0,37 / 0,19, Studio 19 /
+20 / 18 / 17. **C r7b l1 besteht ebenfalls alle Zeilen** — ein Einzellauf von
+acht, genau der Glückslauf, vor dem die Regel warnt.
+
+Ehrliche Grenzen: fünf Ensembles gemessen, voll4 besteht; das ist eine milde
+Auswahl, aber nicht unter Läufen, sondern zwischen „alle Läufe eines Rezepts“
+der beiden Rezepte (voll war vorab das Rezept des Live-Versuchs). FP/h 0,47
+liegt knapp unter der Grenze und klar über v5 (0,09). Live kostet ein
+Ensemble vier Modell-Köpfe statt einem (Merkmale nur einmal); die Engine
+müsste dafür `model:` als Liste lernen. Entscheidung offen (Jochen), der
+Live-Versuch voll l2 läuft unverändert weiter.
+
+Bundles: `~/wake-pakete/modelle/ens_{voll4,C4,alle8,vollR7,vollR7b}/gaston/`
+(Symlinks auf die Einzelmodelle), FP/h-Rechnung `ensemble_fph.json` im Fablab.

@@ -60,11 +60,33 @@ def load_wav_16k(path: str) -> np.ndarray:
     return samples
 
 
+def _ensemble_manifest(bundle: str) -> dict:
+    import yaml  # type: ignore[import-not-found]
+
+    with open(os.path.join(bundle, "manifest.yaml")) as f:
+        return yaml.safe_load(f) or {}
+
+
+def _ensemble_modelle(bundle: str) -> list[str]:
+    """Bundle-Verzeichnis, dessen Manifest unter `model` eine LISTE trägt →
+    Pfade der Modelle (Ensemble, nur zum Messen; die Live-Engine kennt das nicht)."""
+    if not os.path.isfile(os.path.join(bundle, "manifest.yaml")):
+        return []
+    modell = _ensemble_manifest(bundle).get("model")
+    if not isinstance(modell, list):
+        return []
+    return [os.path.join(bundle, m) for m in modell]
+
+
 class BundleScorer:
     """Lädt das Modell eines Bundles einmal und scored beliebig viele Clips."""
 
     def __init__(self, bundle: str, threshold: float | None = None) -> None:
-        model_arg, manifest = _resolve_bundle(bundle)
+        ensemble = _ensemble_modelle(bundle)
+        if ensemble:
+            model_arg, manifest = ensemble[0], _ensemble_manifest(bundle)
+        else:
+            model_arg, manifest = _resolve_bundle(bundle)
         self.bundle = bundle
         self.display = str(manifest.get("display", bundle))
         self.threshold = (
@@ -74,13 +96,19 @@ class BundleScorer:
         )
         self.min_hits = int(manifest.get("min_hits", DEFAULT_MIN_HITS))
         self.min_peak = float(manifest.get("min_peak", _DEFAULT_MIN_PEAK))
-        is_path = os.path.exists(model_arg)
-        self._key = (
-            os.path.splitext(os.path.basename(model_arg))[0] if is_path else model_arg
-        )
         from openwakeword import Model  # type: ignore[import-not-found]
 
-        self._model = Model(wakeword_models=[model_arg])
+        modelle = ensemble or [model_arg]
+        # predict() liefert je Modell einen Score unter dem Dateinamen ohne
+        # Endung; bei einem Ensemble zählt der Mittelwert (Score-Mittel, keine
+        # Gewichte: Läufe ohne gemeinsamen Start lassen sich nicht verschmelzen).
+        self._keys = [
+            os.path.splitext(os.path.basename(m))[0] if os.path.exists(m) else m
+            for m in modelle
+        ]
+        if len(set(self._keys)) != len(self._keys):
+            raise ValueError(f"{bundle}: Ensemble-Modelle brauchen verschiedene Dateinamen")
+        self._model = Model(wakeword_models=modelle)
 
     def _score_offset(self, samples: np.ndarray, offset: int) -> tuple[float, int, bool]:
         """Ein Durchlauf mit fester Frame-Ausrichtung →
@@ -102,7 +130,7 @@ class BundleScorer:
         gap_used = False
         for i in range(0, len(padded) - _OW_FRAME + 1, _OW_FRAME):
             result = self._model.predict(padded[i : i + _OW_FRAME])
-            s = float(result.get(self._key, 0.0))
+            s = float(sum(result.get(k, 0.0) for k in self._keys) / len(self._keys))
             max_score = max(max_score, s)
             if s > self.threshold:
                 streak += 1
