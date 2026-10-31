@@ -547,9 +547,14 @@ class WakePruefungConfig:
 
     flaeche_grenze: Summe der Scores über der Schwelle, ab der ein Trigger
     ohne Text-Prüfung als echt gälte (gemessen an v5, WAKEWORD_PROCESS.md).
+    anfang: Wortanfang des Wakeworts (hier "Gast"), dessen Wahrscheinlichkeit
+    Qwen zusätzlich schätzt; leer = aus. Braucht stt_llamacpp_sprache.
+    anfang_grenze: log P, unter der das Anfangs-Maß verworfen hätte.
     """
     enabled: bool = False
     flaeche_grenze: float = 2.7
+    anfang: str = ""
+    anfang_grenze: float = -4.0
 
 
 @dataclass
@@ -1156,6 +1161,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
     wake_pruefung = WakePruefungConfig(
         enabled=bool(wp_raw.get("enabled", _dwp.enabled)),
         flaeche_grenze=float(wp_raw.get("flaeche_grenze", _dwp.flaeche_grenze)),
+        anfang=str(wp_raw.get("anfang", _dwp.anfang) or ""),
+        anfang_grenze=float(wp_raw.get("anfang_grenze", _dwp.anfang_grenze)),
     )
 
     md_raw = raw.get("musik_ducking") or {}

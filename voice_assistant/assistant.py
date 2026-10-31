@@ -1464,9 +1464,13 @@ def run() -> None:
                  if profile.stt_llamacpp_url else None),
             log_path=os.path.join(WORKSPACE, "wake_pruefung.jsonl"),
             flaeche_grenze=profile.wake_pruefung.flaeche_grenze,
+            anfang=profile.wake_pruefung.anfang,
+            anfang_grenze=profile.wake_pruefung.anfang_grenze,
         )
         print(f"🔎 Wake-Prüfung im Schatten aktiv (Fläche ≥ {profile.wake_pruefung.flaeche_grenze}"
-              " oder Qwen hört das Wort, nur Log)")
+              " oder Qwen hört das Wort"
+              + (f"; Anfang „{profile.wake_pruefung.anfang}“ ≥ {profile.wake_pruefung.anfang_grenze}"
+                 if profile.wake_pruefung.anfang else "") + ", nur Log)")
     # Rückspul-Puffer (profile.rewind): letzte Minuten Mikro + Score-Verlauf im
     # RAM; gesichert nur bei Trigger (Vorlauf) und manuellem Marker.
     _rewind_cfg = profile.rewind

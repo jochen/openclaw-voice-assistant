@@ -1488,3 +1488,42 @@ Profil, `voice_assistant/wake_pruefung.py`): jede Prüfung als Zeile in
 `wake_pruefung.jsonl`, mit Text, damit engere Wortregeln offline
 nachrechenbar sind. Nach ein bis zwei Wochen: alle `haette_verworfen` und eine
 Stichprobe der übrigen anhören, dann zählen.
+
+#### Anfangs-Maß statt Wortliste (2026-10-31)
+
+Anlass: drei Fehlauslöser an einem Tag, der Schatten hätte einen verworfen;
+die anderen zwei kamen über die Fläche. Die Fläche ist kein unabhängiger
+Beleg, sie fasst nur die Sicherheit des Modells zusammen, das ausgelöst hat.
+Die Wortregel ist unabhängig, scheitert aber an der Schreibweise: ein echter
+Ruf kam als „Ganz toll. Also.“.
+
+Statt Qwen zu fragen „was hast du gehört?“, fragt das Maß „wie gut passt
+‚Gast…‘ hier?“: der Anfang wird per Grammatik erzwungen, llama-server meldet
+die Logprobs des Modells vor der Grammatik. Erzwungen an jeder Wortgrenze des
+freien Textes, das Maximum zählt. Das volle „Gaston“ taugt nicht (Qwen ist
+bei echten Rufen oft sicher bei „Gasthof“, Gaston −20 bis −40), genau „Gast“
+auch nicht (zwingt die Zerlegung „G“+„ast“, wo Qwen „G“+„aston“ will: ein
+klarer Ruf fiel von −0,24 auf −4,5). Deshalb „Gast“ plus beliebige Buchstaben.
+
+R6-Val, Original-3-s-Wake-Clips aus dem Korpus, mit dem eingebauten Code:
+
+| | n | Wortregel | Anfang ≥ −3 | Anfang ≥ −4 | Anfang ≥ −6 |
+|---|---|---|---|---|---|
+| echte Rufe | 223 | 190 | 199 | 205 | 214 |
+| Fehlauslöser, Ohr | 23 | 0 | 0 | 0 | 0 |
+| Fehlauslöser, Selbst-Label | 12 | 6 | 4 | 5 | 6 |
+| davon Barge-in-Clips | 6 | 6 | 6 | 6 | 6 |
+| Zweifel | 74 | 21 | 34 | 39 | 49 |
+
+Der beste Ohr-Fehlauslöser liegt bei −8,5. Median 0,31 s je Clip. Die Grenze
+−4 ist am Korpus abgelesen. Die Paket-Clips (1,8 s) geben deutlich
+schlechtere Werte, gemessen wird deshalb an den 3-s-Originalen, die auch live
+geprüft werden.
+
+**Labelfehler gefunden (Jochens Frage):** die „Fehlauslöser“ mit „Stopp,
+Gaston“ im Text sind Barge-in-Clips. `wake_triage._selbst_labels` Regel 3
+(Abbruch per Stopp-Wort → rauschen) hängt das Label an das Audio der
+outcome-Zeile, und bei einem Barge-in ist das der Barge-in-Clip selbst, mit
+einem echten „Stopp, Gaston“. Im Korpus 24 Barge-in-Clips als rauschen/selbst,
+im R6-Paket 14 unter negative (10 train, 4 val), dazu val_vorrunde. Offen:
+Regel korrigieren, Korpus-Labels nachziehen, vor dem nächsten Training.

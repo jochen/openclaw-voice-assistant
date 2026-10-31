@@ -1242,7 +1242,14 @@ steht im Wake-Clip am Ende) → durch, sonst `haette_verworfen`. **Nur Log**
 wird daraus eine Schranke. Verworfen: zweites Modell als Gegenprobe (nicht
 nachvollziehbar), Richtung (Mikro an der Wand, Fernseher und Sprecher aus
 derselben Richtung), Fernseher-Zustand (der Umgebungspegel deckt Lärm schon
-vor dem Trigger ab). Tests: `tests/test_wake_pruefung.py`.
+vor dem Trigger ab). **Seit 2026-10-31 zusätzlich das Anfangs-Maß**
+(`anfang: Gast`): Qwen schätzt an jeder Wortgrenze, wie gut „Gast…“ passt
+(erzwungene Grammatik, Logprobs vor der Grammatik,
+`LlamaCppAsrStt.anfang_logprob`). Unabhängig von der Schreibweise („Ganz
+toll. Also.“ war ein echter Ruf). Gemessen: echte Rufe 205/223 statt 190
+(Wortregel), Ohr-Fehlauslöser beide 0/23. Eigenes Urteil
+`haette_verworfen_anfang`, die alte Regel bleibt daneben. Tests:
+`tests/test_wake_pruefung.py`.
 
 **Gelabelte Clips gehören gesichert, bevor das Archiv sie löscht.**
 `TRIGGER_AUDIO_DIR` räumt beim Service-Start alles älter als

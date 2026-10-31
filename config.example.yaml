@@ -191,6 +191,10 @@ profiles:
     # wake_pruefung:
     #   enabled: false
     #   flaeche_grenze: 2.7
+    #   # Wortanfang des Wakeworts; Qwen schätzt, wie gut er passt (braucht
+    #   # stt_llamacpp_sprache). Leer = aus.
+    #   anfang: ""
+    #   anfang_grenze: -4.0
 
     # Rückspul-Puffer — optional. Hält die letzten Minuten Mikro samt jedem
     # Wakeword-Score im RAM; auf die Platte nur bei einem Anlass: die
