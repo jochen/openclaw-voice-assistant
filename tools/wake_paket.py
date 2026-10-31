@@ -16,7 +16,9 @@ WAKEWORD_PROCESS.md („Nachtraining Runde 6 — Schranke“), nicht hier.
 Was ``bauen`` festschreibt
 --------------------------
 1. DIE VAL-SEITE DER VORRUNDE BLEIBT UNVERÄNDERT (``val_vorrunde/``, Kopie
-   aus ``--vorrunde``). Nur so bleibt die Vorher-Zahl des laufenden Modells
+   aus ``--vorrunde``), bis auf Clips, deren hartes Label sich seither
+   geändert hat: die stehen in ``umgelabelt_*`` (``_val_umsortieren``,
+   seit 2026-10-31). Nur so bleibt die Vorher-Zahl des laufenden Modells
    gültig: es hat diese Tage nie gesehen, das neue Modell auch nicht. Clips,
    die seither an diesen Tagen dazugekommen sind, gehen nirgendwohin
    (``an_vorrunde_val_tagen_ausgelassen`` im Manifest).
@@ -177,6 +179,47 @@ def _shadow() -> dict[str, dict]:
     return out
 
 
+UMGRUPPE = {"echter_ruf": "umgelabelt_positiv", "rauschen": "umgelabelt_negativ",
+            "unklar": "umgelabelt_unklar"}
+
+
+def _val_umsortieren(wurzel: str, labels: dict[str, dict]) -> list[dict]:
+    """Clips der kopierten Vorrunden-Val, deren hartes Label (Ohr/Selbst) nicht
+    mehr zur Gruppe passt, in eigene Gruppen verschieben.
+
+    Regel 1 (Val unverändert) hält die Vorher-Zahl gültig, aber nicht, wenn die
+    Labels darunter falsch waren. Anlass 2026-10-31: in R5-val/negative lagen
+    Barge-in-Clips mit echtem "Stopp, Gaston" und per Stopp abgebrochene Trigger,
+    die per Ohr klare Rufe sind. Verschoben statt gelöscht: das Modell hat diese
+    Tage weiter nie gesehen, und die Gruppen zeigen in ``messen`` getrennt, was
+    sich an der Zahl der Vorrunde durch die Korrektur verschiebt.
+    """
+    nach_tag: dict[str, list[str]] = {}
+    for a in labels:
+        nach_tag.setdefault(a[:15], []).append(os.path.splitext(a)[0])
+    out = []
+    for g in sorted(os.listdir(wurzel)):
+        art = "echter_ruf" if g.startswith("positive") else "rauschen" if g.startswith("negative") else None
+        if art is None:
+            continue
+        for f in sorted(os.listdir(os.path.join(wurzel, g))):
+            stamm = os.path.splitext(f[len("auto_"):] if f.startswith("auto_") else f)[0]
+            passend = [k for k in nach_tag.get(stamm[:15], []) if stamm.startswith(k)]
+            if not passend:
+                continue
+            audio = max(passend, key=len) + ".wav"
+            l = labels[audio]
+            if l.get("quelle") not in ("ohr", "selbst") or l.get("klasse") == art \
+                    or l.get("klasse") not in UMGRUPPE:
+                continue
+            ziel = os.path.join(wurzel, UMGRUPPE[l["klasse"]])
+            os.makedirs(ziel, exist_ok=True)
+            shutil.move(os.path.join(wurzel, g, f), os.path.join(ziel, f))
+            out.append({"von": f"{g}/{f}", "nach": f"{UMGRUPPE[l['klasse']]}/{f}",
+                        "label": f"{l['klasse']}/{l['quelle']}"})
+    return out
+
+
 def run_bauen(args) -> int:
     from tools.verifier_probe import _split_days
 
@@ -215,8 +258,12 @@ def run_bauen(args) -> int:
         return "train"
 
     os.makedirs(ziel)
-    # 1. Val der Vorrunde unverändert
+    # 1. Val der Vorrunde unverändert — bis auf Clips, deren Label sich seither
+    #    geändert hat: die kommen in eigene Gruppen (_val_umsortieren).
     shutil.copytree(os.path.join(vor, "val"), os.path.join(ziel, "val_vorrunde"))
+    umsortiert = _val_umsortieren(os.path.join(ziel, "val_vorrunde"), labels)
+    for z in umsortiert:
+        print(f"  val_vorrunde umsortiert: {z['von']} -> {z['nach']} ({z['label']})", flush=True)
 
     zaehl = Counter()
     info: dict[str, dict] = {}
@@ -328,6 +375,7 @@ def run_bauen(args) -> int:
         "vorrunde": vor, "vorrunde_erstellt": vor_erstellt,
         "seed": args.seed, "val_anteil_ziel": args.val_anteil, "neu_ab": args.neu_ab,
         "val_tage_vorrunde": sorted(vor_val_tage),
+        "val_vorrunde_umsortiert": umsortiert,
         "val_tage_neu": sorted(neu_val), "train_tage_neu": sorted(neu_train),
         "zaehlung": dict(sorted(zaehl.items())),
         "an_vorrunde_val_tagen_ausgelassen": ausgelassen,
