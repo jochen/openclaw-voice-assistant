@@ -1594,3 +1594,29 @@ Vorher-Zahl v5 auf R7 (`wake_paket messen`, ausgelöst / n):
 `val/negative` sind v5-Fehltrigger, daher 14/14. Die R6-Zahlen sind mit R7
 nicht direkt vergleichbar (andere Tage im Split, korrigierte Labels). Schranke
 für Runde 7: vor dem Training mit Jochen festlegen.
+
+## Nachtraining Runde 7 — Schranke, formuliert VOR den Ergebnissen (2026-10-31 15:40)
+
+Schranke wie Runde 6 (Jochen), Zahlen an v5 auf dem R7-Paket. Zwei Rezepte
+im Fablab (`run_r7.sh`), je augment + 2× `--train_model`: **voll** (alles
+aus `train/`, wie Runde 6: 440 Positive, 289 Negative) und **C** (nur
+Gehörtes: 114 Ohr-Positive + 26 Timer + 210 per Ohr klare Selbst-Positive,
+100 Ohr-Negative; die 14 ungehörten Barge-in-Positiven nur in voll).
+
+| Validierung | v5 (Vorher) | Kandidat muss |
+|---|---|---|
+| flüssige Sätze `positive_timer` (27) | 10 | ≥ 10 |
+| echte Rufe R5-Val `positive` (130) | 116 | ≥ 114 |
+| Fehltrigger R5-Val (16 + 25) | 11 | ≤ 11 |
+| Studio-Takes (20) | 19 | ≥ 18 |
+| FP/h generisch (`eval_debounce.py`) | 0,09 | ≤ 0,5 |
+| echte Rufe neue Val-Tage (115) | 105 | ≥ 103 (v5 − 2 %) |
+| Fehltrigger neue Val-Tage (14) | 14 | ≤ 14 |
+| `negative_geraeusch` (3) | 3 | ≤ 1 (halb so viele, mindestens 1 weniger) |
+
+Nicht Schranke, nur gelesen: `umgelabelt_positiv` (5), `positive_zweifel` (81),
+`negative_auto`. Erwartung vorab: C verfehlt FP/h wie am 27.10. (0,56 / 1,40),
+C ist als Modell für die Prüfung nach dem Trigger gedacht, die die Schranke
+nicht sieht. Vier Läufe, und die Streuung je Lauf ist groß: besteht nur ein
+Lauf eines Rezepts, ist das kein Deploy-Grund (Auswahl am Val-Set), sondern
+Entscheidung bei Jochen.
