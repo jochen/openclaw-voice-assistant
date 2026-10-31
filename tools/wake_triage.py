@@ -84,6 +84,7 @@ if os.path.exists(_VENV) and os.path.realpath(sys.executable) != os.path.realpat
 from voice_assistant.config import (  # noqa: E402
     TRIGGER_AUDIO_DIR,
     WAKE_LOG_PATH,
+    WAKE_REVIEW_PATH,
     WORKSPACE,
     load_profile,
 )
@@ -227,10 +228,13 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
        FALSCH einsortiert (darunter ein per Transkript belegtes 'Gaston macht…').
     2. Trigger, aus dem ein Schaltkommando wurde → echter Ruf. Ein Fehltrigger
        erzeugt praktisch nie ein gültiges Intent auf ein existierendes Ziel.
-    3. Trigger, den der Nutzer mit einem Stopp-Wort abgebrochen hat →
-       Fehltrigger. Der Abbruch ist ein ausdrückliches Urteil des Nutzers.
-       NUR, wenn das Stopp-Wort in der ersten Aufnahme nach diesem Trigger
-       stand (erste outcome-Zeile seines Audios, kein Barge-in).
+    3. (abgeschafft 2026-10-31) Trigger, den der Nutzer mit einem Stopp-Wort
+       abgebrochen hat → Fehltrigger. Per Ohr gegengeprüft stimmte das nur in
+       16 von 29 Fällen, bei 8 war „Gaston“ klar zu hören: ein Stopp heißt
+       „nicht gemeint“, nicht „nicht gesagt“ (beiläufige Erwähnungen, ein
+       anderes Familienmitglied). Fürs Wakeword-Modell sind das Positive.
+       Solche Trigger bekommen kein Selbst-Label mehr; ``gestoppte_ohne_ohr``
+       listet sie als Kandidaten fürs Ohr. Die Zahlen: WAKEWORD_PROCESS.md.
     4. Barge-in-Clip, in dessen Aufnahme ein Stopp-Wort erkannt wurde →
        echter Ruf: wer „Stopp, Gaston“ sagt, hat Gaston gerufen.
 
@@ -298,9 +302,21 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
             if ausgang == "aktuator" and ev.get("status") in ("ausgefuehrt", "bereits", "zurueckgestellt"):
                 labels[audio] = {"klasse": ECHT,
                                  "grund": f"Aktuator: {ev.get('ziel')}/{ev.get('aktion')}"}
-            elif ausgang == "stopwort":
-                labels[audio] = {"klasse": RAUSCH, "grund": "vom Nutzer abgebrochen"}
     return labels
+
+
+def gestoppte_ohne_ohr(events: list[dict], ohr: set[str]) -> list[str]:
+    """Trigger, die per Stopp-Wort abgebrochen wurden und noch kein Ohr-Urteil
+    haben — die Kandidaten der nächsten Hörseite (früher Regel 3)."""
+    out, gesehen = [], set()
+    for ev in events:
+        a = ev.get("audio") or ""
+        if ev.get("result") != "outcome" or not a.endswith("_wake.wav") or a in gesehen:
+            continue
+        gesehen.add(a)
+        if ev.get("ausgang") == "stopwort" and ev.get("via") != "bargein" and a not in ohr:
+            out.append(a)
+    return out
 
 
 def _norm_text(text: str) -> str:
@@ -452,6 +468,16 @@ def main() -> int:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     # --- Ausgabe -----------------------------------------------------------
+    ohr = set()
+    if os.path.exists(WAKE_REVIEW_PATH):
+        with open(WAKE_REVIEW_PATH, encoding="utf-8") as fh:
+            ohr = {json.loads(z)["audio"] for z in fh if z.strip()}
+    kandidaten = gestoppte_ohne_ohr(_lade_wake_events(), ohr)
+    if kandidaten:
+        print(f"\nPER STOPP ABGEBROCHEN, NOCH UNGEHÖRT: {len(kandidaten)} (Hörkandidaten,"
+              " seit 2026-10-31 ohne Selbst-Label)")
+        for a in kandidaten[-10:]:
+            print(f"    {a}")
     for art in ("trigger", "nearmiss"):
         teil = [r for r in zeilen if r["art"] == art]
         if not teil:

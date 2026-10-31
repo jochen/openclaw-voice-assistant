@@ -1,5 +1,5 @@
-"""Selbst-Labels aus dem Wake-Log: ein Stopp-Wort labelt nur den Trigger,
-in dessen ERSTER Aufnahme es stand; ein Barge-in mit Stopp-Wort ist ein Ruf.
+"""Selbst-Labels aus dem Wake-Log: ein Stopp-Wort labelt den Trigger nicht mehr
+(nur Hörkandidat); ein Barge-in mit Stopp-Wort ist ein Ruf.
 
 Anlass 2026-10-31: das Abbruch-Label landete auf dem Barge-in-Clip mit einem
 echten "Stopp, Gaston" und ging so als Negativ ins Training.
@@ -7,7 +7,7 @@ echten "Stopp, Gaston" und ging so als Negativ ins Training.
 
 import unittest
 
-from tools.wake_triage import ECHT, RAUSCH, _selbst_labels
+from tools.wake_triage import ECHT, _selbst_labels, gestoppte_ohne_ohr
 
 W = "20261012_220814_gaston_wake.wav"
 B = "20261012_220824_gaston_bargein.wav"
@@ -18,10 +18,18 @@ def _ev(ts, result, audio, **kw):
 
 
 class StoppImErstTurnTest(unittest.TestCase):
-    def test_stopp_in_erster_aufnahme_ist_fehltrigger(self):
-        l = _selbst_labels([_ev("22:08:14", "trigger", W),
-                            _ev("22:08:19", "outcome", W, ausgang="stopwort")])
-        self.assertEqual(l[W]["klasse"], RAUSCH)
+    # Regel 3 abgeschafft: per Ohr nur 16 von 29 richtig, 8 mit klarem Gaston.
+    def test_stopp_in_erster_aufnahme_kein_label(self):
+        ev = [_ev("22:08:14", "trigger", W),
+              _ev("22:08:19", "outcome", W, ausgang="stopwort")]
+        self.assertEqual(_selbst_labels(ev), {})
+        self.assertEqual(gestoppte_ohne_ohr(ev, set()), [W])
+        self.assertEqual(gestoppte_ohne_ohr(ev, {W}), [])
+
+    def test_bargein_ist_kein_hoerkandidat(self):
+        ev = [_ev("22:08:19", "outcome", W, ausgang="brain"),
+              _ev("22:08:27", "outcome", W, ausgang="stopwort", via="bargein")]
+        self.assertEqual(gestoppte_ohne_ohr(ev, set()), [])
 
 
 class BargeinTest(unittest.TestCase):

@@ -36,6 +36,7 @@ Code merkt nichts davon:
 | `~/.openclaw/workspace/voice/corpus/` | `voice/corpus/` (gesicherte Wake-Clips) |
 | `~/.openclaw/workspace/voice/corpus_sprecher/` | `voice/corpus_sprecher/` |
 | `~/.openclaw/workspace/voice/speakers/` | `voice/speakers/` (Referenzstimmen) |
+| `~/.openclaw/workspace/wake_review.jsonl` | `wakeword/wake_review.jsonl` (Ohr-Urteile, seit 2026-10-31) |
 
 In `.gitignore` stehen diese Pfade deshalb **ohne** Schrägstrich am Ende: ein
 Muster `testsets/` passt nur auf echte Verzeichnisse, ein Symlink stünde sonst

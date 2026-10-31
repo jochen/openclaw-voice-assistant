@@ -1553,4 +1553,7 @@ Notizen: ein Stopp sagt „nicht gemeint“, nicht „nicht gesagt“. Mehrere d
 klaren Fälle sind beiläufige Erwähnungen („Gaston Hauskanal“, „versehentliche
 Erwähnung“), einmal Felix. Fürs Training sind das Positive. Alle 47 tragen
 jetzt Ohr-Labels (review `stopp_labels_2026-10-31`). Korpus danach: positiv
-744, negativ 133, zurückgezogen 7. Offen: Regel 3 für künftige Clips.
+744, negativ 133, zurückgezogen 7. Regel 3 ist danach abgeschafft (Jochen):
+ein Stopp vergibt kein Selbst-Label mehr, `wake_triage` listet solche Trigger
+als Hörkandidaten (`gestoppte_ohne_ohr`). `wake_review.jsonl` liegt seit
+demselben Tag in `gaston-privat` (Symlink), vorher in keinem Git.
