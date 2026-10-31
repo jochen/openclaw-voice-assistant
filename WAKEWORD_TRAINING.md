@@ -451,5 +451,14 @@ bundle in the profile's `wakewords:` block.
   false triggers overlap in their peak. Then it is model work, or a second
   stage after the trigger (`voice_assistant/wake_pruefung.py`).
 
-Open and noted, not done: averaging several runs as an ensemble instead of
-picking one (`WAKEWORD_PROCESS.md`, "Streuung senken statt Glückslauf wählen").
+- **Averaging runs instead of picking one** (ensemble): runs on the same data
+  scattered by a factor of six in FP/h. Averaging the score per frame over all
+  runs of a recipe landed near the median, not at the best run, and removed
+  the outliers; with four runs it passed a bar that one run in eight passed
+  alone. Two runs were not enough. List the model files in the manifest
+  (`model: [run1.tflite, run2.tflite, ...]`, distinct file names); the engine
+  and the measuring tools then average them. The audio features are computed
+  once, each extra run costs only its small head (four heads: +4 % CPU).
+  Weights cannot be averaged: runs without a common start share no
+  parametrisation. Measurements: `WAKEWORD_PROCESS.md`, "Ensemble: Score-Mittel
+  statt Glückslauf".

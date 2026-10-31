@@ -459,6 +459,14 @@ Bundle aus dem `wakewords:`-Block des Profils.
   Rufe und Fehlauslöser überlappen im Peak. Dann ist es Modellarbeit oder eine
   zweite Stufe nach dem Trigger (`voice_assistant/wake_pruefung.py`).
 
-Offen und notiert, nicht gemacht: mehrere Läufe als Ensemble mitteln, statt
-einen auszuwählen (`WAKEWORD_PROCESS.md`, „Streuung senken statt Glückslauf
-wählen“).
+- **Läufe mitteln statt einen auswählen** (Ensemble): Läufe auf denselben
+  Daten streuten in FP/h um den Faktor sechs. Der Score je Frame, gemittelt
+  über alle Läufe eines Rezepts, landete beim Median statt beim besten Lauf
+  und nahm die Ausreißer weg; mit vier Läufen bestand er eine Schranke, die
+  einzeln einer von acht Läufen bestand. Zwei Läufe reichten nicht. Die
+  Modelldateien im Manifest aufzählen (`model: [lauf1.tflite, lauf2.tflite,
+  …]`, verschiedene Dateinamen); Engine und Messwerkzeuge mitteln dann. Die
+  Audio-Merkmale werden einmal gerechnet, jeder weitere Lauf kostet nur seinen
+  kleinen Kopf (vier Köpfe: +4 % CPU). Gewichte lassen sich nicht mitteln:
+  Läufe ohne gemeinsamen Start haben keine gemeinsame Parametrisierung.
+  Messungen: `WAKEWORD_PROCESS.md`, „Ensemble: Score-Mittel statt Glückslauf“.

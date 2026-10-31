@@ -7,6 +7,13 @@ Modellname ('hey_jarvis', 'alexa', …). feed() liefert je Aufruf den best-
 scorenden Kandidaten samt seinem konfigurierten Schwellwert zurück — die
 Hauptschleife (assistant.py) entscheidet anhand mehrerer Frames (Debounce),
 ob/wann tatsächlich getriggert wird.
+
+Ensemble (seit 2026-10-31): trägt das Manifest unter ``model`` eine LISTE von
+Dateien, laufen alle im selben ``Model`` (Mel-Spektrum und Embedding nur einmal
+gerechnet, je Datei nur der kleine Kopf) und der Score des Wakeworts ist der
+Mittelwert über die Köpfe. Gewichte lassen sich nicht mitteln: Läufe ohne
+gemeinsamen Start haben keine gemeinsame Parametrisierung. Gemessen in
+WAKEWORD_PROCESS.md, "Ensemble: Score-Mittel statt Glückslauf".
 """
 
 from __future__ import annotations
@@ -52,16 +59,44 @@ def _resolve_bundle(bundle: str) -> tuple[str, dict]:
     return bundle, {}
 
 
+def _resolve_modelle(bundle: str) -> tuple[list[str], dict]:
+    """Wie ``_resolve_bundle``, aber immer eine Liste von Modellen: bei einem
+    Ensemble-Manifest (``model: [a.tflite, b.tflite]``) alle, sonst eines."""
+    bundle_dir = os.path.join(WAKEWORDS_DIR, bundle)
+    manifest_path = os.path.join(bundle_dir, "manifest.yaml")
+    if os.path.isfile(manifest_path):
+        import yaml  # type: ignore[import-not-found]
+
+        with open(manifest_path, "r") as f:
+            manifest = yaml.safe_load(f) or {}
+        modell = manifest.get("model")
+        if isinstance(modell, list):
+            if not modell:
+                raise ValueError(f"{bundle}: model ist eine leere Liste")
+            return [os.path.join(bundle_dir, m) for m in modell], manifest
+    model_arg, manifest = _resolve_bundle(bundle)
+    return [model_arg], manifest
+
+
+def _modell_key(model_arg: str) -> str:
+    """Bundle-Pfad → Dateiname ohne Endung (so vergibt openwakeword.Model die
+    Keys für predict()); eingebauter Name → der Name selbst."""
+    if os.path.exists(model_arg):
+        return os.path.splitext(os.path.basename(model_arg))[0]
+    return model_arg
+
+
 class OpenWakewordEngine:
     def __init__(self, wakewords: list[WakewordConfig]) -> None:
         if not wakewords:
             raise ValueError("OpenWakewordEngine braucht mindestens ein Wakeword")
 
         model_args: list[str] = []
+        model_keys: list[str] = []
         self._entries: list[dict] = []  # [{key, name, threshold}, ...]
         print(f"🔧 Lade openwakeword-Modelle: {[w.bundle for w in wakewords]}...")
         for w in wakewords:
-            model_arg, manifest = _resolve_bundle(w.bundle)
+            modelle, manifest = _resolve_modelle(w.bundle)
             threshold = (
                 w.threshold
                 if w.threshold is not None
@@ -90,15 +125,19 @@ class OpenWakewordEngine:
                 if w.min_peak_single is not None
                 else float(manifest.get("min_peak_single", 0.0))
             )
-            # Bundle-Pfad → Key ist der Dateiname ohne Endung (so vergibt
-            # openwakeword.Model die Keys für predict()); eingebauter Name →
-            # Key ist der Name selbst (unverändert durchgereicht).
-            is_path = os.path.exists(model_arg)
-            key = os.path.splitext(os.path.basename(model_arg))[0] if is_path else model_arg
-            model_args.append(model_arg)
+            keys = [_modell_key(m) for m in modelle]
+            doppelt = set(keys) & set(model_keys) or len(set(keys)) != len(keys)
+            if doppelt:
+                # predict() liefert je Key EINEN Score; zwei gleiche Dateinamen
+                # würden still zu einem Modell zusammenfallen.
+                raise ValueError(f"{w.bundle}: Modelle brauchen verschiedene Dateinamen ({keys})")
+            model_keys.extend(keys)
+            model_args.extend(modelle)
+            if len(modelle) > 1:
+                print(f"   {w.bundle}: Ensemble aus {len(modelle)} Modellen (Score-Mittel)")
             self._entries.append(
                 {
-                    "key": key,
+                    "keys": keys,
                     "name": w.bundle,
                     "threshold": threshold,
                     "min_hits": min_hits,
@@ -126,7 +165,8 @@ class OpenWakewordEngine:
         best: dict | None = None
         best_score = -1.0
         for entry in self._entries:
-            score = float(result.get(entry["key"], 0.0))
+            keys = entry["keys"]
+            score = float(sum(result.get(k, 0.0) for k in keys) / len(keys))
             if score > best_score:
                 best, best_score = entry, score
         return WakewordHit(

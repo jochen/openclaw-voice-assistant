@@ -93,7 +93,10 @@ Rules you hold to, because each one was learned by getting it wrong:
   show the counts.
 - **No lucky picking.** Report every run against the bar, not just the best.
   Never start extra runs because none passed. Spread between runs on the same
-  data was up to a factor of six in FP/h.
+  data was up to a factor of six in FP/h. The ensemble of all runs of a recipe
+  (`model:` as a list in the manifest) is a fair candidate because it picks
+  nothing; measure it against the same bar, and say so if you compared more
+  than one ensemble.
 - **Narrow misses:** use `messen --paare` to show which clips flip and which
   label source they carry. A wrong label goes back to labelling. It does not
   change the bar.

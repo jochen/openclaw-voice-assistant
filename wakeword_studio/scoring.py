@@ -20,7 +20,8 @@ from voice_assistant.wakeword.openwakeword_engine import (
     _DEFAULT_MIN_PEAK,
     _DEFAULT_THRESHOLD,
     _OW_FRAME,
-    _resolve_bundle,
+    _modell_key,
+    _resolve_modelle,
 )
 
 # Default-Streak-Länge wie assistant.py; pro Bundle via manifest.yaml
@@ -60,33 +61,11 @@ def load_wav_16k(path: str) -> np.ndarray:
     return samples
 
 
-def _ensemble_manifest(bundle: str) -> dict:
-    import yaml  # type: ignore[import-not-found]
-
-    with open(os.path.join(bundle, "manifest.yaml")) as f:
-        return yaml.safe_load(f) or {}
-
-
-def _ensemble_modelle(bundle: str) -> list[str]:
-    """Bundle-Verzeichnis, dessen Manifest unter `model` eine LISTE trägt →
-    Pfade der Modelle (Ensemble, nur zum Messen; die Live-Engine kennt das nicht)."""
-    if not os.path.isfile(os.path.join(bundle, "manifest.yaml")):
-        return []
-    modell = _ensemble_manifest(bundle).get("model")
-    if not isinstance(modell, list):
-        return []
-    return [os.path.join(bundle, m) for m in modell]
-
-
 class BundleScorer:
     """Lädt das Modell eines Bundles einmal und scored beliebig viele Clips."""
 
     def __init__(self, bundle: str, threshold: float | None = None) -> None:
-        ensemble = _ensemble_modelle(bundle)
-        if ensemble:
-            model_arg, manifest = ensemble[0], _ensemble_manifest(bundle)
-        else:
-            model_arg, manifest = _resolve_bundle(bundle)
+        modelle, manifest = _resolve_modelle(bundle)
         self.bundle = bundle
         self.display = str(manifest.get("display", bundle))
         self.threshold = (
@@ -98,14 +77,8 @@ class BundleScorer:
         self.min_peak = float(manifest.get("min_peak", _DEFAULT_MIN_PEAK))
         from openwakeword import Model  # type: ignore[import-not-found]
 
-        modelle = ensemble or [model_arg]
-        # predict() liefert je Modell einen Score unter dem Dateinamen ohne
-        # Endung; bei einem Ensemble zählt der Mittelwert (Score-Mittel, keine
-        # Gewichte: Läufe ohne gemeinsamen Start lassen sich nicht verschmelzen).
-        self._keys = [
-            os.path.splitext(os.path.basename(m))[0] if os.path.exists(m) else m
-            for m in modelle
-        ]
+        # Ensemble (`model:` als Liste): Score-Mittel wie in der Live-Engine.
+        self._keys = [_modell_key(m) for m in modelle]
         if len(set(self._keys)) != len(self._keys):
             raise ValueError(f"{bundle}: Ensemble-Modelle brauchen verschiedene Dateinamen")
         self._model = Model(wakeword_models=modelle)

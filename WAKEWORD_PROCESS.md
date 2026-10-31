@@ -18,7 +18,9 @@ dazu und wächst nach unten.
   `haette_verworfen*`-Fälle per Ohr zählen, dann entscheiden, ob daraus ein
   Gate wird.
 - **Streuung je Lauf** bleibt das Hauptproblem jeder Schranke (gleiche Daten,
-  acht Läufe: FP/h 0,19 bis 1,22). Idee, nicht gemacht: Läufe als Ensemble mitteln.
+  acht Läufe: FP/h 0,19 bis 1,22). Ensemble (Score-Mittel aller Läufe eines
+  Rezepts) gemessen: voll4 besteht die R7-Schranke, die Live-Engine kann es
+  seit 2026-10-31 (`model:` als Liste). Abschnitt „Ensemble: Score-Mittel …“.
 - Trainiert wird seit 2026-10-31 mit `wakeword_studio/train_runde.py`
   (Rezepte parallel, eine Training je GPU).
 
@@ -1728,8 +1730,8 @@ Läufe von Runde 7 und r7b (je vier voll und C, gleiche Daten). Gemittelt wird
 der Score je Frame (`wakeword_studio/scoring.py`, Manifest mit `model:` als
 Liste); Gewichte lassen sich nicht mitteln, die Läufe haben keinen gemeinsamen
 Start. Gegenprobe: ein Modell mit sich selbst gemittelt scort exakt wie
-einzeln (Test `tests/test_scoring_ensemble.py`). Nur zum Messen, die
-Live-Engine kennt Ensembles nicht.
+einzeln (Test `tests/test_scoring_ensemble.py`). Zum Zeitpunkt der Messung
+nur im Scorer; die Live-Engine kann es seit dem Nachtrag unten.
 
 FP/h generisch (3 Frames @0,35) über alle Teilmengen eines Rezepts:
 
@@ -1775,3 +1777,14 @@ Live-Versuch voll l2 läuft unverändert weiter.
 
 Bundles: `~/wake-pakete/modelle/ens_{voll4,C4,alle8,vollR7,vollR7b}/gaston/`
 (Symlinks auf die Einzelmodelle), FP/h-Rechnung `ensemble_fph.json` im Fablab.
+
+**Nachtrag 21:30: die Live-Engine kann Ensembles** (Jochen: „bau die Engine
+jetzt schon um“, damit voll4 nach der l2-Woche startklar ist). Steht unter
+`model:` im Manifest eine Liste, lädt `OpenWakewordEngine` alle Köpfe in ein
+`Model` und mittelt je Frame; Gate-Parameter gelten auf dem Mittel, wie in der
+Messung. Engine und Scorer teilen sich jetzt `_resolve_modelle`, die Messung
+rechnet also genau wie live. Kosten auf dem Assistenz-Rechner: 2,66 → 2,77 ms
+je 80-ms-Frame (60 s Rauschen, gaston gegen voll4). Gegenprobe: Köpfe a und b
+aus derselben Datei sind bitgleich; zwei frisch geladene Instanzen weichen in
+den Aufwärm-Frames um bis 1,5e-4 voneinander ab, auch ohne Ensemble. Live
+geschaltet ist nichts, das Bundle bleibt voll l2.
