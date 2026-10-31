@@ -1,0 +1,36 @@
+# Vorlage für train.py von openWakeWord (Nachtraining mit train_runde.py).
+# So läuft das gaston-Training seit Runde 3. Relative Pfade gelten ab dem
+# Arbeitsordner auf dem GPU-Rechner. train_runde.py überschreibt output_dir
+# und model_name je Rezept und Lauf; alles andere wird übernommen.
+model_name: gaston
+target_phrase:
+- gaston
+custom_negative_phrases: []
+# Nur für --generate_clips (das erste, synthetische Modell). Beim Nachtraining
+# liegen die Clips schon in train_out/<model_name>/.
+n_samples: 30000
+n_samples_val: 3000
+tts_batch_size: 50
+piper_sample_generator_path: ./piper-sample-generator
+augmentation_batch_size: 16
+augmentation_rounds: 1
+output_dir: ./train_out
+rir_paths:
+- ./mit_rirs
+background_paths:
+- ./audioset_16k
+background_paths_duplication_rate:
+- 1
+# Generisches Validierungs-Set (~11 h ohne Wakewort): daraus FP/h.
+false_positive_validation_data_path: ./validation_set_features.npy
+feature_data_files:
+  ACAV100M_sample: ./openwakeword_features_ACAV100M_2000_hrs_16bit.npy
+batch_n_per_class:
+  ACAV100M_sample: 1024
+  adversarial_negative: 50
+  positive: 50
+model_type: dnn
+layer_size: 64
+steps: 50000
+max_negative_weight: 500
+target_false_positives_per_hour: 0.5

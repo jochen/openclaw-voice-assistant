@@ -1,13 +1,30 @@
-# Wakeword-Verbesserungsprozess
+# Wakewort: Messtagebuch
 
-Wiederholender Prozess um die Treffer-Quote des Wakeword-Modells zu erhöhen:
-weniger verlorene Rufe (Recall) UND weniger Fehltrigger (Precision).
+Was am gaston-Wakewort dieser Installation gemessen, versucht und entschieden
+wurde, Runde für Runde, mit allen Zahlen. **Wie man nachtrainiert** (Ablauf,
+Befehle, Fallen) steht in `WAKEWORD_TRAINING.md`; diese Datei ist der Beleg
+dazu und wächst nach unten.
 
-> **Zum Weitermachen: erst den Abschnitt „Stand" ganz unten lesen.** Dort steht,
-> welche Fäden offen sind, welcher gerade der aktive ist und was ausdrücklich
-> NICHT als nächstes ansteht. Alles davor ist das Wie und Warum — bleibt gültig,
-> ändert sich selten. Der Rest dieser Datei erklärt es; der „Stand" sagt, wo wir
-> stehen.
+## Stand (2026-10-31)
+
+- **Live seit 2026-10-31 18:08: R7 voll l2, als Versuch.** Kein Lauf von
+  Runde 7 hat die Schranke bestanden; voll l2 verfehlte nur die alten
+  Fehltrigger um einen Clip (Abschnitt „Nachtraining Runde 7 — Ergebnis“).
+  Jochen: ausprobieren. Vergleich nach etwa einer Woche gegen die v5-Woche
+  davor, Abbruchregel: mehr Fehltrigger am Tag als v5 → zurück auf v5
+  (Bundle aus `42797ef`). Abschnitt „Live-Versuch R7 voll l2“.
+- **Prüfung nach dem Trigger im Schatten** (`wake_pruefung.jsonl`): Fläche,
+  Wort im Qwen-Text und seit 2026-10-31 das Anfangs-Maß. Offen: die
+  `haette_verworfen*`-Fälle per Ohr zählen, dann entscheiden, ob daraus ein
+  Gate wird.
+- **Streuung je Lauf** bleibt das Hauptproblem jeder Schranke (gleiche Daten,
+  acht Läufe: FP/h 0,19 bis 1,22). Idee, nicht gemacht: Läufe als Ensemble mitteln.
+- Trainiert wird seit 2026-10-31 mit `wakeword_studio/train_runde.py`
+  (Rezepte parallel, eine Training je GPU).
+
+Ab „Stand 2026-08-22 (historisch)“ weiter unten beginnt das Tagebuch; ältere
+Abschnitte geben den damaligen Wissensstand wieder und werden nicht
+nachträglich geglättet, sondern durch spätere ergänzt.
 
 ## Ziel
 
@@ -36,7 +53,7 @@ Der zuverlässige Indikator ist die Folgeaufnahme (`*_rec.wav`):
 | Folgeaufnahme | Klassifikation |
 |---|---|
 | Klares Kommando („Schalt das Küchenlicht ein") | **ECHTER RUF** — Jochen hat „Gaston" gesagt, dann sein Kommando |
-| „Stopp Stopp!" | **FEHLTRIGGER** — niemand hat „Gaston" gesagt, Jochen bricht ab |
+| „Stopp Stopp!" | wahrscheinlich **FEHLTRIGGER** — per Ohr nachgeprüft (2026-10-31) aber nur 16 von 29; in 8 war ein klares Gaston. Seither kein Selbst-Label mehr |
 | Nichts | wahrscheinlich **FEHLTRIGGER** |
 | Wirres | wahrscheinlich **FEHLTRIGGER** |
 
@@ -48,8 +65,9 @@ bloß das Wort „Stopp".
 ## Zwei Zwecke der Sammlung
 
 1. **Echte Rufe** (Positiv-Set): Aussprache-Referenz + Validierungs-Set fürs
-   Training. Spec: Recall ≥ 0.9. Trainiert wird aus synthetischen TTS-Samples
-   (piper-sample-generator), NICHT aus diesen Aufnahmen.
+   Training. Spec: Recall ≥ 0.9. Ursprünglich nur synthetisch trainiert; seit
+   Runde 3 (2026-09-16) gehen echte Rufe ×10 neben die synthetischen ins
+   Training, die Val-Tage bleiben getrennt.
 2. **Fehltrigger** (Negativ-Set / harte Negativbeispiele): GEGENCHECK des
    trainierten Modells. Spec: < 1 FP/Stunde. Mindestens so wichtig wie die
    echten Rufe — das Modell muss gegen sie getestet werden vor Deploy.
@@ -119,14 +137,15 @@ vorbeikommen, weil das Modell auf das jeweilige Geräusch hoch scoret.
 
 ## Was sich von selbst labelt
 
-Der Nutzer labelt beim Benutzen mit, ohne es zu merken. Drei Regeln, alle
-gemessen am Bestand vom 2026-07-25..28:
+Der Nutzer labelt beim Benutzen mit, ohne es zu merken. Die Regeln, gemessen
+am Bestand vom 2026-07-25..28 (Änderungen in der Tabelle vermerkt):
 
 | Beobachtung | Label | warum es trägt |
 |---|---|---|
 | Near-Miss, dem binnen 15 s ein Trigger folgt | echter Ruf, **verloren** | der Nutzer hat sich wiederholt, weil der erste Ruf nicht ankam |
 | Trigger, aus dem ein ausgeführtes Schaltkommando wurde | echter Ruf | ein Fehltrigger erzeugt praktisch nie ein gültiges Intent |
-| Trigger, den der Nutzer mit einem Stopp-Wort abbrach | Fehltrigger | der Abbruch ist sein ausdrückliches Urteil |
+| ~~Trigger, den der Nutzer mit einem Stopp-Wort abbrach~~ | ~~Fehltrigger~~ | **abgeschafft 2026-10-31**: per Ohr nur 16 von 29 richtig, und beim Barge-in landete das Label auf dem Clip mit dem echten „Stopp, Gaston“ |
+| Barge-in-Clip mit erkanntem Stopp-Wort (seit 2026-10-31) | echter Ruf | darin steht das „Stopp, Gaston“, das den Abbruch auslöste |
 
 Die erste Regel ist die wertvollste: sie labelt genau das, was das Gate
 **verpasst** hat, statt zu bestätigen, was es ohnehin durchlässt. Von 19 so
@@ -394,24 +413,10 @@ unabhängige Stufe.
 
 ## Prozess (wiederholend)
 
-1. **Sammeln** — passiv aus dem Alltag. Tage bis Wochen.
-2. **Triagieren** — `ow-venv/bin/python -m tools.wake_triage --seit N --auch-trigger`
-   läuft über ungelabelte Files. Die Selbst-Labels stehen sofort, die STT
-   klassifiziert nur den Rest, UNKLAR-Fälle bleiben übrig.
-3. **Per Ohr entscheiden** — `tools/review_audio.py`: `export` legt die Clips
-   bereit (Wake + Folgeaufnahme in einer Datei, Pre-Roll entfernt), man
-   sortiert sie in `positiv/` bzw. `negativ/`, `import` liest das als harte
-   Labels nach `wake_review.jsonl` zurück und meldet jede Abweichung vom
-   automatischen Urteil. Ein Ohr-Urteil sticht Selbst-Label und STT.
-   Mit `--liste` nur die Clips, an denen eine konkrete Messung hängt — das
-   sind meist ein paar Dutzend statt hundert.
-4. **Trainieren** — synthetische TTS-Samples + echtes Validierungs-Set +
-   Negativ-Korpus → neues Modell. Siehe `Wakeword_Studio_Spec.md`.
-5. **Validieren** — gegen Validierungs-Gate prüfen: Recall ≥ 0.9 gegen echte
-   Aufnahmen, < 1 FP/Stunde gegen Negativ-Korpus. Nicht bestanden → zurück
-   zu Schritt 4.
-6. **Deployen** — neues `.tflite` ins Bundle, Service neustarten.
-7. **Weiter sammeln** — der Kreislauf beginnt von vorn.
+Der Kreislauf Sammeln → Labeln → Sichern → Paket → Schranke → Trainieren →
+Messen → Entscheiden steht mit Befehlen in `WAKEWORD_TRAINING.md`. Die frühere
+Fassung hier (Recall ≥ 0,9 und < 1 FP/h als einziges Gate, Training rein
+synthetisch) ist seit Runde 3 überholt.
 
 ## Das Modell erkennt Gastons eigene Stimme (2026-09-20)
 
@@ -467,16 +472,16 @@ Barge-in-Doku.
 - FPs als „egal" abtun — sie sind der wertvollste Teil des Datensatzes.
 - Die Folgeaufnahme als Fehltrigger-Indikator fehlinterpretieren — sie ist der
   BELEG für einen echten Ruf, nicht der Fehltrigger selbst.
-- Echte Aufnahmen als Trainingsdaten missverstehen — sie sind das
-  Validierungs-Set. Trainiert wird synthetisch.
+- Echte Aufnahmen der Val-Tage ins Training mischen — sie sind die Messung.
+  (Echte Clips der Train-Tage gehören seit Runde 3 ins Training.)
 - Gastons **eigene** TTS-Stimme bei den Negativen vergessen — sie ist die eine
   Stimme, die garantiert täglich vor dem Mikro steht, und das Modell erkennt sie
   derzeit als Wakewort (siehe „Das Modell erkennt Gastons eigene Stimme").
 - Ohne Prozess-Verständnis Klassifizierungen vornehmen.
 
-## Stand
+## Stand 2026-08-22 (historisch)
 
-> Zahlen altern. Was hier steht, ist mit `tools/wake_triage.py` in Minuten neu
+> Der aktuelle Stand steht oben. Zahlen altern. Was hier steht, ist mit `tools/wake_triage.py` in Minuten neu
 > zu erheben — die Datei sagt, **wo der Prozess steht und was als naechstes
 > ansteht**, nicht was gerade in den Logs liegt.
 
@@ -1681,3 +1686,36 @@ nach `wake_triage --seit 8 --auch-trigger`), Woche 2026-10-24 bis 10-31 18:00:
 Gelesen wird nach einer Woche dasselbe für l2, mit denselben Labelquellen
 (die Ohr-Anteile vorher angleichen, sonst vergleicht man Labelquellen).
 Mehr Fehltrigger am Tag als v5 → zurück auf v5.
+
+### Paralleles Training, Probelauf r7b (2026-10-31 18:15–19:12)
+
+Erster Lauf von `wakeword_studio/train_runde.py`: dasselbe Paket und
+dieselben zwei Rezepte wie Runde 7, je zwei Läufe, `--gpus 0,1
+--augment-parallel 2 --weiche llm`. Zweck: Dauer und Streuung messen,
+kein Deploy-Kandidat.
+
+| Schritt | sequentiell (R7) | parallel (r7b) |
+|---|---|---|
+| augment je Rezept | ~28 min | 27,5 / 28,8 min, beide gleichzeitig |
+| train je Lauf | ~11 min | 12,8–14,5 min, zwei gleichzeitig |
+| ganze Runde (2 Rezepte × 2 Läufe) | ~100 min | **56 min** |
+
+Zwei Augments nebeneinander bremsen sich nicht (je ein Kern). Zwei Trainings
+nebeneinander kosten je 2–3 min mehr, vermutlich die DataLoader-Worker
+(`cpu/2` je Training, also alle 12 Kerne). Container `llm` lief um 19:11:58
+wieder, der fern-Timer daheim ebenso.
+
+FP/h (3 Frames @0,35) gegen dieselben Rezepte in Runde 7:
+
+| | voll l1 | voll l2 | C l1 | C l2 |
+|---|---|---|---|---|
+| Runde 7 | 0,75 | 0,28 | 1,22 | 0,65 |
+| r7b | 0,56 | 0,75 | 0,37 | 0,19 |
+
+Gleiche Daten, gleiches Rezept, FP/h zwischen 0,19 und 1,22. Die 0,28 des
+live laufenden voll l2 ist also ein günstiger Zug, kein Merkmal des Rezepts;
+Rezept C, in Runde 7 wegen FP/h verworfen, hat hier den besten Wert. Das
+stützt die Ensemble-Idee („Streuung senken statt Glückslauf wählen“) und
+spricht dagegen, eine Schranke an einem einzelnen Lauf zu entscheiden.
+Die r7b-Modelle (`~/wakeword-studio/runden/r7b/` im Fablab) sind nicht mit
+`wake_paket messen` gemessen.

@@ -177,6 +177,12 @@ startet den Service danach wieder. Ablage in
 `models/wakewords/<bundle>/samples/<sprecher>/` — ein Symlink ins private
 Daten-Repo (Familienstimmen, nie auf GitHub; siehe „Private Daten“ unten).
 
+Nachtraining: **`WAKEWORD_TRAINING.md`** (Kreislauf, Befehle, Fallen) und
+`wakeword_studio/train_runde.py`, das auf dem GPU-Rechner im venv von
+openWakeWord läuft (nicht im `ow-venv`). Rezepte und Läufe dort parallel,
+je Lauf ein eigener `output_dir`. `WAKEWORD_PROCESS.md` ist das Messtagebuch
+dazu, aktueller Stand oben.
+
 ## Voice-Aktuator (optional, pro Profil)
 
 Schaltbefehle („Mach das Küchenlicht an") werden direkt nach der STT von einem
