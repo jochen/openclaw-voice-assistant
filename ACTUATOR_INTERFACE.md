@@ -232,8 +232,10 @@ In dieser Installation schreibt die ausführende Seite jede ausgeführte
 Schaltung als eine Zeile je angefordertem Ziel in eine Zeitreihe (Gruppen
 nicht aufgelöst, mit `quelle`, Weg, `request_id` und `ziel_erschlossen`);
 Rückfragen und Ablehnungen nicht. Das Haus-MCP-Werkzeug des Brains
-(`haus_schalten`) kennt dasselbe Argument. Der Assistent setzt das Feld bisher
-nirgends, es gibt noch keine Schaltung aus Gewohnheit.
+(`haus_schalten`) kennt dasselbe Argument, ebenso `haus_schalten` des
+MCP-Servers in diesem Repo (`voice_assistant/mcp_actuator.py`). Gesetzt wird
+es vom Brain, wenn er wegen eines Gewohnheits-Hinweises schaltet (README,
+„Gewohnheiten statt Rückfrage“); der schnelle Schaltweg selbst setzt es nie.
 
 ### Der Bestätigungs-Handshake
 

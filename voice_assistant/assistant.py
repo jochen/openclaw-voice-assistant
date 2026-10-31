@@ -52,7 +52,7 @@ from voice_assistant.config import (
     WakewordConfig,
     load_profile,
 )
-from voice_assistant.services import aktuator_schatten, aktuator_und, telegram
+from voice_assistant.services import aktuator_schatten, aktuator_und, gewohnheiten, telegram
 from voice_assistant.services import speaches as speaches_mod
 from voice_assistant.services.actuator import (
     Actuator,
@@ -2669,6 +2669,7 @@ def run() -> None:
                         verdict, unklar_grund = VERDICT_KEIN_KOMMANDO, None
                         unklar_an_brain = None   # Hinweis-Block, wenn die Rückfrage-Antwort zum Brain geht
                         unklar_brain_log = None  # ihre actuator_turns-Zeile, mit Sprecher nachgetragen
+                        gewohnheit = None        # passende Gewohnheit, wenn ein Satz ohne Ziel zum Brain geht
                         aktuator_gesperrt = followup_round > 0 or bool(war_bargein)
                         # Erst-Turn: diese Aufnahme beginnt mit dem Wakewort im
                         # Pre-Roll (auch ein Barge-in). Nach "Ja?", in Follow-ups
@@ -2963,7 +2964,19 @@ def run() -> None:
                             # Begründung: actuator.verdict(). Sprecher wie
                             # beim Schalten erst danach, im Hintergrund — die
                             # Rückfrage soll nicht warten.
-                            zum_brain = unklar_round >= MAX_UNKLAR_ROUNDS
+                            # Rollo-Befehl ohne Ziel, aber mit Gewohnheit:
+                            # keine Rückfrage, der Brain schaltet die gewohnte
+                            # Gruppe und sagt sie an (services/gewohnheiten.py,
+                            # Jochen 2026-10-31). Nur im Erst-Turn.
+                            if profile.gewohnheiten.enabled and erst_turn and not unklar_round:
+                                gewohnheit, gw_grund = gewohnheiten.finden(
+                                    profile.gewohnheiten, text, intent)
+                                if gw_grund != "kein Gerätewort":
+                                    print(f"[{now:.1f}s] 📅 Gewohnheit: "
+                                          + (f"{gewohnheit.gruppe} ({gewohnheit.treffer}/"
+                                             f"{gewohnheit.tage} Tage)" if gewohnheit else
+                                             f"keine — {gw_grund}"))
+                            zum_brain = unklar_round >= MAX_UNKLAR_ROUNDS or gewohnheit is not None
                             turn_epoch = time.time()
                             if not zum_brain:   # der Brain-Weg macht beides selbst
                                 _save_last_recording(recorded_chunks)
@@ -2987,6 +3000,8 @@ def run() -> None:
                                 "grund": unklar_grund,
                                 "runde": unklar_round,
                             }
+                            if gewohnheit is not None:
+                                unklar_log["gewohnheit"] = gewohnheit.id
                             if zum_brain:
                                 # Den Sprecher wartet der Brain-Weg ab (die Queue
                                 # gibt ihn nur einmal her) — die Zeile kommt dort.
@@ -3024,6 +3039,11 @@ def run() -> None:
                                 followup_rms_sum = 0.0
                                 followup_rms_count = 0
                                 followup_vad_speech = 0
+                            elif gewohnheit is not None:
+                                digest = actuator.digest or {}
+                                namen = (digest.get(gewohnheit.gruppe) or {}).get("namen") or []
+                                unklar_an_brain = profile.locale.gewohnheit_hinweis_fuer(
+                                    gewohnheit, namen[0] if namen else gewohnheit.gruppe)
                             else:
                                 # Auch die Antwort auf die Rückfrage ist unklar:
                                 # der Brain entscheidet, mit beiden Sätzen und
@@ -3050,7 +3070,9 @@ def run() -> None:
                             unklar_erst_text = ""
                         if verdict != VERDICT_AUSFUEHRBAR and (
                                 verdict != VERDICT_UNKLAR or unklar_an_brain):
-                            if unklar_an_brain:
+                            if gewohnheit is not None:
+                                print(f"[{now:.1f}s] 🔌 Aktuator: ohne Ziel, Gewohnheit {gewohnheit.id} → Brain (mit Hinweis)")
+                            elif unklar_an_brain:
                                 print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage-Antwort ohne sicheren Befehl → Brain (mit erstem Satz)")
                             elif actuator is not None and actuator.ready and aktuator_gesperrt:
                                 print(
@@ -3118,7 +3140,8 @@ def run() -> None:
                                     "{name}", audio_source.aktiv)
                                 hinweis = f"{hinweis}\n\n{geraet}" if hinweis else geraet
                             _log_outcome("brain", transcript=text,
-                                         **({"unklar_an_brain": True} if unklar_an_brain
+                                         **({"gewohnheit": gewohnheit.id} if gewohnheit is not None
+                                            else {"unklar_an_brain": True} if unklar_an_brain
                                             else {"anrede_hinweis": True} if hinweis else {}))
                             # Sprecher-Stimme sofort setzen (async Laden im Hintergrund).
                             # last_speaker nur bei positiver ID überschreiben — ein

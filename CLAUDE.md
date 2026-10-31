@@ -319,6 +319,27 @@ bei einem Teil eine Bestätigung, kommt die Rückfrage nach den anderen.
 `--einzel` prüft, dass das Tor-Set nicht schlechter wird). Zahlen im
 Docstring. Tests: `tests/test_aktuator_und.py`.
 
+**Gewohnheiten statt Rückfrage (`gewohnheiten:`, seit 2026-10-31, Experiment
+auf `feature/wake-schatten`).** Anlass 2026-10-30 07:19: „Gaston, mach die
+Rollos auf“ — Laya: `auf`, kein Ziel, Rückfrage des Aktuators, danach noch eine
+des Brains; morgens war an 30 von 30 Tagen „alle Rollos“ gemeint.
+`services/gewohnheiten.py` liest eine Nachschlag-Tabelle, die ein anderer
+Agent (Hauswacht) aus der Schaltgeschichte rechnet (`datei`, Schema-Version
+geprüft, höchstens `max_alter_tage` alt). Der enge Fall: unklar, kein Ziel
+oder eine unbelegte Gruppe, ein Wort beginnt mit dem Gerätewort („Rollos“,
+nicht „Küchenrollos“), Aktion und Uhrzeitfenster passen, Konfidenz ≥ 0,8
+(geschätzt, nicht gemessen; Jochen hätte 0,7 gesagt), ≥ 10 Tage, nur
+Erst-Turn. Dann keine Rückfrage, der Satz geht mit
+`locale.gewohnheit_hinweis` an den Brain, der die Gruppe mit
+`ziel_erschlossen=true` schaltet und ansagt (Jochen: „Rückfrage weg, direkt
+schalten mit Ansage, erst der enge Fall“). Das Feld sorgt dafür, dass solche
+Schaltungen die Gewohnheit nicht selbst bestätigen (ACTUATOR_INTERFACE.md).
+Ein Brain-Test (fester Session-Key, Incognito hing an diesem Tag) schaltete
+die Gruppe mit dem Feld in 12 s; mit dem Satz zum zweiten Mal in derselben
+Session schob er ein Rollo außerhalb der Gruppe einzeln nach, daher der letzte Satz des
+Hinweises. Log: `📅 Gewohnheit` im Journal, `gewohnheit` in
+`actuator_turns.log` und `wake_events.log`. Tests: `tests/test_gewohnheiten.py`.
+
 **Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
 implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige
 Vertrag beider Endpunkte samt Begründung jeder Design-Entscheidung, eine

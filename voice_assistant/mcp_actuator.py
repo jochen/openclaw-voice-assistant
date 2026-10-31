@@ -115,7 +115,8 @@ class GastonMCP:
 
     # -- haus_schalten -------------------------------------------------------
     def schalten(self, ziel: str, aktion: str, wert=None, einheit=None,
-                 bestaetigt: bool = False, request_id: str | None = None) -> dict:
+                 bestaetigt: bool = False, request_id: str | None = None,
+                 ziel_erschlossen: bool = False) -> dict:
         """POST /intent. Antwort-Envelope kommt unverändert zurück.
 
         ``request_id`` wird erzeugt, falls der Aufrufer keine mitgibt — sie ist
@@ -130,7 +131,7 @@ class GastonMCP:
             "einheit": einheit,
         }
         env = self.act.execute(intent, rid, bestaetigt=bestaetigt,
-                               quelle=self.QUELLE)
+                               quelle=self.QUELLE, ziel_erschlossen=ziel_erschlossen)
         if env is None:
             # Transportfehler nach Retry — execute() liefert dann None. Wir
             # geben dem Brain einen konsistenten Umschlag zurück statt None,
@@ -149,10 +150,11 @@ class GastonMCP:
         # füllen wir es hier — nur falls das Gate es weggelassen hat. Vom Gate
         # gelieferte Felder werden nicht angerührt (unverfälschte Durchleitung).
         env.setdefault("request_id", rid)
-        self._log_turn(rid, ziel, aktion, wert, env)
+        self._log_turn(rid, ziel, aktion, wert, env, ziel_erschlossen)
         return env
 
-    def _log_turn(self, rid: str, ziel: str, aktion: str, wert, env: dict) -> None:
+    def _log_turn(self, rid: str, ziel: str, aktion: str, wert, env: dict,
+                  ziel_erschlossen: bool = False) -> None:
         """Eine JSONL-Zeile an actuator_turns.log, phase "gaston".
 
         Ohne diesen Spiegel waren die Schaltungen des Brains unsichtbar — sie
@@ -174,6 +176,8 @@ class GastonMCP:
                 "grund": env.get("grund"),
                 "gesprochen": env.get("gesprochen"),
             }
+            if ziel_erschlossen:
+                meta["ziel_erschlossen"] = True
             with open(ACTUATOR_LOG_PATH, "a") as f:
                 f.write(json.dumps(meta, ensure_ascii=False) + "\n")
         except Exception as exc:  # Logging darf den Turn nie crashen
@@ -218,7 +222,10 @@ _TOOLS = [
             "wiederholen, weil der Zielwert noch nicht dasteht.\n"
             "request_id kannst du weglassen; sie wird automatisch erzeugt. "
             "Für den zweiten Handshake-Schritt MUSS dieselbe request_id wie im "
-            "ersten Schritt übergeben werden."
+            "ersten Schritt übergeben werden.\n"
+            "ziel_erschlossen=true, wenn der Nutzer das Ziel nicht genannt hat "
+            "und du es erschlossen hast (etwa aus einem Hinweis auf eine "
+            "Gewohnheit). Sonst weglassen."
         ),
         "inputSchema": {
             "type": "object",
@@ -235,6 +242,8 @@ _TOOLS = [
                                "description": "nur beim zweiten Handshake-Schritt true."},
                 "request_id": {"type": "string",
                                "description": "beim Handshake: dieselbe wie im ersten Schritt."},
+                "ziel_erschlossen": {"type": "boolean", "default": False,
+                                     "description": "true, wenn das Ziel nicht gesagt, sondern erschlossen wurde."},
             },
             "required": ["ziel", "aktion"],
         },
@@ -424,6 +433,7 @@ def _call_tool(server: GastonMCP, name: str, args: dict) -> dict:
             einheit=args.get("einheit"),
             bestaetigt=bool(args.get("bestaetigt", False)),
             request_id=args.get("request_id"),
+            ziel_erschlossen=args.get("ziel_erschlossen") is True,
         )
         return {"content": [{"type": "text",
                              "text": json.dumps(env, ensure_ascii=False, indent=2)}]}

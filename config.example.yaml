@@ -9,6 +9,10 @@
 #
 # Das alte flache Schema (ohne mode/local_audio/respeaker/leds-Blöcke) wird
 # weiterhin akzeptiert und als mode: local interpretiert.
+#
+# Diese Datei zeigt nicht jeden Block. Die vollständige Liste aller
+# Einstellungen samt Defaults steht in voice_assistant/config.py (die
+# Dataclasses *Config); die READMEs beschreiben jeden optionalen Block.
 
 # Optionaler voice-analysis-Container (akustisches Stimmungssignal).
 # Leer oder weggelassen = Stimmungsanalyse aus, der Assistent läuft normal.
@@ -69,6 +73,21 @@ profiles:
   #     # Ziel-Typen, die der Beispielblock im Prompt schon vorfuehrt — der
   #     # erzeugte Kontrast-Block laesst sie dann aus.
   #     beispiel_typen: ["rollo"]
+
+  # Gewohnheiten statt Rückfrage (optional, Experiment, standardmäßig AUS).
+  # Rollo-Befehl ohne Ort zu einer gewohnten Uhrzeit: statt der Rückfrage des
+  # Aktuators schaltet der Brain die gewohnte Gruppe und sagt sie an. Die
+  # Datei rechnet jemand anderes aus der Schaltgeschichte (README,
+  # „Gewohnheiten statt Rückfrage“, Felder in services/gewohnheiten.py).
+  #
+  #   gewohnheiten:
+  #     enabled: true
+  #     datei: "~/pfad/zu/gewohnheiten.json"
+  #     min_konfidenz: 0.8     # geschätzt, nicht gemessen
+  #     min_tage: 10
+  #     max_alter_tage: 10
+  #     geraete:
+  #       rollo: ["rollo", "rolladen", "rolläden", "jalousie"]
 
   # ---------------------------------------------------------------------
   # Beispiel "local" - Mikrofon/Lautsprecher direkt am Pi

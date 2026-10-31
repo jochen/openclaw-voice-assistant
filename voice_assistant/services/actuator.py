@@ -971,7 +971,7 @@ class Actuator:
         )
 
     def execute(self, intent: dict, request_id: str, bestaetigt: bool = False,
-                quelle: str = "aktuator") -> dict | None:
+                quelle: str = "aktuator", ziel_erschlossen: bool = False) -> dict | None:
         """POST /intent. Bewusst KEIN konfidenz-Feld (sicherer Default: kosten=hoch
         fragt dann immer nach, siehe ACTUATOR_V1_PLAN.md).
 
@@ -987,6 +987,11 @@ class Actuator:
         Rückfrage ab — dieser Wert darf NIEMALS gesendet werden und wird hier
         abgewiesen, sodass die Garantie nicht vom guten Willen eines Aufrufers
         abhängt.
+
+        ``ziel_erschlossen``: das Ziel wurde nicht gesagt, sondern erschlossen
+        (Gewohnheit). Geht nur bei True mit; die Gegenstelle schreibt es mit,
+        damit solche Schaltungen keine Gewohnheit bestätigen
+        (ACTUATOR_INTERFACE.md).
         """
         if quelle == "brain":
             raise ValueError(
@@ -1004,6 +1009,8 @@ class Actuator:
         }
         if bestaetigt:
             body["bestaetigt"] = True
+        if ziel_erschlossen:
+            body["ziel_erschlossen"] = True
         data = json.dumps(body).encode("utf-8")
 
         def _post() -> dict:
