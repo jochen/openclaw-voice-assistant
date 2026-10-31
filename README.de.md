@@ -2,27 +2,98 @@
 
 > [English version](README.md)
 
-Wakeword-gesteuerter Sprachassistent für Raspberry Pi. Verbindet lokale Spracheingabe mit [OpenClaw](https://github.com/openclaw/openclaw) als KI-Backend und [Speaches](https://github.com/speaches-ai/speaches) für GPU-beschleunigtes STT/TTS.
+Ein Sprach-Frontend für einen [OpenClaw](https://github.com/openclaw/openclaw)-Agenten.
+Man ruft ihn beim Namen, sagt, was man will, und der Agent antwortet laut.
+Alles, was kein Nachdenken braucht (Licht schalten, Küchentimer, Musik
+stoppen), erledigt der Assistent selbst in etwa einer halben Sekunde, ohne
+den Agenten. Spracherkennung und Sprachausgabe laufen auf eigener Hardware
+([Speaches](https://github.com/speaches-ai/speaches), lokale Modelle); nur
+das Sprachmodell des Agenten läuft dort, wo man es betreibt.
+
+## Was er kann
+
+- **Ein eigenes Wakewort.** Mit dem mitgelieferten Studio trainiert, mit
+  Aufnahmen der Menschen im Haus, und vor dem Einsatz gemessen.
+- **Schalten ohne Warten.** „Mach das Küchenlicht an“ geht direkt an die
+  Hausautomation (~0,5 s). Was kein klarer Befehl ist, geht an den Agenten,
+  nie wird geraten.
+- **Weiß, wer spricht.** Ein Stimm-Fingerabdruck unterscheidet die
+  Familienmitglieder; Folgenreiches kann einen erkannten Sprecher verlangen.
+- **Man kann ihn unterbrechen.** „Stopp“ plus Wakewort bricht die Antwort ab
+  und beendet den Lauf des Agenten, mitten im Satz.
+- **Sagt Bescheid, wenn es länger dauert.** Kurze Antworten kommen sofort,
+  lange Aufgaben bekommen eine kurze Rückmeldung, das Ergebnis wird angesagt,
+  wenn es fertig ist.
+- **Küchentimer, Musik, Mikrofon.** Timer mit Anzeige und Klingeln auf anderen
+  Geräten, Musik leiser, solange man spricht, „stopp die Musik“ ohne den
+  Agenten, „stell dich eine Stunde taub“ für Besuch.
+- **Das Handy als zweites Mikrofon.** In Räumen ohne Mikrofon (im Bad) macht
+  eine Android-App das Handy zum Satelliten.
+- **Alles ist nachvollziehbar.** Jedes Gespräch wird in eine Telegram-Gruppe
+  gespiegelt, jede Entscheidung so geloggt, dass die Messwerkzeuge sie
+  nachspielen können.
+
+Hardware: ein Linux-Rechner (getestet: x86-64 mit 8-GB-GPU, und ein
+Raspberry Pi 4/5 mit den großen Modellen auf einem anderen Rechner), ein
+ReSpeaker XVF3800 mit ESP32-S3 oder ein beliebiges ALSA-Mikrofon, und ein
+Lautsprecher.
+
+## Gemacht für die Einrichtung mit einem Agenten
+
+Das ist kein Produkt, das man per Klick installiert. Es ist dafür gedacht,
+**zusammen mit einem Coding-Agenten** eingerichtet und angepasst zu werden
+(Claude Code o. ä.): Räume, Geräte, Stimmen und Sprache sind bei jedem
+anders als bei uns, und alles, was davon abhängt, ist ein dokumentierter
+Vertrag oder eine Profil-Einstellung, nicht im Code versteckt.
+
+- Jede Schnittstelle nach außen hat ein eigenes Dokument mit
+  Mindest-Implementierung und Abnahme-Prüfung — der Agent kann die
+  Gegenstelle für die eigene Hausautomation bauen.
+- Schwellen sind nicht geraten. Zu jeder gibt es ein Werkzeug, das sie gegen
+  die eigenen Aufnahmen misst, und die Dokumente sagen, welche Zahl zu
+  schlagen ist.
+- Jede optionale Funktion ist aus, solange ihr Profil-Block fehlt. Klein
+  anfangen, eins nach dem anderen einschalten.
+
+### Für Agenten: wo man anfängt
+
+| Was | Wo |
+|---|---|
+| Einstieg, Hauptschleife, State-Machine | `voice_assistant/__main__.py`, `voice_assistant/assistant.py` |
+| Alle Einstellungen mit Defaults (die vollständige Liste) | `voice_assistant/config.py` (Dataclasses `*Config`), Beispiel: `config.example.yaml` |
+| Package-Struktur, Threads, die Gründe hinter jeder Entscheidung | `CLAUDE.md` (Arbeitsnotizen des Betreibers, bezieht sich auf diese Installation) |
+| Schaltvertrag für die eigene Hausautomation | `ACTUATOR_INTERFACE.md` |
+| Sprecher-Zustandsdatei und die Schranke darauf | `SPEAKER_STATE.md` |
+| Küchentimer und seine Anzeige-/Klingel-Senken | `TIMER_INTERFACE.md` |
+| Ein Wakewort trainieren und messen | `WAKEWORD_PROCESS.md`, `wakeword_studio/`, `models/wakewords/README.md` |
+| Den lokalen Klassifikator trainieren | `LAYA_TRAINING.md` |
+| Sprach-Werkzeuge auf Agenten-Seite (OpenClaw-Plugin, MCP-Server) | `openclaw-plugin/`, `voice_assistant/mcp_actuator.py` |
+| Mess- und Replay-Werkzeuge | `tools/` (Abschnitt „Mess-Werkzeuge“ unten) |
+| Tests (offline, ohne Netz) | `tests/`, `ow-venv/bin/python -m unittest discover -s tests` |
+| ReSpeaker-Firmware, systemd-Units | `esphome/`, `systemd/` |
+
+Modelle, Klassifikator-Container und Speaches kommen aus einem eigenen Repo,
+[openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack).
 
 ## Pipeline
 
 ```
-Audio-Frontend (ALSA-Mikrofon  ODER  ReSpeaker XVF3800 via ESPHome)
-  → openWakeWord ("hey jarvis")
-  → WebRTC VAD + Aufnahme (max 30 s)
+Audio-Frontend (ReSpeaker XVF3800 via ESPHome, oder ALSA; optional: Handy-App)
+  → openWakeWord mit eigenem Wakewort (ohne eigenes: "hey jarvis")
+  → WebRTC VAD + Aufnahme (kurz bei Befehlen, länger bei Fragen)
   → STT: [llama.cpp-Audiomodell →] [onnx-asr →] Speaches  (Fallback: faster-whisper lokal)
-  → Diarization (parallel): Speaches /v1/audio/diarization mit bekannten Sprechern
+  → Sprecher (parallel): Stimm-Fingerabdruck gegen angelernte Stimmen
+  → Feste Erkenner: Timer, Musik, Mikro stumm (ohne Modell)
   → Voice-Aktuator (optional): Schaltbefehl? → lokal ausführen (~0,5 s), Rest entfällt
-  → Bestätigung vorlesen ("Ich habe verstanden…") — paralleler Thread
-  → POST /v1/responses → OpenClaw  (Wrapper: "🎤 [Sprecher: jochen|unbekannt] {text}")
-  → Antwort Satz für Satz via TTS: Speaches /v1/audio/speech  (Fallback: Piper lokal)
+  → POST /v1/responses → OpenClaw  ("🎤 [Sprecher: name|unbekannt] {text}" + Hinweise)
+  → Antwort Satz für Satz via TTS, während sie kommt: Speaches  (Fallback: Piper lokal)
   → Anfrage + Antwort per Telegram spiegeln
 ```
 
 ## Voraussetzungen
 
-- Raspberry Pi (getestet: Pi 4/5, ARM64, Raspberry Pi OS Bookworm)
-- **Python 3.11.9** (exakt — `openwakeword` + `tflite-runtime` erfordern diese Version auf ARM64)
+- Linux, **Python 3.11.9** (exakt — `openwakeword` + `tflite-runtime`
+  erfordern diese Version auf ARM64; die x86-Installation nutzt dieselbe)
 - [OpenClaw](https://openclaw.dev) läuft lokal auf `http://127.0.0.1:18789`
 - [Speaches](https://github.com/speaches-ai/speaches) GPU-Container erreichbar (Standard: `http://<speaches-host>:8000`)
 - *(optional)* `voice-analysis`-Container (Standard: `http://<speaches-host>:8001`) — liefert das akustische Stimmungssignal und das Tool `voice_analyze_last_output`; der Assistent läuft auch ohne ihn.

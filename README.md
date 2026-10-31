@@ -2,27 +2,95 @@
 
 > [Deutsche Version](README.de.md)
 
-Wakeword-driven voice assistant for Raspberry Pi. Connects local speech input to [OpenClaw](https://github.com/openclaw/openclaw) as the AI backend and [Speaches](https://github.com/speaches-ai/speaches) for GPU-accelerated STT/TTS.
+A voice front end for an [OpenClaw](https://github.com/openclaw/openclaw)
+agent. You call it by name, say what you want, and your agent answers out
+loud. Everything that needs no thinking (switching the lights, a kitchen
+timer, stopping the music) is handled locally in about half a second,
+without the agent. Speech recognition and synthesis run on your own
+hardware ([Speaches](https://github.com/speaches-ai/speaches), local
+models); only the agent's language model is wherever you run it.
+
+## What it does
+
+- **Your own wake word.** Train it with the bundled studio, with recordings
+  of the people in your home, and measure it before it goes live.
+- **Switching without waiting.** "Turn on the kitchen light" goes straight to
+  your home automation (~0.5 s). Anything that is not a clear command goes to
+  the agent instead, never a guess.
+- **Knows who is speaking.** A voice fingerprint tells family members apart;
+  actions with consequences can require a known speaker.
+- **You can interrupt it.** "Stop" plus the wake word cuts off the answer and
+  cancels the agent's run, mid-sentence.
+- **Tells you when it takes longer.** Short answers come right away; long jobs
+  get a short note, and the result is announced when it is ready.
+- **Kitchen timer, music, microphone.** Timers with displays and ringing on
+  other devices, music turned down while you talk, "stop the music" without
+  the agent, "go deaf for an hour" for visitors.
+- **Your phone as a second microphone.** In rooms without a microphone (the
+  bathroom), an Android app makes the phone a satellite.
+- **Everything is visible.** Every exchange is mirrored to a Telegram group;
+  every decision is logged in a form the measurement tools can replay.
+
+Hardware: a Linux machine (tested: x86-64 with an 8 GB GPU, and a Raspberry
+Pi 4/5 with the heavy models on another machine), a ReSpeaker XVF3800 array
+with an ESP32-S3 or any ALSA microphone, and a speaker.
+
+## Built to be set up with an agent
+
+This project is not a product you install by clicking. It is meant to be
+set up and adapted **together with a coding agent** (Claude Code or
+similar): your rooms, devices, voices and language are different from ours,
+and every piece that depends on them is a documented contract or a profile
+setting, not hidden in the code.
+
+- Every interface to the outside has its own document with a minimal
+  implementation and an acceptance test, so your agent can build the
+  other side for your home automation.
+- Thresholds are not guessed. Each one has a tool that measures it against
+  your own recordings, and the documents say which number to beat.
+- Every optional feature is off unless its profile block is present. Start
+  small and switch on one thing at a time.
+
+### For agents: where to start
+
+| What | Where |
+|---|---|
+| Entry point, main loop, state machine | `voice_assistant/__main__.py`, `voice_assistant/assistant.py` |
+| All settings with defaults (the complete list) | `voice_assistant/config.py` (`*Config` dataclasses), example: `config.example.yaml` |
+| Package layout, threading, the reasons behind each decision | `CLAUDE.md` (the maintainer's working notes, German, refers to this installation) |
+| Switching contract for your home automation | `ACTUATOR_INTERFACE.md` |
+| Speaker state file and the gate built on it | `SPEAKER_STATE.md` |
+| Kitchen timer and its display/ringing sinks | `TIMER_INTERFACE.md` |
+| Training and measuring a wake word | `WAKEWORD_PROCESS.md`, `wakeword_studio/`, `models/wakewords/README.md` |
+| Training the local classifier | `LAYA_TRAINING.md` |
+| Agent-side voice tools (OpenClaw plugin, MCP server) | `openclaw-plugin/`, `voice_assistant/mcp_actuator.py` |
+| Measurement and replay tools | `tools/` (section "Measurement tools" below) |
+| Tests (offline, no network) | `tests/`, `ow-venv/bin/python -m unittest discover -s tests` |
+| ReSpeaker firmware, systemd units | `esphome/`, `systemd/` |
+
+The models, the classifier container and Speaches are deployed from a
+separate repository,
+[openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack).
 
 ## Pipeline
 
 ```
-Audio Frontend (ALSA mic  OR  ReSpeaker XVF3800 via ESPHome)
-  → openWakeWord ("hey jarvis")
-  → WebRTC VAD + recording (max 30 s)
+Audio front end (ReSpeaker XVF3800 via ESPHome, or ALSA; optional: phone app)
+  → openWakeWord with your own wake word (default without one: "hey jarvis")
+  → WebRTC VAD + recording (short for commands, longer for questions)
   → STT: [llama.cpp audio model →] [onnx-asr →] Speaches  (fallback: faster-whisper local)
-  → Diarization (parallel): Speaches /v1/audio/diarization with known speakers
+  → Speaker (parallel): voice fingerprint against enrolled voices
+  → Fixed recognisers: timer, music, microphone mute (no model)
   → Voice actuator (optional): a switching command? → run locally (~0.5 s), skip the rest
-  → Confirmation TTS ("I understood…") — parallel thread
-  → POST /v1/responses → OpenClaw  (wrapper: "🎤 [Sprecher: jochen|unbekannt] {text}")
-  → Reply TTS sentence by sentence: Speaches /v1/audio/speech  (fallback: Piper local)
+  → POST /v1/responses → OpenClaw  ("🎤 [Sprecher: name|unbekannt] {text}" + hints)
+  → Reply TTS sentence by sentence while it streams: Speaches  (fallback: Piper local)
   → Mirror query + reply to Telegram
 ```
 
 ## Requirements
 
-- Raspberry Pi (tested: Pi 4/5, ARM64, Raspberry Pi OS Bookworm)
-- **Python 3.11.9** (exact — `openwakeword` + `tflite-runtime` require this version on ARM64)
+- Linux, **Python 3.11.9** (exact — `openwakeword` + `tflite-runtime` require
+  this version on ARM64; the x86 installation uses the same)
 - [OpenClaw](https://openclaw.dev) running locally on `http://127.0.0.1:18789`
 - [Speaches](https://github.com/speaches-ai/speaches) GPU container reachable (default: `http://<speaches-host>:8000`)
 - *(optional)* `voice-analysis` container (default: `http://<speaches-host>:8001`) — adds the acoustic mood signal and the `voice_analyze_last_output` tool; the assistant runs fine without it.
