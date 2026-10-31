@@ -1538,3 +1538,19 @@ Transkript etwa zwei Drittel Fehlauslöser, ein Drittel echte Rufe mit
 schlechter Antwort („Gaston, ist alles gut bei dir?“). Ein Kandidat fürs
 Ohr-Review, kein hartes Label. gaston-privat ee9227b. Die Pakete R5/R6 sind
 damit veraltet; das nächste Paket aus dem Korpus neu schnüren.
+
+**Ohr-Runde über alle Stopp-Labels (2026-10-31, 47 Clips, gaston-privat
+fd6aa27).** Frage wie immer: ist „Gaston“ im Wake-Clip zu hören, egal ob
+gemeint.
+
+| | n | Gaston klar | kein | halb/unklar |
+|---|---|---|---|---|
+| Stopp in der ersten Aufnahme (Regel 3) | 29 | 8 | 16 | 5 |
+| per Barge-in abgebrochen (zurückgezogen) | 18 | 5 | 11 | 2 |
+
+Regel 3 traf also nur in 16 von 29 Fällen. Der Grund steht in Jochens
+Notizen: ein Stopp sagt „nicht gemeint“, nicht „nicht gesagt“. Mehrere der
+klaren Fälle sind beiläufige Erwähnungen („Gaston Hauskanal“, „versehentliche
+Erwähnung“), einmal Felix. Fürs Training sind das Positive. Alle 47 tragen
+jetzt Ohr-Labels (review `stopp_labels_2026-10-31`). Korpus danach: positiv
+744, negativ 133, zurückgezogen 7. Offen: Regel 3 für künftige Clips.
