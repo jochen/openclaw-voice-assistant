@@ -1660,3 +1660,24 @@ ist, entscheidet Jochen.
 
 Modelle: `~/wake-pakete/modelle/gaston_r7{voll,C}_l{1,2}/gaston/` (Live-Manifest
 daneben), Quellen im Fablab `train_out/gaston_r7*_src`.
+
+### Live-Versuch R7 voll l2 (seit 2026-10-31 18:08)
+
+Jochens Entscheidung trotz verfehlter Schranke: die Daten sind besser
+(Stopp-Labels korrigiert), alle vier Läufe zeigen weniger neue Fehltrigger.
+Dagegen steht: voll l1 mit denselben Daten hatte FP/h 0,75, was l2 von l1
+unterscheidet, ist Zufall. Rückweg: Bundle-Dateien aus `42797ef`.
+
+Vergleichszahl v5, festgehalten VOR dem Versuch (`tools/wake_live_bilanz.py`,
+nach `wake_triage --seit 8 --auch-trigger`), Woche 2026-10-24 bis 10-31 18:00:
+
+| je Tag | v5 |
+|---|---|
+| Trigger echter Ruf | 7,1 (57) |
+| Trigger Rauschen (Fehltrigger) | 2,5 (20, davon 13 per Ohr) |
+| Trigger unklar | 1,25 (10) |
+| Near-Miss echter Ruf (verpasst, STT) | 3,1 (25) |
+
+Gelesen wird nach einer Woche dasselbe für l2, mit denselben Labelquellen
+(die Ohr-Anteile vorher angleichen, sonst vergleicht man Labelquellen).
+Mehr Fehltrigger am Tag als v5 → zurück auf v5.
