@@ -1557,3 +1557,40 @@ jetzt Ohr-Labels (review `stopp_labels_2026-10-31`). Korpus danach: positiv
 ein Stopp vergibt kein Selbst-Label mehr, `wake_triage` listet solche Trigger
 als Hörkandidaten (`gestoppte_ohne_ohr`). `wake_review.jsonl` liegt seit
 demselben Tag in `gaston-privat` (Symlink), vorher in keinem Git.
+
+### Paket Runde 7 (2026-10-31): R6 mit korrigierten Labels
+
+`~/wake-pakete/gaston_r7_paket`, gebaut wie R6 (`--vorrunde` R5, Seed
+20260916, `--neu-ab` 20261011, Val-Anteil 0,3), aber nach der Korrektur der
+Stopp-Labels (Barge-in-Clips mit „Stopp, Gaston“ jetzt positiv, Stopp-Abbrüche
+per Ohr gelabelt). Neu dabei: die Tage bis 2026-10-31, und
+`val_vorrunde/umgelabelt_positiv` (5 Clips aus R5-val/negative, die Gaston
+enthalten; `_val_umsortieren`). Im Training keine falschen Negativen mehr aus
+Barge-ins, 24 Barge-in-Clips als Positive.
+
+| | R6 | R7 |
+|---|---|---|
+| train/positive | 394 | 440 |
+| train/negative | 282 | 289 |
+| val/positive (neu) | 94 | 115 |
+| val/negative (neu) | 20 | 14 |
+| val-Tage neu / train-Tage neu | 6 / 9 | 7 / 14 |
+
+Vorher-Zahl v5 auf R7 (`wake_paket messen`, ausgelöst / n):
+
+| Gruppe | v5 |
+|---|---|
+| val_vorrunde/positive | 116 / 130 |
+| val_vorrunde/positive_studio | 19 / 20 |
+| val_vorrunde/positive_timer (flüssige Sätze) | 10 / 27 |
+| val_vorrunde/negative + negative_auto | 11 / 41 |
+| val_vorrunde/umgelabelt_positiv | 5 / 5 |
+| val/positive | 105 / 115 |
+| val/negative | 14 / 14 |
+| val/negative_geraeusch | 3 / 3 |
+| val/negative_auto | 17 / 29 |
+| val/positive_zweifel (nicht Schranke) | 63 / 81 |
+
+`val/negative` sind v5-Fehltrigger, daher 14/14. Die R6-Zahlen sind mit R7
+nicht direkt vergleichbar (andere Tage im Split, korrigierte Labels). Schranke
+für Runde 7: vor dem Training mit Jochen festlegen.
