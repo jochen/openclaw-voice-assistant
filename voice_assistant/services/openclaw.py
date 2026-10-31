@@ -53,11 +53,55 @@ _NO_REPLY_RE = re.compile(
 #
 # Nur der Satz als ganze Antwort zaehlt: das Gateway schickt ihn nur, wenn
 # nichts gestreamt wurde, und nur in response.completed. Fehler kommen als
-# response.failed (query_stream -> None), Timeouts als timed_out. Nicht
+# response.failed (query_stream -> None, FEHLER_GEMELDET), Timeouts als timed_out. Nicht
 # unterscheidbar ist "NO_REPLY gesagt" von "gar nichts geliefert"; das
 # Gateway behandelt beides als still, hier ebenso. Aendert ein Update den
 # Wortlaut, liest Gaston ihn wieder vor (laut, nicht still kaputt).
 GATEWAY_LEER_PLATZHALTER = "No response from OpenClaw."
+
+# Warum ein Turn keine Antwort bekam, fuer Ansage und Telegram (workers.py).
+# Anlass Fablab 2026-10-28 19:11: das Modell war beim Anbieter abgeschaltet
+# (HTTP 400 "no keys found that support model"), Gaston sagte nur "ich konnte
+# keine Antwort erhalten", und im Chat stand die Frage ohne jede Antwort, das
+# sah aus wie Schweigen. Arten:
+#   gemeldet   der Server hat den Lauf mit Fehler beendet (response.failed,
+#              HTTP-Fehler der non-streaming-Anfrage)
+#   abgelehnt  die Stream-Anfrage wurde mit HTTP-Fehler abgewiesen, bevor
+#              ein Lauf begann: nur hier ist ein zweiter Versuch harmlos
+#   weg        Gateway nicht erreichbar
+#   zeit       Timeout ohne Daten
+#   abgerissen sonst (Verbindung weg, Stream ohne Abschluss)
+FEHLER_GEMELDET = "gemeldet"
+FEHLER_ABGELEHNT = "abgelehnt"
+FEHLER_WEG = "weg"
+FEHLER_ZEIT = "zeit"
+FEHLER_ABGERISSEN = "abgerissen"
+
+
+def _merke(fehler: dict | None, art: str, meldung: str = "") -> None:
+    if fehler is not None:
+        fehler["art"] = art
+        fehler["meldung"] = meldung
+
+
+def fehler_meldung(error) -> str:
+    """Lesbare Meldung aus dem error-Objekt des Gateways ({code, message}).
+
+    Das Gateway maskiert Satzzeichen fuer Markdown ("model\\: qsu\\/glm"), das
+    kommt hier wieder weg — die Meldung geht als Klartext nach Telegram."""
+    if not isinstance(error, dict):
+        return ""
+    text = str(error.get("message") or error.get("code") or "")
+    return re.sub(r"\\(.)", r"\1", text).strip()[:300]
+
+
+def _http_meldung(e: urllib.error.HTTPError) -> str:
+    roh = e.read().decode(errors="replace")
+    try:
+        meldung = fehler_meldung(json.loads(roh).get("error"))
+    except (ValueError, AttributeError):
+        meldung = ""
+    return meldung or f"HTTP {e.code}: {roh[:200]}"
 
 # Schluesselwort fuer "nach dieser Antwort kein Follow-up-Fenster" (Jochen,
 # 2026-10-15: nach "gefaellt mir" stand das Fenster 30 s offen, obwohl nichts
@@ -181,6 +225,7 @@ def query(
     wrap: bool = True,
     instructions_feld: bool = True,
     erinnerung: str = "",
+    fehler: dict | None = None,
 ) -> str | None:
     """Send a voice turn to /v1/responses and return the final reply.
 
@@ -199,6 +244,7 @@ def query(
     wrap: False = text unverändert senden (Systemnachrichten statt Mikrofon-Transkription).
     instructions_feld: voice_instruction als "instructions" senden statt ans
         Transkript zu hängen (siehe _payload).
+    fehler: bekommt bei None-Ergebnis "art" (FEHLER_*) und "meldung".
     """
     speaker_label = speaker_label or (speaker if speaker else "unbekannt")
     voice_input = f"🎤 [Sprecher: {speaker_label}] {text}" if wrap else text
@@ -239,12 +285,22 @@ def query(
         print("⚠️  Empty response from /v1/responses")
         return None
     except urllib.error.HTTPError as e:
-        print(f"❌ OpenClaw HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")  # noqa: E501
+        meldung = _http_meldung(e)
+        print(f"❌ OpenClaw HTTP {e.code}: {meldung}")
+        _merke(fehler, FEHLER_GEMELDET, meldung)
+        if on_done:
+            on_done()
+        return None
+    except urllib.error.URLError as e:
+        print(f"❌ OpenClaw error: {e}")
+        art = FEHLER_ZEIT if isinstance(e.reason, TimeoutError) else FEHLER_WEG
+        _merke(fehler, art, str(e.reason))
         if on_done:
             on_done()
         return None
     except Exception as e:
         print(f"❌ OpenClaw error: {e}")
+        _merke(fehler, FEHLER_ZEIT if isinstance(e, TimeoutError) else FEHLER_ABGERISSEN, str(e))
         if on_done:
             on_done()
         return None
@@ -290,6 +346,7 @@ def query_stream(
     turn: int | None = None,
     instructions_feld: bool = True,
     erinnerung: str = "",
+    fehler: dict | None = None,
 ) -> tuple[str | None, bool]:
     """Streaming-Variante von query(): liest SSE-Events und liefert fertige Sätze
     via on_sentence-Callback, sobald split_into_sentences eine Satzgrenze erkennt.
@@ -311,6 +368,8 @@ def query_stream(
     Telegram-Spiegelung) oder None bei Fehler, und ob der Abbruch ein Timeout
     war. timed_out=True heißt: der Server arbeitet vermutlich noch am Turn —
     der Auftrag darf dann NICHT erneut gepostet werden (Doppel-Ausführung).
+    fehler: bekommt "art" (FEHLER_*) und "meldung", wenn der Turn nicht
+        sauber endete. Nur bei FEHLER_ABGELEHNT hat kein Lauf begonnen.
     """
     from voice_assistant.services.tts import StreamingSentenceBuffer
 
@@ -392,7 +451,9 @@ def query_stream(
                                     on_sentence(s)
 
                     elif evt_type == "response.failed":
-                        print("❌ OpenClaw stream: response.failed")
+                        meldung = fehler_meldung((evt.get("response") or {}).get("error"))
+                        print(f"❌ OpenClaw stream: response.failed: {meldung}")
+                        _merke(fehler, FEHLER_GEMELDET, meldung)
                         return None, False
 
                     elif evt_type == "response.completed":
@@ -414,6 +475,7 @@ def query_stream(
             return full_text or None, False
 
         # Stream sauber zu Ende ohne response.completed → trotzdem flushen
+        _merke(fehler, FEHLER_ABGERISSEN, "Stream ohne Abschluss")
         remaining = buf.flush()
         if on_sentence:
             for s in remaining:
@@ -421,7 +483,9 @@ def query_stream(
         return full_text or None, False
 
     except urllib.error.HTTPError as e:
-        print(f"❌ OpenClaw stream HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+        meldung = _http_meldung(e)
+        print(f"❌ OpenClaw stream HTTP {e.code}: {meldung}")
+        _merke(fehler, FEHLER_ABGELEHNT, meldung)
         return None, False
     except TimeoutError:
         # Abbruch zuerst pruefen: timed_out=True wuerde sonst eine
@@ -431,6 +495,7 @@ def query_stream(
             print("🛑 OpenClaw-Stream abgebrochen (Barge-in)")
             return full_text or None, False
         print(f"❌ OpenClaw stream timeout ({OPENCLAW_STREAM_TIMEOUT}s ohne Daten)")
+        _merke(fehler, FEHLER_ZEIT)
         return full_text or None, True
     except urllib.error.URLError as e:
         if control is not None and turn is not None and control.cancelled(turn):
@@ -438,8 +503,10 @@ def query_stream(
             return full_text or None, False
         if isinstance(e.reason, TimeoutError):
             print(f"❌ OpenClaw stream timeout ({OPENCLAW_STREAM_TIMEOUT}s ohne Daten)")
+            _merke(fehler, FEHLER_ZEIT)
             return full_text or None, True
         print(f"❌ OpenClaw stream error: {e}")
+        _merke(fehler, FEHLER_WEG, str(e.reason))
         return None, False
     except Exception as e:
         # Ein Abbruch schliesst den Socket unter dem Leser weg — das ist kein
@@ -448,4 +515,5 @@ def query_stream(
             print("🛑 OpenClaw-Stream abgebrochen (Barge-in)")
             return full_text or None, False
         print(f"❌ OpenClaw stream error: {e}")
+        _merke(fehler, FEHLER_ABGERISSEN, str(e))
         return None, False
