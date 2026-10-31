@@ -1620,3 +1620,43 @@ C ist als Modell für die Prüfung nach dem Trigger gedacht, die die Schranke
 nicht sieht. Vier Läufe, und die Streuung je Lauf ist groß: besteht nur ein
 Lauf eines Rezepts, ist das kein Deploy-Grund (Auswahl am Val-Set), sondern
 Entscheidung bei Jochen.
+
+## Nachtraining Runde 7 — Ergebnis (2026-10-31 18:00)
+
+Vier Läufe, 15:36–17:18 im Fablab (augment ~28 min je Rezept, train ~11 min je
+Lauf). `train rc=1` bei allen vier ist der bekannte Abbruch am Ende von
+train.py (`onnx_tf` fehlt, die tflite macht `onnx2tf` danach), wie in Runde 6.
+Gemessen mit `wake_paket messen` (Live-Manifest von v5 bei jedem Kandidaten),
+FP/h aus `eval_debounce.py`, 3-Frame @0,35.
+
+| Validierung | v5 | voll l1 | voll l2 | C l1 | C l2 | muss |
+|---|---|---|---|---|---|---|
+| flüssige Sätze `positive_timer` (27) | 10 | 21 | 13 | 16 | 15 | ≥ 10 |
+| echte Rufe R5-Val (130) | 116 | 125 | 121 | 122 | 120 | ≥ 114 |
+| Fehltrigger R5-Val (16 + 25) | 11 | **12** | **12** | **18** | **16** | ≤ 11 |
+| Studio-Takes (20) | 19 | 20 | 19 | 18 | 18 | ≥ 18 |
+| FP/h generisch | 0,09 | **0,75** | 0,28 | **1,22** | **0,65** | ≤ 0,5 |
+| echte Rufe neue Val-Tage (115) | 105 | 110 | 105 | 109 | 106 | ≥ 103 |
+| Fehltrigger neue Val-Tage (14) | 14 | 6 | 7 | 8 | 11 | ≤ 14 |
+| `negative_geraeusch` (3) | 3 | 0 | 0 | 1 | 1 | ≤ 1 |
+
+Nur gelesen: `umgelabelt_positiv` 5/5 bei allen; `positive_zweifel` 63 / 68 /
+66 / 69 / 71; `val/negative_auto` 17 / 14 / 10 / 18 / 19;
+`val_vorrunde/positive_auto` 11 / 12 / 11 / 10 / 11.
+
+**Kein Lauf besteht.** voll l2 verfehlt nur die R5-Fehltrigger, 12 statt 11.
+Die Paar-Messung gegen v5 dort: neu ausgelöst
+`20260918_191023_gaston_nearmiss`, `20261010_212733_gaston_wake` (beide per
+Ohr Rauschen) und `auto_20261010_211957` (STT, leerer Text), nicht mehr
+`20260927_225918` (Ohr) und `auto_20261010_080842`. Die Zeile verfehlt also
+an gehörten Labels, kein Labelfehler. C verfehlt FP/h wie vorab erwartet.
+
+Was die Runde trotzdem zeigt: Bei den Fehltriggern der neuen Val-Tage und
+den Geräuschen sind alle vier klar besser als v5 (6–11 statt 14, 0–1 statt
+3). Bei den alten R5-Fehltriggern ist es kein einziger. Die Streuung je
+Lauf ist wieder groß (FP/h voll 0,75 gegen 0,28, Timer 21 gegen 13).
+Nach der Regel oben kein Deploy. Ob voll l2 trotz der Zeile ein Kandidat
+ist, entscheidet Jochen.
+
+Modelle: `~/wake-pakete/modelle/gaston_r7{voll,C}_l{1,2}/gaston/` (Live-Manifest
+daneben), Quellen im Fablab `train_out/gaston_r7*_src`.
