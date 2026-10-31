@@ -82,10 +82,11 @@ if os.path.exists(_VENV) and os.path.realpath(sys.executable) != os.path.realpat
 
 from voice_assistant.config import TRIGGER_AUDIO_DIR, WAKE_LOG_PATH  # noqa: E402
 from tools.wake_corpus import (  # noqa: E402
-    _WAKE_FORM, _korpus_dateien, _manifest_lesen, _positiv_stuecke,
+    _korpus_dateien, _manifest_lesen, _positiv_stuecke,
     _wav_lesen, _wav_schreiben,
 )
 from tools.wake_rms_replay import _lade_review, labels_fuer_clips  # noqa: E402
+from tools import wake_wort  # noqa: E402
 
 WORKSPACE = os.path.dirname(WAKE_LOG_PATH)
 SHADOW_PATH = os.path.join(WORKSPACE, "nearmiss_shadow.jsonl")
@@ -99,11 +100,8 @@ def _tag(audio: str) -> str:
     return audio[:8]
 
 
-def _hoert_gaston(text: str | None) -> bool:
-    for w in (text or "").lower().split():
-        if w.strip(",.!?-:;„“\"'").startswith(_WAKE_FORM):
-            return True
-    return False
+def _hoert_wort(text: str | None) -> bool:
+    return wake_wort.aktiv().gehoert(text)
 
 
 class _Ohren:
@@ -293,7 +291,7 @@ def run_bauen(args) -> int:
             else:
                 t = ohren.texte(pcm, rate, breite, kan, mit_kontext=False)
                 meta.update(t)
-                gut = (_hoert_gaston(t["medium"]) or _hoert_gaston(t["qwen"])) \
+                gut = (_hoert_wort(t["medium"]) or _hoert_wort(t["qwen"])) \
                     and not any(k in notiz for k in ZWEIFEL_NOTIZ)
                 meta["zweifel"] = not gut
                 rel = os.path.join("train" if gut else "val", "positive" if gut else "positive_zweifel", name)
@@ -353,7 +351,7 @@ def run_bauen(args) -> int:
                 continue
             roh, rate, breite, kan = _wav_lesen(pfad)
             texte[teil] = ohren.texte(roh, rate, breite, kan, mit_kontext=True)
-        if "clip" not in texte or any(_hoert_gaston(t) for x in texte.values() for t in x.values()):
+        if "clip" not in texte or any(_hoert_wort(t) for x in texte.values() for t in x.values()):
             continue
         raum, ruhig = _ruhe_und_raum(events[audio], audio)
         kopiere(os.path.join(TRIGGER_AUDIO_DIR, audio),
@@ -394,7 +392,7 @@ def run_bauen(args) -> int:
 def run_messen(args) -> int:
     from wakeword_studio.scoring import BundleScorer
     paket = os.path.expanduser(args.paket)
-    modelle = [os.path.expanduser(m) for m in (args.modell or ["gaston"])]
+    modelle = [os.path.expanduser(m) for m in (args.modell or [wake_wort.aktiv().bundle])]
     gruppen = []
     for seite in ("val_vorrunde", "val"):
         wurzel = os.path.join(paket, seite)
@@ -434,6 +432,9 @@ def run_messen(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--bundle", default=None,
+                    help="Wakewort-Bundle: Erkennung im Text aus seinem Manifest, Default-Modell "
+                         "von messen (Default: erstes eigenes Bundle des Profils)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("bauen", help="Paket bauen (Vorrunden-Val fest, neue Tage geteilt)")
     p.add_argument("--vorrunde", required=True, help="Paketverzeichnis der Vorrunde (mit paket_manifest.json)")
@@ -448,6 +449,7 @@ def main() -> int:
     p.add_argument("--paare", action="store_true", help="bei zwei Modellen die kippenden Clips zeigen")
     p.set_defaults(fn=run_messen)
     args = ap.parse_args()
+    wake_wort.setzen(args.bundle)
     return args.fn(args)
 
 

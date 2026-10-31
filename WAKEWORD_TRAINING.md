@@ -19,8 +19,9 @@ Agent Skills), the skill in `.claude/skills/wakeword-training/` walks you
 through this guide step by step and stops at the decisions that are yours.
 
 The example word throughout is `gaston`, a German household. Everything
-specific to it lives in two YAML files and a handful of places listed under
-[Adapting the loop tools to your word](#adapting-the-loop-tools-to-your-word).
+specific to it lives in two YAML files for training and one block in the
+bundle's manifest (see
+[Adapting the loop tools to your word](#adapting-the-loop-tools-to-your-word)).
 The measurement log of this installation, round by round with every number,
 is `WAKEWORD_PROCESS.md` (German); this guide only quotes it where a number
 justifies a rule.
@@ -308,7 +309,7 @@ docstring, the important ones:
 ### 2.5 Before number and bar
 
 ```bash
-ow-venv/bin/python -m tools.wake_paket messen --paket ~/wake-pakete/<package> --modell <word>
+ow-venv/bin/python -m tools.wake_paket messen --paket ~/wake-pakete/<package>
 ```
 
 measures the running model per validation group, with the live gate. From
@@ -410,20 +411,27 @@ Then 2.1 starts again.
 
 ## Adapting the loop tools to your word
 
-Part 1 is fully parameterised. The loop tools of Part 2 grew around `gaston`
-and still recognise the word in STT text through word-specific patterns.
-For another word, change these before the first triage:
+The loop tools (`wake_triage`, `wake_corpus`, `wake_paket`,
+`wake_live_bilanz`) decide from STT text whether the word was heard. What
+counts lives in the bundle's manifest, not in the code (`tools/wake_wort.py`):
 
-| Where | What |
-|---|---|
-| `tools/wake_triage.py`, `GASTON_PAT` | regex for the word and its typical mishearings in STT text |
-| `tools/wake_corpus.py`, `_WAKE_FORM` | word beginnings that count as "the word was heard" (also used by `wake_paket`) |
-| `tools/wake_corpus.py`, `--bundle` default | your bundle name (or pass `--bundle`) |
-| `tools/wake_paket.py`, `messen` without `--modell` | defaults to the bundle `gaston` (pass `--modell <word>`) |
-| `tools/wake_live_bilanz.py` | counts only events of bundle `gaston` |
+```yaml
+# models/wakewords/<word>/manifest.yaml
+text_erkennung:
+  muster: "gast|kast|gasch|aston|caston"   # regex anywhere in the text (triage)
+  wortanfaenge: [gast, gas, gest, kast]    # a word starting like this (package, cut)
+  sprache: de                              # language for the STT with word timestamps
+```
 
-Collect the mishearings from your own triage output: how the STT
-misspells your word depends on the word, the language and the STT model.
+Without the block, the first four letters of the bundle name serve as pattern
+and word start, and the language is `de`. That is a start, not a result: run
+the first triage with `--auch-trigger`, read what the STT made of real calls
+("Gasthof", "Kastor", "Gastó" for `gaston`) and add those forms. A pattern that
+is too narrow sorts real calls into "noise", which is the dangerous direction;
+too wide only moves cases into "real call", which no rule loosens anything on.
+
+Which bundle the tools mean: `--bundle` on each tool, otherwise the first own
+bundle in the profile's `wakewords:` block.
 
 ## What worked and what did not
 

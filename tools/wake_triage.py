@@ -90,14 +90,16 @@ from voice_assistant.config import (  # noqa: E402
 )
 from voice_assistant.services.speaches import SpeachesState  # noqa: E402
 from voice_assistant.services.stt import SpeachesStt  # noqa: E402
+from tools import wake_wort  # noqa: E402
 
 TRIAGE_PATH = os.path.join(WORKSPACE, "wake_triage.jsonl")
 
-# Verhörer von "Gaston" aus echten Logs: Gasthof, Gastholm, Gastronom, Kastor,
-# Kasto, Gaston, Gastó. Absichtlich weit gefasst — ein zu weites Muster
-# verschiebt Fälle nach ECHTER RUF (harmlos, wird eh nicht zum Lockern
-# benutzt), ein zu enges verschiebt sie nach RAUSCHEN (gefährlich).
-GASTON_PAT = re.compile(r"gast|kast|gasch|aston|caston", re.IGNORECASE)
+# Woran das Wort im STT-Text erkannt wird, steht im Manifest des Bundles
+# (`text_erkennung.muster`, tools/wake_wort.py). Bei gaston die Verhörer aus
+# echten Logs: Gasthof, Gastholm, Gastronom, Kastor, Kasto, Gaston, Gastó.
+# Absichtlich weit gefasst — ein zu weites Muster verschiebt Fälle nach ECHTER
+# RUF (harmlos, wird eh nicht zum Lockern benutzt), ein zu enges verschiebt
+# sie nach RAUSCHEN (gefährlich).
 # Ab diesem no_speech_prob gilt die Aufnahme als sprachfrei. 0.7 liegt in der
 # gemessenen Lücke: Rausch-Clips lagen bei 0.79-0.86, Sprach-Clips bei 0.04-0.35.
 NO_SPEECH_SCHWELLE = 0.7
@@ -117,7 +119,7 @@ def _transcribe(stt: SpeachesStt, path: str) -> tuple[str, float | None]:
 
 
 def _klassifiziere(text: str, verworfen: bool) -> str:
-    if GASTON_PAT.search(text):
+    if wake_wort.aktiv().im_text(text):
         return ECHT
     if verworfen or not text.strip():
         return RAUSCH
@@ -378,7 +380,11 @@ def main() -> int:
                          "ein Gaston drin sein, das zeigt die Trefferquote der Methode")
     ap.add_argument("--neu", action="store_true",
                     help="bereits gelabelte Dateien erneut durch die STT schicken")
+    ap.add_argument("--bundle", default=None,
+                    help="Wakewort-Bundle (Default: erstes eigenes des Profils); "
+                         "liefert das Erkennungsmuster aus seinem Manifest")
     args = ap.parse_args()
+    wake_wort.setzen(args.bundle)
 
     if not os.path.isdir(TRIGGER_AUDIO_DIR):
         print(f"Kein Trigger-Archiv unter {TRIGGER_AUDIO_DIR}")

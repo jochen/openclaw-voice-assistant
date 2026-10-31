@@ -28,7 +28,8 @@ Ask, or check yourself where you can:
 
 Also establish once and write down for the session:
 
-- the word, its bundle name, the language, and whether this is the assistant
+- the word, its bundle name, the language (also `text_erkennung.sprache` in
+  the manifest), and whether this is the assistant
   machine or a separate GPU machine (host name, user, working folder);
 - GPU(s) and their CUDA version (`nvidia-smi`), free disk (≥ 25 GB), RAM;
 - whether a container on the GPU machine holds GPU memory (→ `--weiche`);
@@ -66,10 +67,12 @@ Follow guide sections 1.1–1.8 in order. Your job at each step:
 
 ## 3. Part 2: the retraining loop
 
-Follow guide sections 2.1–2.9. Before the first triage for a word other than
-`gaston`, adapt the places in "Adapting the loop tools to your word"
-(STT patterns from their own triage output, bundle defaults) and show the
-person the change.
+Follow guide sections 2.1–2.9. For a word other than `gaston`, the bundle's
+manifest needs a `text_erkennung` block ("Adapting the loop tools to your
+word"). Run the first triage with `--auch-trigger`, collect what the STT made
+of their real calls, propose `muster` and `wortanfaenge` from that, show the
+person and let them confirm. Err towards too wide, never too narrow: a narrow
+pattern turns real calls into negatives.
 
 Rules you hold to, because each one was learned by getting it wrong:
 

@@ -73,3 +73,10 @@ training:
     augmented_test_recall_at_0.5: 0.19
     raw_clip_recall_kerncluster: 0.93-1.00
     false_per_hour_at_0.5: 0.19
+# Woran die Wake-Werkzeuge (wake_triage, wake_corpus, wake_paket) das Wort im
+# STT-Text erkennen, siehe tools/wake_wort.py. Die Verhörer stammen aus echten
+# Logs dieser Installation (Qwen und Speaches medium, deutsch).
+text_erkennung:
+  muster: "gast|kast|gasch|aston|caston"
+  wortanfaenge: [gast, gas, gest, gust, kast, gerst, erstaun, herztau]
+  sprache: de

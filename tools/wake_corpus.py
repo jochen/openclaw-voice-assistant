@@ -160,6 +160,7 @@ from voice_assistant.config import (  # noqa: E402
     WAKE_LOG_PATH,
 )
 from tools.wake_rms_replay import labels_fuer_clips  # noqa: E402
+from tools import wake_wort  # noqa: E402
 
 MANIFEST = os.path.join(WAKE_CORPUS_DIR, "manifest.jsonl")
 ORDNER = {"echter_ruf": "positiv", "rauschen": "negativ"}
@@ -485,7 +486,8 @@ def run_messen(args) -> int:
 SCHNITT_SEK = 1.8
 # Bei Sätzen mit Wortzeitstempeln: so viel nach dem Wortende stehen lassen.
 NACH_WORT_SEK = 0.15
-_WAKE_FORM = ("gast", "gas", "gest", "gust", "kast", "gerst", "erstaun", "herztau")
+# Woran ein Wort als Wakewort zählt: `text_erkennung.wortanfaenge` im Manifest
+# (tools/wake_wort.py). gaston: gast, gas, gest, gust, kast, gerst, erstaun, herztau.
 
 
 def _wav_lesen(pfad: str):
@@ -514,14 +516,13 @@ def _wake_stellen(roh: bytes, rate: int, breite: int, kan: int, stt) -> list[flo
     b = "----x" + uuid.uuid4().hex
     feld = lambda n, v: f'--{b}\r\nContent-Disposition: form-data; name="{n}"\r\n\r\n{v}\r\n'.encode()  # noqa: E731
     body = (feld("model", stt.model) + feld("response_format", "verbose_json")
-            + feld("timestamp_granularities[]", "word") + feld("language", "de")
+            + feld("timestamp_granularities[]", "word") + feld("language", wake_wort.aktiv().sprache)
             + f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="a.wav"\r\n'
               f'Content-Type: audio/wav\r\n\r\n'.encode() + buf.getvalue() + f"\r\n--{b}--\r\n".encode())
     req = urllib.request.Request(stt.base.rstrip("/") + "/v1/audio/transcriptions", data=body,
                                  headers={"Content-Type": f"multipart/form-data; boundary={b}"})
     worte = json.load(urllib.request.urlopen(req, timeout=60)).get("words") or []
-    return [w["end"] for w in worte
-            if w["word"].strip().lower().strip(",.!?-").startswith(_WAKE_FORM)]
+    return [w["end"] for w in worte if wake_wort.aktiv().wort_beginnt(w["word"])]
 
 
 def _positiv_stuecke(quelle: str, stt) -> list[tuple[str, bytes, dict]]:
@@ -700,7 +701,7 @@ def main() -> int:
     p.set_defaults(func=run_bilanz)
 
     p = sub.add_parser("messen", help="aktuelles Modell gegen den Korpus")
-    p.add_argument("--bundle", default="gaston")
+    p.add_argument("--bundle", default=None, help="Default: erstes eigenes Bundle des Profils")
     p.add_argument("--threshold", type=float, default=None)
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--gain", type=float, default=1.0,
@@ -718,15 +719,21 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=20260916,
                    help="Seed der Tagespartition — im Manifest festgehalten")
     p.add_argument("--val-anteil", type=float, default=0.3, dest="val_anteil")
-    p.add_argument("--out", default="/tmp/gaston_nachtraining_paket")
-    p.add_argument("--samples-dir", dest="samples_dir",
-                   default=os.path.join(os.path.dirname(os.path.dirname(
-                       os.path.abspath(__file__))),
-                       "models", "wakewords", "gaston", "samples"),
-                   help="Studio-Takes (gehen komplett in die Validierung)")
+    p.add_argument("--bundle", default=None, help="Default: erstes eigenes Bundle des Profils")
+    p.add_argument("--out", default=None, help="Default: /tmp/<bundle>_nachtraining_paket")
+    p.add_argument("--samples-dir", dest="samples_dir", default=None,
+                   help="Studio-Takes, gehen komplett in die Validierung "
+                        "(Default: models/wakewords/<bundle>/samples)")
     p.set_defaults(func=run_paket)
 
     args = ap.parse_args()
+    wort = wake_wort.setzen(getattr(args, "bundle", None))
+    if hasattr(args, "bundle"):
+        args.bundle = wort.bundle
+    if getattr(args, "out", "x") is None:
+        args.out = f"/tmp/{wort.bundle}_nachtraining_paket"
+    if getattr(args, "samples_dir", "x") is None:
+        args.samples_dir = os.path.join(wake_wort.BUNDLE_DIR, wort.bundle, "samples")
     return args.func(args)
 
 

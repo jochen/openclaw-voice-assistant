@@ -1,16 +1,23 @@
 """Live-Bilanz eines Wake-Modells: Trigger und Near-Misses je Label in einem Zeitraum.
 
-    ow-venv/bin/python -m tools.wake_live_bilanz 2026-10-24 2026-10-31T19
+    ow-venv/bin/python -m tools.wake_live_bilanz 2026-10-24 2026-10-31T19 [--bundle NAME]
 
 Labels wie überall: Ohr (wake_review.jsonl) vor wake_triage.jsonl (Selbst/STT).
 Vorher `tools.wake_triage --seit N --auch-trigger` laufen lassen, sonst stehen
 frische Trigger als "ohne". Gebaut für den Vergleich v5 gegen R7 voll l2
 (WAKEWORD_PROCESS.md, "Live-Versuch R7 voll l2").
 """
-import json, sys, os
+import argparse, json, os
 from collections import Counter
+from tools import wake_wort
 W = os.path.expanduser("~/.openclaw/workspace")
-ab, bis = sys.argv[1], (sys.argv[2] if len(sys.argv) > 2 else "9999")
+ap = argparse.ArgumentParser(description="Trigger und Near-Misses je Label in einem Zeitraum")
+ap.add_argument("ab", help="Beginn, ISO (2026-10-24 oder 2026-10-31T18:09)")
+ap.add_argument("bis", nargs="?", default="9999", help="Ende, ISO (ausschließlich)")
+ap.add_argument("--bundle", default=None, help="Default: erstes eigenes Bundle des Profils")
+a = ap.parse_args()
+ab, bis = a.ab, a.bis
+bundle = a.bundle or wake_wort.standard_bundle()
 lab = {}
 for z in open(f"{W}/wake_triage.jsonl"):
     try: d = json.loads(z)
@@ -25,7 +32,7 @@ for z in open(f"{W}/wake_events.log"):
     try: d = json.loads(z)
     except: continue
     r, ts = d.get("result"), d.get("ts", "")
-    if r not in ("trigger", "nearmiss") or not (ab <= ts < bis) or d.get("bundle", "gaston") != "gaston": continue
+    if r not in ("trigger", "nearmiss") or not (ab <= ts < bis) or d.get("bundle", bundle) != bundle: continue
     tage.add(ts[:10])
     k, q = lab.get(d.get("audio"), (None, None))
     c[(r, k or "ohne", q == "ohr")] += 1

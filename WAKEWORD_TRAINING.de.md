@@ -21,8 +21,9 @@ Schritt für Schritt durch diese Anleitung und hält an den Entscheidungen an,
 die beim Menschen liegen.
 
 Das Beispiel-Wort ist durchgehend `gaston`, ein deutscher Haushalt. Alles
-Wortspezifische steht in zwei YAML-Dateien und an den wenigen Stellen unter
-[Die Kreislauf-Werkzeuge an ein anderes Wort anpassen](#die-kreislauf-werkzeuge-an-ein-anderes-wort-anpassen).
+Wortspezifische steht in zwei YAML-Dateien fürs Training und einem Block im
+Manifest des Bundles (siehe
+[Die Kreislauf-Werkzeuge an ein anderes Wort anpassen](#die-kreislauf-werkzeuge-an-ein-anderes-wort-anpassen)).
 Das Messtagebuch dieser Installation, Runde für Runde mit allen Zahlen, ist
 `WAKEWORD_PROCESS.md`; diese Anleitung zitiert daraus nur, wo eine Zahl eine
 Regel begründet.
@@ -313,7 +314,7 @@ des Werkzeugs, die wichtigsten:
 ### 2.5 Vorher-Zahl und Schranke
 
 ```bash
-ow-venv/bin/python -m tools.wake_paket messen --paket ~/wake-pakete/<paket> --modell <wort>
+ow-venv/bin/python -m tools.wake_paket messen --paket ~/wake-pakete/<paket>
 ```
 
 misst das laufende Modell je Val-Gruppe mit dem Live-Gate. Daraus die
@@ -415,20 +416,29 @@ Dann beginnt 2.1 von vorn.
 
 ## Die Kreislauf-Werkzeuge an ein anderes Wort anpassen
 
-Teil 1 ist vollständig parametrisiert. Die Werkzeuge von Teil 2 sind um
-`gaston` gewachsen und erkennen das Wort im STT-Text über wortspezifische
-Muster. Für ein anderes Wort vor der ersten Triage ändern:
+Die Werkzeuge des Kreislaufs (`wake_triage`, `wake_corpus`, `wake_paket`,
+`wake_live_bilanz`) entscheiden am STT-Text, ob das Wort zu hören war. Was
+dafür zählt, steht im Manifest des Bundles, nicht im Code
+(`tools/wake_wort.py`):
 
-| Wo | Was |
-|---|---|
-| `tools/wake_triage.py`, `GASTON_PAT` | Regex für das Wort und seine typischen Verhörer im STT-Text |
-| `tools/wake_corpus.py`, `_WAKE_FORM` | Wortanfänge, die als „Wort gehört“ zählen (auch von `wake_paket` benutzt) |
-| `tools/wake_corpus.py`, Default von `--bundle` | eigener Bundle-Name (oder `--bundle` angeben) |
-| `tools/wake_paket.py`, `messen` ohne `--modell` | nimmt das Bundle `gaston` (`--modell <wort>` angeben) |
-| `tools/wake_live_bilanz.py` | zählt nur Ereignisse des Bundles `gaston` |
+```yaml
+# models/wakewords/<wort>/manifest.yaml
+text_erkennung:
+  muster: "gast|kast|gasch|aston|caston"   # Regex irgendwo im Text (Triage)
+  wortanfaenge: [gast, gas, gest, kast]    # ein Wort beginnt so (Paket, Schnitt)
+  sprache: de                              # Sprache für die STT mit Wortzeiten
+```
 
-Die Verhörer aus der eigenen Triage sammeln: wie die STT das Wort verschreibt,
-hängt an Wort, Sprache und STT-Modell.
+Ohne den Block gelten die ersten vier Buchstaben des Bundle-Namens als Muster
+und Wortanfang und `de` als Sprache. Das ist ein Anfang, kein Ergebnis: die
+erste Triage mit `--auch-trigger` laufen lassen, nachlesen, was die STT aus
+echten Rufen gemacht hat („Gasthof“, „Kastor“, „Gastó“ bei `gaston`), und
+diese Formen ergänzen. Ein zu enges Muster sortiert echte Rufe nach
+„Rauschen“, das ist die gefährliche Richtung; ein zu weites verschiebt nur
+Fälle nach „echter Ruf“, woran keine Regel etwas lockert.
+
+Welches Bundle gemeint ist: `--bundle` am Werkzeug, sonst das erste eigene
+Bundle aus dem `wakewords:`-Block des Profils.
 
 ## Was sich als wirksam gezeigt hat und was nicht
 
