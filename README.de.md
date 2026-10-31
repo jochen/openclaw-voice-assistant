@@ -851,8 +851,15 @@ Aktiviert wird der Aktuator pro Profil; ohne den Block ist er aus:
 
 Als lokales Modell wird ein kleines instruktionsfähiges LLM hinter einer
 OpenAI-kompatiblen API erwartet (getestet: Gemma-4-E2B-Q4 über llama.cpp).
-Es muss `response_format: json_schema` beherrschen — die geschlossene Form des
-Intents ist die halbe Sicherheit, die andere Hälfte prüft die ausführende Seite.
+Die Anfrage trägt eine GBNF-Grammatik (das Feld `grammar` von llama.cpp), bei
+jedem refresh aus der Ziel-Liste erzeugt: das Modell kann nur kompaktes JSON
+mit bekannter Ziel-id, bekanntem Verb und bekannter Einheit erzeugen. Vorher
+lief es über `response_format: json_schema`; das ließ dem Modell Leerraum
+frei, es rückte das JSON ein, doppelte Token und doppelte Latenz. Die
+Grammatik schränkt die Aktionen bewusst *nicht* pro Ziel ein: bei Kauderwelsch
+wählt das Modell oft eine ungültige Kombination, die der Verdict-Schritt
+abfängt. Die geschlossene Form des Intents ist die halbe Sicherheit, die
+andere Hälfte prüft die ausführende Seite.
 
 Der Token für die Endpunkte steht in `voiceact-token.txt` im Projektverzeichnis
 (gitignored) und geht als Header `X-Actuator-Token` mit.

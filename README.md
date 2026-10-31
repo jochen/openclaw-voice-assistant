@@ -824,9 +824,15 @@ The actuator is enabled per profile; without the block it stays off:
 ```
 
 The local model is expected to be a small instruction-following LLM behind an
-OpenAI-compatible API (tested: Gemma-4-E2B-Q4 via llama.cpp). It must support
-`response_format: json_schema` — the closed form of the intent is half the
-safety, the executing side checks the other half.
+OpenAI-compatible API (tested: Gemma-4-E2B-Q4 via llama.cpp). The request
+carries a GBNF grammar (llama.cpp's `grammar` field), generated from the target
+list on every refresh: the model can only produce compact JSON with a known
+target id, verb and unit. `response_format: json_schema` was used before; it
+left the model free to indent, which doubled the tokens and the latency. The
+grammar deliberately does *not* restrict the actions per target: for gibberish
+the model often picks an invalid combination, which the verdict step catches.
+The closed form of the intent is half the safety, the executing side checks
+the other half.
 
 The token for the endpoints lives in `voiceact-token.txt` in the project
 directory (gitignored) and is sent as the `X-Actuator-Token` header.

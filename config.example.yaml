@@ -38,6 +38,14 @@ profiles:
   #     # Default aus. Prompt: tor_prompt (deutsch, siehe config.py).
   #     tor_enabled: false
   #
+  #     # Zweite Klassifikator-Kette: Laya (Encoder + Entscheidungskopf,
+  #     # LAYA_TRAINING.md). klassifikator sagt, wer entscheidet; die andere
+  #     # Kette urteilt im Schatten mit und schaltet nie.
+  #     laya_url: ""                   # z.B. "http://localhost:8096"
+  #     klassifikator: gemma           # gemma | laya
+  #     laya_rueckfrage: true          # Tor ja + kein Gerät -> Rückfrage
+  #     schatten: true
+  #
   #     # Der Prompt ist die einzige sprachabhaengige Stelle des Projekts. Der
   #     # Default ist deutsch und nennt Beispiel-Geraete DIESER Installation.
   #     # Wer eine andere Sprache oder andere Geraete hat, ersetzt ihn hier
@@ -275,6 +283,86 @@ profiles:
     tts_prefix: "hm "
 
     # locale: (see clawdpi profile above for available fields and defaults)
+
+    # --- Spracherkennung (STT-Kette, alles optional) ---------------------
+    # Reihenfolge: llama.cpp-Audiomodell -> onnx-asr -> Speaches -> lokal.
+    # Leer = Stufe aus. Messen: tools/stt_vergleich.py.
+    # stt_llamacpp_url: "http://<host>:8094/v1/chat/completions"
+    # stt_llamacpp_kontext: true        # Wakewort + Zielnamen als Kontext
+    # stt_llamacpp_sprache: "German"    # leer = das Modell rät je Aufnahme
+    # stt_onnx_model: "istupakov/parakeet-tdt-0.6b-v3-onnx"
+    # stt_onnx_threads: 8
+
+    # --- Sprecher-Verifikation statt Diarization (optional) --------------
+    # Fingerabdruck der ganzen Aufnahme gegen voice/speakers/*.wav (~50 ms
+    # CPU). Schwelle/Abstand nur gegen tools/sprecher_verifikation_test.py.
+    # sprecher_verifikation: true
+    # sprecher_schwelle: 0.40
+    # sprecher_abstand: 0.15
+    # sprecher_verifikation_url: ""    # leer = lokal; sonst voice-analysis /fingerabdruck
+
+    # --- Wakewort-Pegel und Hinweis bei fehlender Anrede -----------------
+    # wake_rms_min: 400                # 0 = aus; messen: tools/wake_rms_replay.py
+    # anrede_hinweis: true             # Text: locale.anrede_hinweis
+
+    # --- Überwacher (Argus) — nur lesen und melden, optional -------------
+    # watcher:
+    #   enabled: true
+    #   chat_id: "-ARGUS_CHAT_ID"       # eigene Gruppe, nicht der Voice-Chat
+    #   bot_token: "BOT_TOKEN"
+    #   quiet_start: 1                  # 01:00–07:00 nur sammeln
+    #   quiet_end: 7
+    #   llm_url: "http://<host>:8090/v1/chat/completions"
+    #   llm_model: ""
+    #   llm_timeout: 30
+    #   haus_mcp_url: ""                # Weltmodell der Gegenstelle (Prompt V2)
+    #   haus_mcp_token: ""
+
+    # --- Dienst-Wächter — Ausfälle melden, lokale Container neu starten --
+    # dienstwaechter:
+    #   enabled: true
+    #   intervall: 60
+    #   gnadenfrist: 180
+    #   heilen: true
+    #   max_heilversuche: 3
+    #   ruhe_units: ["laya-nachtraining.service"]   # still, solange diese laufen
+    #   dienste:                        # leer = aus den URLs des Profils
+    #     - {name: speaches, url: "http://<speaches-host>:8000/health"}
+
+    # --- Musik leiser während eines Turns, Musik-Befehle ohne Brain ------
+    # Gegenstelle: eine REST-Bridge (duck/unduck/control), siehe README.
+    # musik_ducking:
+    #   enabled: true
+    #   url: "http://<bridge-host>:<port>"
+    #   token_file: "~/musik-bridge-token.txt"   # nie das Token selbst hier
+    #   raum: "wohnzimmer"              # Raum des Haupt-Mikrofons
+    #   level: null                     # null = Vorgabe der Bridge
+    #   befehle: false                  # true = "stopp die Musik" ohne Brain
+
+    # --- Küchentimer (TIMER_INTERFACE.md) --------------------------------
+    # timer:
+    #   enabled: true
+    #   klingeln: 3
+    #   ansage: true
+    #   lautsprecher_rueckfall: true    # klingelt keine Senke, klingelt der Lautsprecher
+    #   senken:
+    #     - {name: kueche, url: "http://<tablet>:<port>/timer", token: ""}
+
+    # --- Aussprache-Liste (nur Piper-Stimmen) ----------------------------
+    # aussprache:
+    #   enabled: true
+    #   sprache: "de"
+    #   englisch: true                  # englische Stellen (Musiktitel) über espeak en-us
+    #   llm_url: ""                     # für die nächtliche Ergänzung, leer = aus
+    #   min_faelle: 50
+
+    # --- Handy als Satellit (Android-App "Ava", ESPHome-Protokoll) -------
+    # satelliten:
+    #   - name: "handy"
+    #     host: "<handy-ip>"
+    #     port: 6053
+    #     encryption_key: ""
+    #     volume: 1.0
 
 # Hostname-Zuordnung: Welcher Hostname-Substring → welches Profil
 hostname_map:
