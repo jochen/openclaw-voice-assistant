@@ -1525,5 +1525,16 @@ Gaston“ im Text sind Barge-in-Clips. `wake_triage._selbst_labels` Regel 3
 (Abbruch per Stopp-Wort → rauschen) hängt das Label an das Audio der
 outcome-Zeile, und bei einem Barge-in ist das der Barge-in-Clip selbst, mit
 einem echten „Stopp, Gaston“. Im Korpus 24 Barge-in-Clips als rauschen/selbst,
-im R6-Paket 14 unter negative (10 train, 4 val), dazu val_vorrunde. Offen:
-Regel korrigieren, Korpus-Labels nachziehen, vor dem nächsten Training.
+im R6-Paket 14 unter negative (10 train, 4 val), dazu val_vorrunde; im
+R5-Paket (v5) 4.
+
+Behoben am selben Tag: Regel 3 gilt nur noch für die erste Aufnahme nach dem
+Trigger, ein Barge-in-Clip mit Stopp-Wort ist ein echter Ruf (Regel 4), und
+`wake_corpus sichern` zieht geänderte Labels im Korpus nach (bisher blieb ein
+gesicherter Clip für immer in seinem ersten Ordner). Ergebnis: 24 Barge-in-
+Clips negativ → positiv, 18 Trigger nach `zurueckgezogen/` (ohne Label, nicht
+im Training). Diese Trigger wurden erst per Barge-in abgebrochen; nach
+Transkript etwa zwei Drittel Fehlauslöser, ein Drittel echte Rufe mit
+schlechter Antwort („Gaston, ist alles gut bei dir?“). Ein Kandidat fürs
+Ohr-Review, kein hartes Label. gaston-privat ee9227b. Die Pakete R5/R6 sind
+damit veraltet; das nächste Paket aus dem Korpus neu schnüren.

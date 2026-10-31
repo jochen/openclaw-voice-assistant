@@ -1260,6 +1260,11 @@ belegte Fehltrigger. Seither verschont `_cleanup_trigger_audio` ungesicherte
 Ohr-Urteile, und `tools/wake_corpus.py` hebt gelabelte Clips in einen
 Dauer-Korpus (`sichern`), meldet Erosion (`bilanz`) und misst das laufende
 Bundle gegen den Korpus (`messen` — die Vorher-Zahl fürs Nachtraining).
+`sichern` zieht seit 2026-10-31 geänderte Labels nach (Ordner wechseln, ein
+Selbst-Label ohne Regel dahinter → `zurueckgezogen/`). Anlass: ein Abbruch
+per Stopp-Wort labelte den Barge-in-Clip mit echtem „Stopp, Gaston“ als
+Fehltrigger (`wake_triage._selbst_labels`, Tests
+`tests/test_wake_selbst_labels.py`).
 
 ## Threading Model
 

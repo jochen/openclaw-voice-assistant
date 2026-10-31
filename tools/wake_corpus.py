@@ -163,6 +163,10 @@ from tools.wake_rms_replay import labels_fuer_clips  # noqa: E402
 
 MANIFEST = os.path.join(WAKE_CORPUS_DIR, "manifest.jsonl")
 ORDNER = {"echter_ruf": "positiv", "rauschen": "negativ"}
+# Clips, deren Selbst-Label die Regel nicht mehr trägt. Nicht gelöscht (das
+# Audio ist im Archiv vielleicht schon weg), aber außerhalb von ORDNER, also
+# weder in `messen` noch in `paket`.
+ZURUECK = "zurueckgezogen"
 
 
 def _wake_events() -> dict[str, dict]:
@@ -183,6 +187,13 @@ def _wake_events() -> dict[str, dict]:
     except FileNotFoundError:
         pass
     return out
+
+
+def _zurueckgezogene() -> dict[str, str]:
+    pfad = os.path.join(WAKE_CORPUS_DIR, ZURUECK)
+    if not os.path.isdir(pfad):
+        return {}
+    return {n: os.path.join(pfad, n) for n in os.listdir(pfad) if n.endswith(".wav")}
 
 
 def _manifest_lesen() -> dict[str, dict]:
@@ -221,6 +232,40 @@ def run_sichern(args) -> int:
     verloren = []
     uebersprungen = Counter()
 
+    # Labels, die sich geändert haben, im Korpus nachziehen. Ohne das blieb
+    # ein einmal gesicherter Clip für immer in seinem ersten Ordner — auch als
+    # die Regel dahinter sich als falsch herausstellte (2026-10-31: Barge-in-
+    # Clips mit echtem "Stopp, Gaston" lagen als Fehltrigger im Korpus).
+    zurueck = _zurueckgezogene()
+    umgelabelt: list[tuple[str, str, str, str]] = []
+    for audio, pfad in sorted(im_korpus.items()):
+        alt = manifest.get(audio, {})
+        jetzt = labels.get(audio, {})
+        hart = jetzt.get("quelle") in ("ohr", "selbst") and jetzt.get("klasse") in ORDNER
+        if hart and (jetzt["klasse"], jetzt["quelle"]) != (alt.get("klasse"), alt.get("quelle")):
+            ziel = jetzt["klasse"]
+        elif not hart and alt.get("quelle") == "selbst":
+            ziel = None    # die Regel trägt das Label nicht mehr: aus dem Training
+        else:
+            continue
+        unter = ORDNER[ziel] if ziel else ZURUECK
+        if not args.trocken:
+            os.makedirs(os.path.join(WAKE_CORPUS_DIR, unter), exist_ok=True)
+            if os.path.dirname(pfad) != os.path.join(WAKE_CORPUS_DIR, unter):
+                shutil.move(pfad, os.path.join(WAKE_CORPUS_DIR, unter, audio))
+            eintrag = {**alt, "audio": audio}
+            if ziel:
+                eintrag.update(klasse=ziel, quelle=jetzt["quelle"])
+                eintrag.pop("zurueckgezogen", None)
+            else:
+                eintrag.update(klasse="zurueckgezogen", zurueckgezogen=
+                               f"{alt.get('klasse')}/{alt.get('quelle')} trägt nicht mehr")
+            manifest[audio] = eintrag
+        umgelabelt.append((audio, f"{alt.get('klasse')}/{alt.get('quelle')}",
+                           ziel or "zurueckgezogen", jetzt.get("quelle", "-")))
+    if not args.trocken:
+        im_korpus = _korpus_dateien()
+
     for audio, lab in sorted(labels.items()):
         klasse, quelle = lab["klasse"], lab["quelle"]
         if klasse not in ORDNER:
@@ -231,6 +276,17 @@ def run_sichern(args) -> int:
             continue
         if audio in im_korpus:
             schon += 1
+            continue
+        if audio in zurueck:
+            # War zurückgezogen, hat jetzt wieder ein hartes Label.
+            ziel_dir = os.path.join(WAKE_CORPUS_DIR, ORDNER[klasse])
+            if not args.trocken:
+                os.makedirs(ziel_dir, exist_ok=True)
+                shutil.move(zurueck[audio], os.path.join(ziel_dir, audio))
+                manifest[audio] = {**manifest.get(audio, {"audio": audio}),
+                                   "klasse": klasse, "quelle": quelle}
+                manifest[audio].pop("zurueckgezogen", None)
+            umgelabelt.append((audio, "zurueckgezogen", klasse, quelle))
             continue
         quelle_pfad = os.path.join(TRIGGER_AUDIO_DIR, audio)
         if not os.path.exists(quelle_pfad):
@@ -259,6 +315,10 @@ def run_sichern(args) -> int:
     print(f"  schon im Korpus : {schon}")
     for grund, n in uebersprungen.most_common():
         print(f"  übersprungen    : {n}  ({grund})")
+    if umgelabelt:
+        print(f"\n  {'WÜRDE UMLABELN' if args.trocken else 'UMGELABELT'}: {len(umgelabelt)}")
+        for audio, von, nach, quelle in umgelabelt:
+            print(f"      {audio}  {von} -> {nach} ({quelle})")
     if verloren:
         print(f"\n  ⚠️  {len(verloren)} gelabelte Clips haben KEIN Audio mehr "
               f"(Archiv-Cleanup nach {30} Tagen):")

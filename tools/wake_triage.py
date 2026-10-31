@@ -205,6 +205,11 @@ def _lade_wake_events() -> list[dict]:
 # unabhängige Rufe einzusammeln.
 WIEDERHOLUNG_SEK = 15.0
 
+# Alte Barge-in-Zeilen (Audio = ursprünglicher Trigger): so weit darf das
+# bargein-Ereignis vor seiner outcome-Zeile liegen. Gemessen 2026-10-31 an den
+# 20 alten Zeilen: 0–10 s (Kommando-Endpointing mit 8-s-Deckel, dann STT).
+BARGEIN_SEK = 15.0
+
 
 def _selbst_labels(events: list[dict]) -> dict[str, dict]:
     """Labels, die das System sich selbst gibt — audio-Datei -> {klasse, grund}.
@@ -224,6 +229,22 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
        erzeugt praktisch nie ein gültiges Intent auf ein existierendes Ziel.
     3. Trigger, den der Nutzer mit einem Stopp-Wort abgebrochen hat →
        Fehltrigger. Der Abbruch ist ein ausdrückliches Urteil des Nutzers.
+       NUR, wenn das Stopp-Wort in der ersten Aufnahme nach diesem Trigger
+       stand (erste outcome-Zeile seines Audios, kein Barge-in).
+    4. Barge-in-Clip, in dessen Aufnahme ein Stopp-Wort erkannt wurde →
+       echter Ruf: wer „Stopp, Gaston“ sagt, hat Gaston gerufen.
+
+    Regel 3 hing bis 2026-10-31 an JEDER stopwort-Zeile und damit am Audio der
+    Zeile (Jochens Frage: „wir rufen nach einem Fehlauslöser oft ‚Stopp Gaston‘
+    hinterher“). Bei einem Barge-in ist das der Barge-in-Clip selbst, mit einem
+    echten „Stopp, Gaston“: 24 davon lagen als Fehltrigger im Korpus, 4 im
+    R5-Paket (v5), 17 im R6-Paket unter negative. Ältere Barge-ins stehen im
+    Log unter dem Audio des ursprünglichen Triggers (via=bargein, nicht die
+    erste Zeile); dort traf das Label den Trigger, auch wenn er ein echter Ruf
+    mit schlechter Antwort war („Gaston, ist alles gut bei dir?“, 2026-10-05).
+    Ein Abbruch per Barge-in sagt über den Trigger davor nichts Sicheres; er
+    bekommt keins. Den Barge-in-Clip findet Regel 4 bei diesen alten Zeilen
+    über das letzte bargein-Ereignis davor (``BARGEIN_SEK``).
 
     Bewusst NICHT als Label: 'keine_sprache' und 'leer' nach einem Trigger.
     Das sieht nach Fehltrigger aus, deckt aber auch den Fall ab, dass der Ruf
@@ -234,9 +255,14 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
     hier nie auf. Die Bilanz schätzt den Recall deshalb systematisch zu gut.
     """
     labels: dict[str, dict] = {}
+    gesehen: set[str] = set()          # Audios, zu denen es schon ein outcome gab
+    letzter_bargein: dict | None = None
     for i, ev in enumerate(events):
         audio = ev.get("audio")
         if not audio:
+            continue
+        if ev.get("result") == "bargein":
+            letzter_bargein = ev
             continue
 
         if ev.get("result") == "nearmiss":
@@ -252,6 +278,21 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
 
         elif ev.get("result") == "outcome":
             ausgang = ev.get("ausgang")
+            erste = audio not in gesehen
+            gesehen.add(audio)
+            bargein = ev.get("via") == "bargein" or "_bargein" in audio
+            if ausgang == "stopwort" and bargein:
+                clip = audio if "_bargein" in audio else None
+                if clip is None and letzter_bargein is not None:
+                    dt = (datetime.fromisoformat(ev["ts"])
+                          - datetime.fromisoformat(letzter_bargein["ts"])).total_seconds()
+                    if 0 <= dt <= BARGEIN_SEK:
+                        clip = letzter_bargein["audio"]
+                if clip:
+                    labels[clip] = {"klasse": ECHT, "grund": "Barge-in mit Stopp-Wort"}
+                continue
+            if not erste:
+                continue
             # "bereits": gültiger, ausgeführter Befehl, Ziel war nur schon so —
             # derselbe Beleg für einen echten Ruf wie "ausgefuehrt".
             if ausgang == "aktuator" and ev.get("status") in ("ausgefuehrt", "bereits", "zurueckgestellt"):
@@ -384,13 +425,24 @@ def main() -> int:
     for row in zeilen:
         if not row.get("sprechfluss"):
             row["sprechfluss"] = _sprechfluss(wake_log.get(row["audio"], {}))
-        # Ein Selbst-Label sticht die STT-Einstufung immer — es beruht auf einer
-        # Handlung, nicht auf einem Transkript. Auch bei laengst gelabelten
-        # Zeilen, denn die Handlung kann erst nach dem letzten Lauf passiert sein.
+    # Ein Selbst-Label sticht die STT-Einstufung immer — es beruht auf einer
+    # Handlung, nicht auf einem Transkript. Auch bei laengst gelabelten
+    # Zeilen, denn die Handlung kann erst nach dem letzten Lauf passiert sein.
+    # Über ALLE bekannten Zeilen, nicht nur die des Filters: die Zeilen leben
+    # länger als das Audio im Archiv, und eine Regeländerung betrifft alle.
+    for row in {id(r): r for r in zeilen + list(bekannt.values())}.values():
         sl = selbst.get(row["audio"])
         if sl and (row.get("klasse") != sl["klasse"] or row.get("quelle") != "selbst"):
-            row["vorher_stt"] = row.get("klasse")
+            if row.get("quelle") != "selbst":
+                row["vorher_stt"] = row.get("klasse")
             row.update(klasse=sl["klasse"], quelle="selbst", grund=sl["grund"])
+            if row not in neue:
+                aktualisiert.append(row)
+        elif not sl and row.get("quelle") == "selbst":
+            # Die Regel trägt das Label nicht mehr (2026-10-31: Abbruch per
+            # Barge-in) — zurück zur STT-Einstufung, nicht als STT weiterführen.
+            row.update(klasse=row.get("vorher_stt") or UNKLAR, quelle="stt",
+                       grund="Selbst-Label zurückgezogen")
             if row not in neue:
                 aktualisiert.append(row)
 
