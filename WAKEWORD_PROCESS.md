@@ -2,7 +2,7 @@
 
 Was am gaston-Wakewort dieser Installation gemessen, versucht und entschieden
 wurde, Runde für Runde, mit allen Zahlen. **Wie man nachtrainiert** (Ablauf,
-Befehle, Fallen) steht in `WAKEWORD_TRAINING.md`; diese Datei ist der Beleg
+Befehle, Fallen) steht in `WAKEWORD_TRAINING.de.md` (englisch `WAKEWORD_TRAINING.md`); diese Datei ist der Beleg
 dazu und wächst nach unten.
 
 ## Stand (2026-10-31)
@@ -414,7 +414,7 @@ unabhängige Stufe.
 ## Prozess (wiederholend)
 
 Der Kreislauf Sammeln → Labeln → Sichern → Paket → Schranke → Trainieren →
-Messen → Entscheiden steht mit Befehlen in `WAKEWORD_TRAINING.md`. Die frühere
+Messen → Entscheiden steht mit Befehlen in `WAKEWORD_TRAINING.de.md`. Die frühere
 Fassung hier (Recall ≥ 0,9 und < 1 FP/h als einziges Gate, Training rein
 synthetisch) ist seit Runde 3 überholt.
 

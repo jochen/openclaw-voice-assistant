@@ -68,7 +68,7 @@ Vertrag oder eine Profil-Einstellung, nicht im Code versteckt.
 | Schaltvertrag für die eigene Hausautomation | `ACTUATOR_INTERFACE.md` |
 | Sprecher-Zustandsdatei und die Schranke darauf | `SPEAKER_STATE.md` |
 | Küchentimer und seine Anzeige-/Klingel-Senken | `TIMER_INTERFACE.md` |
-| Ein Wakewort trainieren und messen | `WAKEWORD_TRAINING.md` (Nachtrainings-Kreislauf), `WAKEWORD_PROCESS.md` (Messtagebuch), `wakeword_studio/`, `models/wakewords/README.md` |
+| Ein Wakewort trainieren und messen | `WAKEWORD_TRAINING.de.md` (erstes Modell und Nachtrainings-Kreislauf; ein Agent-Skill in `.claude/skills/wakeword-training/` führt hindurch), `WAKEWORD_PROCESS.md` (Messtagebuch), `wakeword_studio/`, `models/wakewords/README.md` |
 | Den lokalen Klassifikator trainieren | `LAYA_TRAINING.md` |
 | Sprach-Werkzeuge auf Agenten-Seite (OpenClaw-Plugin, MCP-Server) | `openclaw-plugin/`, `voice_assistant/mcp_actuator.py` |
 | Mess- und Replay-Werkzeuge | `tools/` (Abschnitt „Mess-Werkzeuge“ unten) |

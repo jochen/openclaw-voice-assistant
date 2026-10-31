@@ -48,6 +48,18 @@ class RundeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             rezept_lesen("halb", self.paket)
 
+    def test_synth_ohne_paket(self):
+        self.assertEqual(rezept_lesen("synth", None),
+                         ("synth", {"positive": [], "negative": []}))
+        with self.assertRaises(ValueError):
+            rezept_lesen("voll", None)
+        wurzel = self.tmp / "runden" / "r1"
+        z = rezept_vorbereiten(wurzel, "synth", "gaston", self.synth, None,
+                               {"positive": [], "negative": []}, dupl=10, praefix="real_",
+                               basis={"output_dir": "x"})
+        self.assertEqual(z["positive_train"], 1)
+        self.assertEqual(z["positive_train_echt"], 0)
+
     def test_vorbereiten_und_lauf(self):
         wurzel = self.tmp / "runden" / "r9"
         _, listen = rezept_lesen("voll", self.paket)

@@ -1,0 +1,39 @@
+# Trainingsumgebung für openWakeWord auf dem GPU-Rechner (nicht ow-venv).
+# Diese Versionen liefen 2026-07 bis 2026-10 zusammen (Python 3.12, Ubuntu 24.04).
+# torch/torchaudio installiert gpu_einrichten.sh vorher passend zur CUDA-Version
+# (TORCH_INDEX); getestet: torch 2.12.1 + torchaudio 2.11.0, cu130.
+#
+# scipy unter 1.15: acoustics braucht scipy.special.sph_harm, das 1.15 entfernt hat.
+scipy==1.14.1
+numpy==2.2.6
+PyYAML==6.0.3
+soundfile==0.14.0
+tqdm==4.67.1
+pyarrow==24.0.0
+datasets==5.0.0
+# augment/train von openWakeWord
+mutagen==1.48.1
+torchinfo==1.8.0
+torchmetrics==1.9.0
+speechbrain==1.1.0
+audiomentations==0.33.0
+torch-audiomentations==0.12.0
+acoustics==0.2.6
+pronouncing==0.3.0
+scikit-learn==1.9.0
+speexdsp-ns==0.1.2
+ai-edge-litert==2.1.2
+# Clips sprechen (piper-sample-generator)
+piper-tts==1.3.0
+webrtcvad==2.0.10
+# onnx-Export (torch >= 2.9 braucht onnxscript) und onnx -> tflite
+onnx==1.20.1
+onnxruntime==1.26.0
+onnxscript==0.6.2
+onnx2tf==2.5.0
+onnx_graphsurgeon==0.6.1
+onnxsim==0.6.5
+sng4onnx==2.0.1
+sne4onnx==2.0.1
+psutil==5.9.5
+tensorflow_cpu==2.21.0

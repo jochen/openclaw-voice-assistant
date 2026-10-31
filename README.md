@@ -64,7 +64,7 @@ setting, not hidden in the code.
 | Switching contract for your home automation | `ACTUATOR_INTERFACE.md` |
 | Speaker state file and the gate built on it | `SPEAKER_STATE.md` |
 | Kitchen timer and its display/ringing sinks | `TIMER_INTERFACE.md` |
-| Training and measuring a wake word | `WAKEWORD_TRAINING.md` (retraining cycle, German), `WAKEWORD_PROCESS.md` (measurement log), `wakeword_studio/`, `models/wakewords/README.md` |
+| Training and measuring a wake word | `WAKEWORD_TRAINING.md` (first model and retraining loop; an agent skill in `.claude/skills/wakeword-training/` guides through it), `WAKEWORD_PROCESS.md` (measurement log), `wakeword_studio/`, `models/wakewords/README.md` |
 | Training the local classifier | `LAYA_TRAINING.md` |
 | Agent-side voice tools (OpenClaw plugin, MCP server) | `openclaw-plugin/`, `voice_assistant/mcp_actuator.py` |
 | Measurement and replay tools | `tools/` (section "Measurement tools" below) |

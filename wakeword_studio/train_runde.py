@@ -9,6 +9,10 @@ Anleitung, Begriffe und Lehren: ``WAKEWORD_TRAINING.md``.
         --rezept voll --rezept C=c_pos.txt,c_neg.txt --laeufe 2 \\
         --synth train_out/gaston --basis-config gaston.yaml --weiche llm
 
+    # das erste Modell, nur aus den Clips von clips_erzeugen.py:
+    python train_runde.py --name r1 --rezept synth --laeufe 2 \\
+        --modell NAME --basis-config NAME.yaml
+
 Was es tut, je Rezept:
 1. Einen eigenen Ordner ``runden/<name>/<rezept>/`` anlegen: die synthetischen
    Clips als Symlinks (ohne die mit ``--praefix``, das sind Reste früherer
@@ -59,16 +63,21 @@ FRAME_SEK = 0.08
 # Vorbereitung (ohne GPU, getestet in tests/test_train_runde.py)
 # --------------------------------------------------------------------------
 
-def rezept_lesen(text: str, paket: Path) -> tuple[str, dict[str, list[str]]]:
-    """``voll`` = alles aus ``paket/train``; ``NAME=pos.txt,neg.txt`` = Listen.
+def rezept_lesen(text: str, paket: Path | None) -> tuple[str, dict[str, list[str]]]:
+    """``synth`` = nur die synthetischen Clips (das erste Modell, kein Paket);
+    ``voll`` = alles aus ``paket/train``; ``NAME=pos.txt,neg.txt`` = Listen.
 
     Die Listen enthalten Dateinamen aus ``paket/train/positive`` bzw.
     ``negative``, eine je Zeile. Ein fehlender Name ist ein Fehler, kein
     stilles Weglassen: sonst trainiert man ein anderes Rezept als gedacht.
     """
+    if text == "synth":
+        return "synth", {s: [] for s in SEITE_ZU_KLASSE}
+    if paket is None:
+        raise ValueError(f"Rezept {text!r} braucht --paket (nur 'synth' geht ohne)")
     if "=" not in text:
         if text != "voll":
-            raise ValueError(f"Rezept {text!r}: entweder 'voll' oder NAME=pos.txt,neg.txt")
+            raise ValueError(f"Rezept {text!r}: 'synth', 'voll' oder NAME=pos.txt,neg.txt")
         return "voll", {s: sorted(f.name for f in (paket / "train" / s).glob("*.wav"))
                         for s in SEITE_ZU_KLASSE}
     name, _, listen = text.partition("=")
@@ -92,7 +101,7 @@ def config_schreiben(basis: dict, output_dir: Path, ziel: Path) -> None:
     ziel.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
 
 
-def rezept_vorbereiten(wurzel: Path, name: str, modell: str, synth: Path, paket: Path,
+def rezept_vorbereiten(wurzel: Path, name: str, modell: str, synth: Path, paket: Path | None,
                        listen: dict[str, list[str]], dupl: int, praefix: str,
                        basis: dict) -> dict[str, int]:
     """Ordner eines Rezepts: synthetische Clips + echte Clips, alles als Symlinks."""
@@ -248,8 +257,8 @@ class Runde:
     def run(self) -> int:
         import yaml
         a = self.a
-        paket = (self.studio / a.paket).resolve()
-        synth = (self.studio / a.synth).resolve()
+        paket = (self.studio / a.paket).resolve() if a.paket else None
+        synth = (self.studio / (a.synth or f"train_out/{a.modell}")).resolve()
         self.basis = yaml.safe_load((self.studio / a.basis_config).read_text())
         self.basis["model_name"] = a.modell
         rezepte = [rezept_lesen(r, paket) for r in a.rezept]
@@ -257,7 +266,7 @@ class Runde:
             print(f"{self.wurzel} gibt es schon — anderen --name wählen", file=sys.stderr)
             return 2
         self.wurzel.mkdir(parents=True)
-        self.log(f"Runde {a.name}: Paket {paket.name}, Rezepte {[r for r, _ in rezepte]}, "
+        self.log(f"Runde {a.name}: Paket {paket.name if paket else '-'}, Rezepte {[r for r, _ in rezepte]}, "
                  f"{a.laeufe} Läufe, augment parallel {a.augment_parallel}, GPUs {self.gpus or '-'}")
         for name, listen in rezepte:
             z = rezept_vorbereiten(self.wurzel, name, a.modell, synth, paket, listen,
@@ -336,13 +345,14 @@ def fp_pro_stunde(onnx: Path, val_npy: Path, threads: int = 4) -> dict:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--name", required=True, help="Name der Runde, Ordner runden/<name>/")
-    p.add_argument("--paket", required=True, help="Paket von tools/wake_paket.py (mit train/)")
+    p.add_argument("--paket", help="Paket von tools/wake_paket.py (mit train/); nicht für 'synth'")
     p.add_argument("--rezept", action="append", required=True,
-                   help="'voll' oder NAME=pos.txt,neg.txt (mehrfach)")
+                   help="'synth' (erstes Modell), 'voll' oder NAME=pos.txt,neg.txt (mehrfach)")
     p.add_argument("--laeufe", type=int, default=2, help="Trainings je Rezept (Streuung!)")
-    p.add_argument("--synth", default="train_out/gaston",
-                   help="Ordner mit den synthetischen Clips (positive_train, …)")
-    p.add_argument("--basis-config", default="gaston.yaml", help="Trainings-Config von openWakeWord")
+    p.add_argument("--synth", help="Ordner mit den synthetischen Clips (positive_train, …), "
+                   "Default train_out/<modell>")
+    p.add_argument("--basis-config", default="gaston.yaml",
+                   help="Trainings-Config von openWakeWord (Vorlage: training_vorlage.yaml)")
     p.add_argument("--modell", default="gaston", help="model_name")
     p.add_argument("--studio", default=".", help="Arbeitsordner (openwakeword/, Merkmal-Dateien)")
     p.add_argument("--train-py", default="openwakeword/openwakeword/train.py")
