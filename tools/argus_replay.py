@@ -58,6 +58,19 @@ Messreihe (glm-5-2 über ai.noris.de; gilt nur für ihre Weltmodell-Version):
     Fälle, nicht die Summe eines Laufs. --ohne-v1 und --vergleich sind
     dafür da. 429 von ai.noris.de kam in 30 von 218 Aufrufen; das
     Werkzeug wartet seither länger.
+
+  2026-11-01, Weltmodell 3ce81980, nur die 16 gelabelten (--nur-befunde
+  --ohne-v1). Anlass: glm-5-2 beim Anbieter abgeschaltet (HTTP 400
+  "no keys found that support model"), Argus fiel aus. Modellwahl:
+               echt 9   fehlalarm 4   unklar 2   nicht_geschaltet 1
+    deepseek-v41-flash  9 / 1 / 1 / 0, zweiter Lauf 9 / 0 / 1 / 1
+    qwen3.8-27b         7 / 0 / 2 / 0 (übersieht zwei 40-%-Rollos)
+    glm-5-3-flash       11 von 16 Aufrufen gescheitert: denkt trotz
+                        enable_thinking=false, so nicht brauchbar
+    Gewählt: deepseek-v41-flash (Jochen wollte ein schnelles Modell;
+    ~0,2 s). Der eine Fehlalarm war "auch dazu", der schon unter glm-5-2
+    kippte. Es setzt gelegentlich "<|constrain|>" in den Text, das Parsen
+    überstand es in beiden Läufen. Ungelabelte Turns nicht gemessen.
 """
 
 from __future__ import annotations
