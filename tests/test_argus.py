@@ -7,6 +7,7 @@ nicht dieser Test, sondern tools/argus_replay.py gegen das echte Modell.
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -93,6 +94,9 @@ class AntwortLesenTest(unittest.TestCase):
 
 
 class OverseerTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
     def _lauf(self, weltmodell):
         gesehen = {}
 
@@ -105,9 +109,10 @@ class OverseerTest(unittest.TestCase):
         watcher.WATCH_PATH = os.devnull
         try:
             o = watcher.Overseer(chat_id="", bot_token="", quiet_start=0, quiet_end=24,
-                                 llm_url="u", llm_model="m", weltmodell=weltmodell)
+                                 llm_url="u", llm_model="m", weltmodell=weltmodell,
+                                 zustand_pfad=os.path.join(self.tmp, "z.json"))
             o._send_telegram = lambda msg: None
-            o._check_turn_sync({"transcript": "t", "intent": {"ist_kommando": True}})
+            o._pruefe({"transcript": "t", "intent": {"ist_kommando": True}})
         finally:
             watcher._llm_pruefe, watcher.WATCH_PATH = alt_pruefe, alt_path
         return gesehen

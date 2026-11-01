@@ -366,15 +366,35 @@ deshalb in `~/.openclaw/workspace/actuator_turns.log` (Rohmaterial für den
 Diskrepanzen (EXEC_DIFFERS, STATUS_PROBLEM). Dedupliziert via
 `actuator_watch.jsonl`. Siehe `tools/wake_triage.py` für den Stil.
 
-`voice_assistant/services/watcher.py` — Event-gesteuerter Daemon-Thread im
-Voice-Assistant. `check_turn()` wird sofort nach jedem Aktuator-Turn
-aufgerufen (nicht periodisch). Semantische Prüfung via LLM
-(OpenAI-kompatibles API, System-Prompt ~200 Token): passt das Transkript
-zum Intent? LLM_MISMATCH und EXEC_DIFFERS gehen in eine separate Telegram-
-Gruppe (nicht den Voice-Spiegel). Stille Zeit 01:00–07:00: nichts wird
-gesendet, nur gesammelt. STATUS_PROBLEM bleibt im JSONL-Archiv, nicht in
-Telegram (zu laut). Bei LLM-Fehler: Meldung an Telegram
-(„Überwachung konnte nicht erfolgen weil …"). Timeout 30s + 1 Retry.
+`voice_assistant/services/watcher.py` — Daemon-Threads im
+Voice-Assistant. Semantische Prüfung via LLM (OpenAI-kompatibles API): passt
+das Transkript zum Intent? LLM_MISMATCH und EXEC_DIFFERS gehen in eine
+separate Telegram-Gruppe (nicht den Voice-Spiegel). STATUS_PROBLEM bleibt im
+JSONL-Archiv, nicht in Telegram (zu laut). Timeout 30s + 1 Retry.
+
+**Taktung (seit 2026-11-01, Jochen; vorher jeder Turn sofort).** Anlass:
+Laya schaltete am 2026-11-01 13:12 automatisch auf v9a um, und Argus war
+seit der Abschaltung von glm-5-2 beim Anbieter tot (HTTP 400 je Turn). Jochen
+wollte Argus erst ganz entfernen, weil kaum noch Meldungen kamen; gehalten
+hat ihn das automatische Nachtraining. Drei Wege (`Overseer`):
+- **sofort bei Uneinigkeit** Laya↔Gemma-Schatten
+  (`aktuator_schatten.schatten_uneinig`, wartet ≤ 15 s auf den Schatten).
+  Oktober nachgerechnet: 5 von 7 Meldungen lagen dort, ~17 Turns/Monat.
+  **Deshalb bleibt Gemma als Schatten**; ohne Schatten (auch zerlegte
+  „und“-Sätze, Laya-Ausfall) geht der Turn in den Tageslauf.
+- **sofort nach Wechsel von Checkpoint oder capabilities** (Kennung
+  `name@capabilities` aus Layas `/health`), bis `fenster` (20) ausgeführte
+  Turns geprüft sind. Zustand in `argus_zustand.json`, überlebt Neustarts.
+- **Tageslauf um `tageszeit` (22 Uhr)**: alles Übrige aus
+  `actuator_turns.log` ab dem Wasserstand. Geprüftes steht in
+  `argus_geprueft.jsonl` (Grund `uneinig`/`checkpoint`/`tag`). Ein
+  LLM-Ausfall meldet sich einmal je Lauf, der Turn bleibt offen, der
+  Wasserstand rückt nur bis davor. Meldung nur bei Befund. Sonntags dazu ein
+  Lebenszeichen (Jochen: wöchentlich ja).
+Stille Zeit 01:00–07:00: nichts sofort, der Tageslauf holt es. Erst der
+Tageslauf fängt Fehler, die beide Klassifikatoren teilen (Fernsehton am
+2026-10-27: eine nicht trainierte Sprechweise). Tests:
+`tests/test_argus_taktung.py`.
 
 Aktiviert per Profil-Block `watcher:` (Default `enabled: false`).
 LLM-Felder: `llm_url`, `llm_model`, `llm_api_key`, `llm_timeout`.

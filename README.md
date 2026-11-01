@@ -1015,13 +1015,32 @@ Additionally, a deterministic structural check runs without an LLM:
 - **STATUS_PROBLEM** — the automation did not answer „ausgefuehrt" (rejected,
   unknown target, deferred). Archived but not sent to Telegram (too noisy).
 
-On LLM errors (provider down, timeout): the overseer sends a message to the
-Telegram chat („Überwachung konnte nicht erfolgen weil …") instead of failing
-silently. Timeout is 30s with one retry on network/timeout errors.
+**When it checks.** Not every turn immediately — once the classifier works
+well, that mostly produces silence plus the occasional false alarm. Three
+paths instead:
 
-The overseer runs as an event-driven daemon thread — `check_turn()` is called
-immediately after each actuator turn (not on a polling timer), so a mismatch
-is reported within ~1 second.
+- **Immediately when the shadow disagrees**: if a second classifier runs in
+  the shadow (`actuator.schatten`) and would have decided differently, the
+  turn is checked right away. In our October data 5 of 7 overseer reports
+  were on such turns, about 17 per month. Without a shadow this path is
+  simply empty and everything goes to the daily run — so don't remove the
+  shadow classifier just because the deciding one is good.
+- **Immediately after a change of checkpoint or capabilities**, until
+  `fenster` (default 20) executed turns are checked. If your classifier is
+  retrained and switched automatically, this is the only place where
+  someone looks at whether the new one behaves differently in real use.
+- **Everything else once a day** at `tageszeit` (default 22:00), from a
+  high-water mark in `actuator_turns.log`. A message only if something was
+  found.
+
+What this catches late: errors both classifiers share (a phrasing neither
+was trained on). Those show up in the daily run.
+
+On LLM errors (provider down, timeout) the turn stays open and the daily run
+tries again; an outage is reported once a day, not once per turn. Timeout is
+30s with one retry on network/timeout errors. Once a week (Sunday's daily
+run) a short sign of life goes to the chat — otherwise silence means either
+"all fine" or "the overseer is dead", and you can't tell which.
 
 One-off CLI tool (reads the log, classifies, deduplicates):
 
@@ -1046,10 +1065,12 @@ Background worker inside the assistant, reporting to a separate Telegram chat
       llm_timeout: 30
       haus_mcp_url: "http://<home-automation>/mcp"   # optional, world model
       haus_mcp_token: "<own-token>"                  # not the backend's token
+      fenster: 20                     # turns checked at once after a model change
+      tageszeit: 22                   # daily run, hour of day
 ```
 
 Only `LLM_MISMATCH` and `EXEC_DIFFERS` are sent to Telegram; during quiet
-hours findings are collected and held. Stage 1 is deliberately conservative —
+hours nothing is checked immediately, the daily run picks those turns up. Stage 1 is deliberately conservative —
 the most expensive mistake the overseer could make is a *hallucinated*
 correction, physically in the house, possibly at night. Later stages
 (group completion, proactive follow-up on objective signals) build on this

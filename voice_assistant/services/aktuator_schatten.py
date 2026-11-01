@@ -149,7 +149,47 @@ def entscheiden(actuator, text: str) -> Entscheidung:
     return kette_gemma(actuator, text)
 
 
+# Ergebnis des Schattens je Satz, fuer Argus (services/watcher.py): der prueft
+# sofort, wenn die beiden Ketten uneinig waren, sonst erst im Tageslauf.
+# Eingetragen wird in schatten_starten() VOR dem Thread, damit Argus, der nach
+# dem Schalten fragt, weiss, dass ein Urteil kommt und darauf warten soll.
+# Kein Eintrag = kein Schatten (abgeschaltet, Laya-Ausfall, zerlegter Satz).
+_urteile: dict[str, tuple[threading.Event, list, float]] = {}
+_urteile_lock = threading.Lock()
+
+
+def _urteil_anmelden(text: str) -> None:
+    jetzt = time.time()
+    with _urteile_lock:
+        for k in [k for k, (_, _, t) in _urteile.items() if jetzt - t > 300]:
+            del _urteile[k]          # nie abgeholt (kein Argus, kein Kommando)
+        _urteile[text] = (threading.Event(), [None], jetzt)
+
+
+def _urteil_setzen(text: str, uneinig: bool | None) -> None:
+    with _urteile_lock:
+        e = _urteile.get(text)
+    if e is not None:
+        e[1][0] = uneinig
+        e[0].set()
+
+
+def schatten_uneinig(text: str, timeout: float = 15.0) -> bool | None:
+    """True: der Schatten haette anders entschieden. False: gleich. None: es
+    gibt fuer diesen Satz kein Schatten-Urteil (oder es kam nicht rechtzeitig,
+    oder der Schatten scheiterte). Wartet hoechstens `timeout` Sekunden."""
+    with _urteile_lock:
+        e = _urteile.get(text)
+    if e is None:
+        return None
+    e[0].wait(timeout)
+    with _urteile_lock:
+        _urteile.pop(text, None)
+    return e[1][0]
+
+
 def _lauf(actuator, text: str, echt: Entscheidung, wakeword: str | None) -> None:
+    uneinig = None
     try:
         schatten = (kette_laya(actuator, text) if echt.wer == "gemma"
                     else kette_gemma(actuator, text))
@@ -162,6 +202,7 @@ def _lauf(actuator, text: str, echt: Entscheidung, wakeword: str | None) -> None
             **schatten.als_log(),
             "capabilities": actuator.version,
         }
+        uneinig = schatten.ausgang != echt.ausgang and not schatten.ausfall
         with open(ACTUATOR_SCHATTEN_LOG_PATH, "a") as f:
             f.write(json.dumps(zeile, ensure_ascii=False) + "\n")
         if schatten.ausgang != echt.ausgang:
@@ -169,6 +210,8 @@ def _lauf(actuator, text: str, echt: Entscheidung, wakeword: str | None) -> None
                   f"({schatten.ms:.0f} ms)")
     except Exception as exc:  # der Schatten darf den Assistenten nie stoeren
         print(f"⚠️  Schatten: {exc}")
+    finally:
+        _urteil_setzen(text, uneinig)
 
 
 def schatten_starten(actuator, text: str, wakeword: str | None, echt: Entscheidung) -> None:
@@ -186,6 +229,7 @@ def schatten_starten(actuator, text: str, wakeword: str | None, echt: Entscheidu
         return
     if echt.wer == "gemma" and not cfg.laya_url:
         return
+    _urteil_anmelden(text)
     threading.Thread(target=_lauf, args=(actuator, text, echt, wakeword), daemon=True,
                      name="aktuator-schatten").start()
 

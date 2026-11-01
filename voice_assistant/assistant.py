@@ -1303,6 +1303,16 @@ def run() -> None:
             from voice_assistant.services.watcher import Overseer
             wt = profile.watcher
             bot_tok = wt.bot_token or profile.telegram_bot_token
+
+            def _argus_stand(actuator=actuator):
+                # Checkpoint@capabilities: ändert sich eins, prüft Argus die
+                # nächsten Turns sofort (automatisches Nachtraining).
+                ck = (aktuator_schatten.laya_checkpoint(actuator.cfg.laya_url)
+                      if actuator.cfg.laya_url else None) or {}
+                if actuator.cfg.laya_url and not ck.get("name"):
+                    return None          # Laya nicht abfragbar: Fenster nicht neu setzen
+                return f"{ck.get('name') or actuator.cfg.klassifikator}@{actuator.version}"
+
             overseer = Overseer(
                 chat_id=wt.chat_id,
                 bot_token=bot_tok,
@@ -1313,12 +1323,20 @@ def run() -> None:
                 llm_api_key=wt.llm_api_key,
                 llm_timeout=wt.llm_timeout,
                 weltmodell=_argus_weltmodell(wt),
+                schatten_uneinig=aktuator_schatten.schatten_uneinig,
+                checkpoint=_argus_stand,
+                fenster=wt.fenster,
+                tageszeit=wt.tageszeit,
             )
+            overseer.start()
             llm_info = f", Modell {wt.llm_model}" if wt.llm_model else ""
             if wt.haus_mcp_url:
                 llm_info += ", mit Weltmodell"
+            if not profile.actuator.schatten and profile.actuator.klassifikator == "laya":
+                llm_info += ", OHNE Schatten (nichts sofort bei Uneinigkeit)"
             print(f"👁️  Überwacher aktiv{llm_info}, meldet an Chat {wt.chat_id}, "
-                  f"still {wt.quiet_start:02d}–{wt.quiet_end:02d} Uhr")
+                  f"sofort bei Uneinigkeit und {wt.fenster} Turns nach Checkpoint-Wechsel, "
+                  f"Rest um {wt.tageszeit} Uhr, still {wt.quiet_start:02d}–{wt.quiet_end:02d} Uhr")
         except Exception as e:
             print(f"⚠️  Überwacher-Start fehlgeschlagen: {e}")
     elif profile.watcher.enabled and not profile.watcher.chat_id:
