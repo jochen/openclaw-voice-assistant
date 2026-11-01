@@ -483,7 +483,9 @@ class WatcherConfig:
     # LLM-Endpoint für die semantische Prüfung (Transkript vs. Intent).
     # OpenAI-kompatibel, wie actuator.llm_url. Leer = semantische Prüfung aus.
     llm_url: str = ""
-    # Modellname, z.B. "vllm/release/glm-5-2". Leer = semantische Prüfung aus.
+    # Modellname, z.B. "vllm/release/deepseek-v41-flash" (glm-5-2 bis
+    # 2026-11-01, dann beim Anbieter abgeschaltet). Leer = semantische Prüfung
+    # aus. Ein Modellwechsel nur gegen tools/argus_replay.py.
     llm_model: str = ""
     # API-Key für den Provider. Leer = kein Auth-Header (lokaler Endpunkt).
     llm_api_key: str = ""
@@ -491,6 +493,12 @@ class WatcherConfig:
     # der Overseer-Thread nicht blockiert — lieber spät melden als gar nicht.
     # Bei Lastspitzen/Reasoning braucht GLM-5-2 manchmal >10s.
     llm_timeout: float = 30.0
+    # Taktung seit 2026-11-01 (services/watcher.Overseer): sofort nur bei
+    # Uneinigkeit mit dem Schatten und für `fenster` ausgeführte Turns nach
+    # einem Wechsel von Laya-Checkpoint oder capabilities; alles Übrige
+    # täglich um `tageszeit` Uhr, sonntags dazu ein Lebenszeichen.
+    fenster: int = 20
+    tageszeit: int = 22
     # Haus-MCP der Gegenstelle (Streamable HTTP), aus dem Argus das Weltmodell
     # holt (Werkzeug haus_weltmodell). Leer = ohne Weltmodell, Prompt wie bis
     # 2026-10-04. Eigener Token je Client — NICHT der des Brains, damit die
@@ -1129,6 +1137,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         llm_timeout=float(watcher_raw.get("llm_timeout", _dw.llm_timeout)),
         haus_mcp_url=str(watcher_raw.get("haus_mcp_url", _dw.haus_mcp_url)),
         haus_mcp_token=str(watcher_raw.get("haus_mcp_token", _dw.haus_mcp_token)),
+        fenster=int(watcher_raw.get("fenster", _dw.fenster)),
+        tageszeit=int(watcher_raw.get("tageszeit", _dw.tageszeit)),
     )
 
     dw_raw = raw.get("dienstwaechter") or {}

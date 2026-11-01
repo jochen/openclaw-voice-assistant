@@ -1,7 +1,9 @@
 """Überwacher: semantische Prüfung jedes Aktuator-Turns via LLM (nur LESEN + MELDEN).
 
-STUFE 1 (nur LESEN + MELDEN). Wird SOFORT nach jedem Aktuator-Turn aufgerufen
-(in einem Daemon-Thread, blockiert die Hauptschleife nicht).
+STUFE 1 (nur LESEN + MELDEN). Wird nach jedem Aktuator-Turn aufgerufen (in
+einem Daemon-Thread, blockiert die Hauptschleife nicht), prüft seit
+2026-11-01 aber nur bei Anlass sofort und den Rest täglich um 22 Uhr —
+siehe Overseer.
 
 Architektur (siehe DESIGN-DELIBERATION 2026-07-24 im MemPalace):
   „schneller Aktuator + langsamer Aufseher" — Fan-out nach der Aufnahme:
@@ -16,8 +18,8 @@ Zusätzlich deterministische Checks (kein LLM nötig):
   - EXEC_DIFFERS: Node-RED hat etwas anderes ausgeführt als der Intent
   - STATUS_PROBLEM: nicht „ausgefuehrt" (archiviert, nicht nach Telegram)
 
-Bei LLM-Fehler (Provider down, Timeout): Meldung an Argus-Chat
-„Überwachung konnte nicht erfolgen weil …".
+Bei LLM-Fehler (Provider down, Timeout): der Turn bleibt offen, der
+Tageslauf versucht ihn erneut und meldet den Ausfall einmal.
 
 Warum im Voice-Assistant und nicht in OpenClaw: OpenClaw zieht workspace,
 AGENTS.md, Skills, Session-Kontext hoch — für eine Ja/Nein-Frage die ein
@@ -39,7 +41,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from voice_assistant.config import WORKSPACE
 from voice_assistant.services.telegram import send as tg_send
@@ -298,12 +300,43 @@ def _formatiere_alert(befund: dict) -> str:
     return "\n".join(lines)
 
 
-class Overseer:
-    """Event-gesteuerter Überwacher: check_turn() nach jedem Aktuator-Turn.
+def _turn_schluessel(turn: dict) -> str:
+    """Ein Turn eindeutig: request_id allein reicht nicht sicher (zerlegte
+    Sätze), der Teilsatz kommt dazu."""
+    return f"{turn.get('request_id') or ''}|{turn.get('transcript') or ''}"
 
-    Kein periodischer Poller mehr — die Prüfung passiert sofort nach dem Turn,
-    in einem Daemon-Thread der nicht blockiert. Siehe DESIGN-DELIBERATION
-    2026-07-24: „Fan-out nach der Aufnahme: (a) handelt; (b) prueft".
+
+def _pruefbar(turn: dict) -> bool:
+    """Nur Kommandos mit Satz — dieselbe Bedingung wie in _llm_pruefe."""
+    return bool(turn.get("transcript")) and bool((turn.get("intent") or {}).get("ist_kommando"))
+
+
+class Overseer:
+    """Argus: prüft Aktuator-Turns, aber nicht mehr jeden sofort (seit 2026-11-01).
+
+    Drei Wege (Jochen 2026-11-01, Zahlen in tools/argus_replay.py):
+
+    - **Sofort bei Uneinigkeit**: der Schatten (Gemma neben Laya) hätte anders
+      entschieden. Im Oktober lagen 5 von 7 Meldungen dort, bei ~17 solchen
+      Turns im Monat. Deshalb bleibt Gemma als Schatten, auch wenn Laya allein
+      entscheidet. Fehlt der Schatten, fällt dieser Weg still auf den Tageslauf
+      zurück — nichts geht verloren, es kommt nur später.
+    - **Sofort nach einem Wechsel von Checkpoint oder capabilities**, bis
+      `fenster` (20) ausgeführte Turns geprüft sind. Laya wird automatisch neu
+      trainiert und umgeschaltet; nur hier sieht jemand, ob der neue
+      Checkpoint im echten Betrieb etwas anders macht.
+    - **Täglich um `tageszeit` (22 Uhr) alles Übrige** aus actuator_turns.log,
+      ab einem Wasserstand. Fällt das LLM aus, bleibt der Turn offen und kommt
+      am nächsten Tag dran (vorher war er verloren und es gab je Turn eine
+      Fehlermeldung). Gemeldet wird nur bei Befund oder Ausfall.
+
+    Dazu einmal je Woche (sonntags im Tageslauf) ein Lebenszeichen: Schweigen
+    hieß sonst „alles gut“ oder „Argus ist tot“ — am 2026-11-01 war er
+    stundenlang tot (Modell beim Anbieter abgeschaltet), direkt nach einem
+    Checkpoint-Wechsel.
+
+    In den stillen Stunden wird nicht sofort geprüft; das macht der Tageslauf.
+    EXEC_DIFFERS (deterministisch, ohne LLM) bleibt bei jedem Turn sofort.
     """
 
     def __init__(
@@ -317,6 +350,14 @@ class Overseer:
         llm_api_key: str = "",
         llm_timeout: float = 10.0,
         weltmodell=None,
+        schatten_uneinig=None,
+        checkpoint=None,
+        fenster: int = 20,
+        tageszeit: int = 22,
+        lebenszeichen_wochentag: int = 6,
+        zustand_pfad: str | None = None,
+        geprueft_pfad: str | None = None,
+        turns_pfad: str | None = None,
     ) -> None:
         # weltmodell: services.haus_mcp.Weltmodell oder None. Mit → Prompt V2
         # (Mandat + Hauswissen + Kontext), ohne → V1 wie bis 2026-10-04.
@@ -330,87 +371,271 @@ class Overseer:
         self.llm_model = llm_model
         self.llm_api_key = llm_api_key
         self.llm_timeout = llm_timeout
+        # schatten_uneinig(text) -> True/False/None (aktuator_schatten).
+        self.schatten_uneinig = schatten_uneinig
+        # checkpoint() -> Kennung "Checkpoint@capabilities" oder None.
+        self.checkpoint = checkpoint
+        self.fenster = fenster
+        self.tageszeit = tageszeit
+        self.lebenszeichen_wochentag = lebenszeichen_wochentag
+        self.zustand_pfad = zustand_pfad or os.path.join(WORKSPACE, "argus_zustand.json")
+        self.geprueft_pfad = geprueft_pfad or os.path.join(WORKSPACE, "argus_geprueft.jsonl")
+        self.turns_pfad = turns_pfad or os.path.join(WORKSPACE, "actuator_turns.log")
+        self._lock = threading.Lock()
+        self._zustand = self._zustand_laden()
 
-    def check_turn(self, turn: dict) -> None:
-        """Prüft einen Aktuator-Turn sofort, in einem Daemon-Thread.
-        Blockiert die Hauptschleife nicht."""
-        t = threading.Thread(
-            target=self._check_turn_sync,
-            args=(turn,),
-            daemon=True,
-            name="overseer-check",
-        )
-        t.start()
+    # --- Zustand -----------------------------------------------------------
 
-    def _check_turn_sync(self, turn: dict) -> None:
-        """Die eigentliche Prüfung — läuft im Thread."""
-        befunde = []
-        llm_error = None
+    def _zustand_laden(self) -> dict:
+        try:
+            with open(self.zustand_pfad) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            # Erster Start: ab jetzt, nicht das ganze Archiv nachprüfen.
+            z = {"wasserstand": datetime.now().isoformat(timespec="seconds")}
+            self._zustand = z
+            self._zustand_schreiben()
+            return z
+        except Exception as e:
+            print(f"⚠️  Argus: Zustand unlesbar ({e}), beginne ab jetzt")
+            return {"wasserstand": datetime.now().isoformat(timespec="seconds")}
 
-        # 1. Semantische Prüfung via LLM
-        if self.llm_url and self.llm_model:
-            system = user = None
-            welt_info: dict = {}
-            if self.weltmodell is not None:
-                version, text, fehler = self.weltmodell.aktuell()
-                if fehler != self._welt_fehler:
-                    # Zustandswechsel einmal melden, nicht bei jedem Turn.
-                    print(f"👁️  Argus: Weltmodell {'nicht abrufbar: ' + fehler if fehler else 'wieder da'}"
-                          f"{f' (nutze Version {version})' if fehler and text else ''}")
-                    self._welt_fehler = fehler
-                system = system_prompt(text or None)
-                user = user_nachricht(turn)
-                welt_info = {"weltmodell": version}
-                if fehler:
-                    welt_info["weltmodell_fehler"] = fehler
-            llm_befund = _llm_pruefe(
-                turn, self.llm_url, self.llm_model,
-                self.llm_api_key, self.llm_timeout,
-                system=system, user=user,
-            )
-            if llm_befund is not None:
-                if llm_befund.get("art") == "LLM_ERROR":
-                    llm_error = llm_befund
-                else:
-                    befunde.append({**turn, **llm_befund, **welt_info})
+    def _zustand_schreiben(self) -> None:
+        try:
+            tmp = self.zustand_pfad + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self._zustand, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, self.zustand_pfad)
+        except Exception as e:
+            print(f"⚠️  Argus: Zustand nicht geschrieben: {e}")
 
-        # 2. Strukturelle Prüfung (deterministisch)
-        exec_befund = _pruefe_exec_differs(turn)
-        if exec_befund is not None:
-            befunde.append({**turn, **exec_befund})
+    def _geprueft_merken(self, turn: dict, grund: str, ergebnis: str) -> None:
+        zeile = {"geprueft": datetime.now().isoformat(timespec="seconds"),
+                 "ts": turn.get("ts"), "schluessel": _turn_schluessel(turn),
+                 "grund": grund, "ergebnis": ergebnis}
+        try:
+            with open(self.geprueft_pfad, "a") as f:
+                f.write(json.dumps(zeile, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"⚠️  Argus: geprüft-Log nicht geschrieben: {e}")
 
-        # LLM-Fehler: melden, nicht archivieren
-        if llm_error:
-            self._send_telegram(
-                f"❌ Überwachung konnte nicht erfolgen weil:\n"
-                f"{llm_error['detail']}\n"
-                f"(Turn: {(turn.get('transcript') or '?')[:60]})"
-            )
+    def _geprueft_lesen(self) -> list[dict]:
+        out = []
+        try:
+            with open(self.geprueft_pfad) as f:
+                for line in f:
+                    try:
+                        out.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        except FileNotFoundError:
+            pass
+        return out
 
+    # --- Prüfen und Melden -------------------------------------------------
+
+    def _pruefe(self, turn: dict) -> tuple[list[dict], dict | None]:
+        """LLM-Urteil für einen Turn: (Befunde, LLM-Fehler oder None)."""
+        if not (self.llm_url and self.llm_model):
+            return [], None
+        system = user = None
+        welt_info: dict = {}
+        if self.weltmodell is not None:
+            version, text, fehler = self.weltmodell.aktuell()
+            if fehler != self._welt_fehler:
+                # Zustandswechsel einmal melden, nicht bei jedem Turn.
+                print(f"👁️  Argus: Weltmodell {'nicht abrufbar: ' + fehler if fehler else 'wieder da'}"
+                      f"{f' (nutze Version {version})' if fehler and text else ''}")
+                self._welt_fehler = fehler
+            system = system_prompt(text or None)
+            user = user_nachricht(turn)
+            welt_info = {"weltmodell": version}
+            if fehler:
+                welt_info["weltmodell_fehler"] = fehler
+        befund = _llm_pruefe(turn, self.llm_url, self.llm_model, self.llm_api_key,
+                             self.llm_timeout, system=system, user=user)
+        if befund is None:
+            return [], None
+        if befund.get("art") == "LLM_ERROR":
+            return [], befund
+        return [{**turn, **befund, **welt_info}], None
+
+    def _melden(self, befunde: list[dict], kopf: str = "") -> None:
+        """Archivieren und die Alert-Arten nach Telegram (außer stille Zeit)."""
         if not befunde:
             return
-
-        # Persistiere alle Befunde
         try:
             with open(WATCH_PATH, "a") as f:
                 for b in befunde:
                     f.write(json.dumps(b, ensure_ascii=False) + "\n")
         except Exception as e:
             print(f"⚠️  Überwacher: JSONL-Schreiben fehlgeschlagen: {e}")
-
-        # Nach Telegram schicken (nur Alert-Arten, nur außerhalb Stille-Zeit)
         alerts = [b for b in befunde if b.get("art") in _ALERT_ARTEN]
         if not alerts:
             return
-
         if _in_stillen_stunden(datetime.now(), self.quiet_start, self.quiet_end):
-            print(f"👁️  Überwacher: {len(alerts)} Befund(e) gesammelt — Stille Zeit")
+            print(f"👁️  Überwacher: {len(alerts)} Befund(e) archiviert — Stille Zeit")
             return
-
         for b in alerts:
-            msg = _formatiere_alert(b)
-            self._send_telegram(msg)
+            self._send_telegram((kopf + "\n" if kopf else "") + _formatiere_alert(b))
             time.sleep(0.5)
+
+    # --- Weg 1 und 2: sofort -----------------------------------------------
+
+    def check_turn(self, turn: dict) -> None:
+        """Nach jedem Aktuator-Turn; kehrt sofort zurück (Daemon-Thread)."""
+        threading.Thread(target=self._check_turn_sync, args=(turn,), daemon=True,
+                         name="overseer-check").start()
+
+    def _sofort_grund(self, turn: dict) -> str | None:
+        """'checkpoint', 'uneinig' oder None (= Tageslauf)."""
+        if self.checkpoint is not None:
+            try:
+                kennung = self.checkpoint()
+            except Exception:
+                kennung = None
+            if kennung:
+                with self._lock:
+                    if kennung != self._zustand.get("checkpoint"):
+                        print(f"👁️  Argus: neuer Stand {kennung} — die nächsten "
+                              f"{self.fenster} ausgeführten Turns sofort prüfen")
+                        self._zustand["checkpoint"] = kennung
+                        self._zustand["fenster_rest"] = self.fenster
+                        self._zustand_schreiben()
+                    if self._zustand.get("fenster_rest", 0) > 0:
+                        return "checkpoint"
+        if self.schatten_uneinig is not None:
+            try:
+                if self.schatten_uneinig(turn.get("transcript") or ""):
+                    return "uneinig"
+            except Exception as e:
+                print(f"⚠️  Argus: Schatten-Urteil nicht lesbar: {e}")
+        return None
+
+    def _check_turn_sync(self, turn: dict) -> None:
+        # Strukturelle Prüfung (deterministisch) immer sofort.
+        exec_befund = _pruefe_exec_differs(turn)
+        if exec_befund is not None:
+            self._melden([{**turn, **exec_befund}])
+
+        if not _pruefbar(turn):
+            return
+        if _in_stillen_stunden(datetime.now(), self.quiet_start, self.quiet_end):
+            return                                       # Tageslauf
+        grund = self._sofort_grund(turn)
+        if grund is None:
+            return                                       # Tageslauf
+        befunde, fehler = self._pruefe(turn)
+        if fehler:
+            # Keine Meldung je Turn: der Turn bleibt offen, der Tageslauf
+            # versucht ihn erneut und meldet einen Ausfall einmal.
+            print(f"⚠️  Argus: Sofortprüfung ({grund}) fehlgeschlagen, bleibt für 22 Uhr: "
+                  f"{fehler['detail']}")
+            return
+        self._geprueft_merken(turn, grund, "befund" if befunde else "ok")
+        if grund == "checkpoint" and turn.get("status") == "ausgefuehrt":
+            with self._lock:
+                self._zustand["fenster_rest"] = max(0, self._zustand.get("fenster_rest", 0) - 1)
+                self._zustand_schreiben()
+        self._melden(befunde, kopf={"checkpoint": "🆕 nach Checkpoint-Wechsel",
+                                    "uneinig": "👥 Laya und Gemma uneinig"}[grund])
+
+    # --- Weg 3: Tageslauf ----------------------------------------------------
+
+    def _offene_turns(self) -> list[dict]:
+        """Prüfbare Turns ab dem Wasserstand, die noch niemand geprüft hat."""
+        ab = self._zustand.get("wasserstand") or ""
+        erledigt = {g.get("schluessel") for g in self._geprueft_lesen()}
+        offen = []
+        try:
+            with open(self.turns_pfad) as f:
+                for line in f:
+                    try:
+                        t = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if (t.get("ts") or "") < ab or t.get("phase") not in ("intent", "handshake"):
+                        continue
+                    if _pruefbar(t) and _turn_schluessel(t) not in erledigt:
+                        offen.append(t)
+        except FileNotFoundError:
+            pass
+        return offen
+
+    def tageslauf(self, jetzt: datetime | None = None) -> dict:
+        """Alle offenen Turns prüfen, Befunde melden, Ausfall einmal melden,
+        sonntags das Lebenszeichen. Rückgabe für Tests und Journal."""
+        jetzt = jetzt or datetime.now()
+        offen = self._offene_turns()
+        befunde: list[dict] = []
+        fehler: list[str] = []
+        erster_offener_ts = None
+        for t in offen:
+            b, f = self._pruefe(t)
+            if f:
+                fehler.append(f["detail"])
+                if erster_offener_ts is None:
+                    erster_offener_ts = t.get("ts")
+                continue
+            self._geprueft_merken(t, "tag", "befund" if b else "ok")
+            befunde.extend(b)
+        with self._lock:
+            # Der Wasserstand rückt nur bis vor den ersten gescheiterten Turn.
+            self._zustand["wasserstand"] = erster_offener_ts or jetzt.isoformat(timespec="seconds")
+            self._zustand["letzter_tageslauf"] = jetzt.isoformat(timespec="seconds")
+            self._zustand_schreiben()
+        self._melden(befunde, kopf="📅 Tagesprüfung")
+        if fehler:
+            self._send_telegram(
+                f"❌ Argus-Tagesprüfung: {len(fehler)} von {len(offen)} Turns nicht prüfbar, "
+                f"weil:\n{fehler[-1]}\nSie bleiben offen und kommen morgen um "
+                f"{self.tageszeit} Uhr erneut dran.")
+        print(f"👁️  Argus-Tageslauf: {len(offen)} offen, {len(befunde)} Befund(e), "
+              f"{len(fehler)} nicht prüfbar")
+        if jetzt.weekday() == self.lebenszeichen_wochentag:
+            self._lebenszeichen(jetzt, offen_nach=len(fehler))
+        return {"offen": len(offen), "befunde": len(befunde), "fehler": len(fehler)}
+
+    def _lebenszeichen(self, jetzt: datetime, offen_nach: int) -> None:
+        if self._zustand.get("lebenszeichen") == jetzt.date().isoformat():
+            return
+        seit = (jetzt - timedelta(days=7)).isoformat(timespec="seconds")
+        woche = [g for g in self._geprueft_lesen() if (g.get("geprueft") or "") >= seit]
+        n = {k: sum(1 for g in woche if g.get("grund") == k)
+             for k in ("uneinig", "checkpoint", "tag")}
+        n_befund = sum(1 for g in woche if g.get("ergebnis") == "befund")
+        zeilen = [
+            f"👁️ Argus lebt. Diese Woche {len(woche)} Turns geprüft, {n_befund} Befund(e).",
+            f"Sofort: {n['uneinig']} bei Uneinigkeit, {n['checkpoint']} nach Checkpoint-Wechsel; "
+            f"im Tageslauf: {n['tag']}.",
+            f"Modell {self.llm_model}"
+            + (f", Stand {self._zustand.get('checkpoint')}" if self._zustand.get("checkpoint") else ""),
+        ]
+        if self._zustand.get("fenster_rest"):
+            zeilen.append(f"Noch {self._zustand['fenster_rest']} Turns im Fenster nach dem Wechsel.")
+        if offen_nach:
+            zeilen.append(f"⚠️ {offen_nach} Turns konnten nicht geprüft werden.")
+        self._send_telegram("\n".join(zeilen))
+        with self._lock:
+            self._zustand["lebenszeichen"] = jetzt.date().isoformat()
+            self._zustand_schreiben()
+
+    def start(self) -> None:
+        """Den Tageslauf-Thread starten (schläft bis `tageszeit`)."""
+        threading.Thread(target=self._tageslauf_schleife, daemon=True,
+                         name="argus-tageslauf").start()
+
+    def _tageslauf_schleife(self) -> None:
+        while True:
+            jetzt = datetime.now()
+            ziel = jetzt.replace(hour=self.tageszeit, minute=0, second=0, microsecond=0)
+            if ziel <= jetzt:
+                ziel += timedelta(days=1)
+            time.sleep(max(1.0, (ziel - jetzt).total_seconds()))
+            try:
+                self.tageslauf()
+            except Exception as e:
+                print(f"⚠️  Argus-Tageslauf: {e}")
 
     def _send_telegram(self, msg: str) -> None:
         """Sendet eine Telegram-Nachricht an den Argus-Chat."""

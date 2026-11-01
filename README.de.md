@@ -1049,14 +1049,33 @@ Zusätzlich eine deterministische strukturelle Prüfung ohne LLM:
   unbekanntes Ziel, zurückgestellt). Wird archiviert, aber nicht nach Telegram
   geschickt (zu laut).
 
-Bei LLM-Fehlern (Provider down, Timeout): der Überwacher schickt eine Meldung
-an den Telegram-Chat („Überwachung konnte nicht erfolgen weil …") statt im
-Dunkeln zu versagen. Timeout ist 30s mit einem Retry bei Netzwerk-/Timeout-
-Fehlern.
+**Wann er prüft.** Nicht jeden Turn sofort — arbeitet der Klassifikator
+gut, kommt dabei vor allem Schweigen heraus und ab und zu ein Fehlalarm.
+Stattdessen drei Wege:
 
-Der Überwacher läuft als event-gesteuerter Daemon-Thread — `check_turn()`
-wird sofort nach jedem Aktuator-Turn aufgerufen (nicht als periodischer
-Timer), sodass ein Mismatch binnen ~1 Sekunde gemeldet wird.
+- **Sofort, wenn der Schatten anderer Meinung ist**: läuft ein zweiter
+  Klassifikator im Schatten (`actuator.schatten`) und hätte er anders
+  entschieden, wird der Turn gleich geprüft. In unseren Oktober-Daten lagen
+  5 von 7 Meldungen auf solchen Turns, etwa 17 im Monat. Ohne Schatten
+  bleibt dieser Weg einfach leer und alles geht in den Tageslauf — den
+  Schatten-Klassifikator also nicht entfernen, nur weil der entscheidende
+  gut ist.
+- **Sofort nach einem Wechsel von Checkpoint oder capabilities**, bis
+  `fenster` (Standard 20) ausgeführte Turns geprüft sind. Wird der
+  Klassifikator automatisch nachtrainiert und umgeschaltet, schaut nur hier
+  jemand, ob der neue sich im echten Betrieb anders verhält.
+- **Alles Übrige einmal am Tag** um `tageszeit` (Standard 22 Uhr), ab einem
+  Wasserstand in `actuator_turns.log`. Eine Meldung nur bei Befund.
+
+Was damit spät auffällt: Fehler, die beide Klassifikatoren teilen (eine
+Sprechweise, auf die keiner trainiert ist). Die zeigt der Tageslauf.
+
+Bei LLM-Fehlern (Provider down, Timeout) bleibt der Turn offen und der
+Tageslauf versucht ihn erneut; ein Ausfall wird einmal am Tag gemeldet,
+nicht je Turn. Timeout ist 30s mit einem Retry bei Netzwerk-/Timeout-
+Fehlern. Einmal pro Woche (im Tageslauf am Sonntag) kommt ein kurzes
+Lebenszeichen in den Chat — sonst heißt Schweigen „alles gut“ oder „der
+Überwacher ist tot“, und man kann es nicht unterscheiden.
 
 Einmaliges CLI-Tool (liest das Log, klassifiziert, dedupliziert):
 
@@ -1081,10 +1100,13 @@ meldet (nicht den Familien-Voice-Chat):
       llm_timeout: 30
       haus_mcp_url: "http://<haussteuerung>/mcp"   # optional, Weltmodell
       haus_mcp_token: "<eigener-token>"            # nicht der Token des Backends
+      fenster: 20                     # sofort geprüfte Turns nach Modellwechsel
+      tageszeit: 22                   # Tageslauf, volle Stunde
 ```
 
 Nur `LLM_MISMATCH` und `EXEC_DIFFERS` werden nach Telegram geschickt;
-während der Stille-Zeit werden Befunde gesammelt und zurückgehalten. Stufe 1
+während der Stille-Zeit wird nichts sofort geprüft, diese Turns holt der
+Tageslauf. Stufe 1
 ist bewusst konservativ — der teuerste Fehler des Überwachers wäre eine
 *eingebildete* Korrektur, physisch im Haus, womöglich nachts. Spätere Stufen
 (Gruppen-Vervollständigung, proaktive Rückfrage bei objektivem Signal)
