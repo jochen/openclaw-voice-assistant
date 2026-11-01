@@ -329,8 +329,8 @@ bei einem Teil eine Bestätigung, kommt die Rückfrage nach den anderen.
 `--einzel` prüft, dass das Tor-Set nicht schlechter wird). Zahlen im
 Docstring. Tests: `tests/test_aktuator_und.py`.
 
-**Gewohnheiten statt Rückfrage (`gewohnheiten:`, seit 2026-10-31, Experiment
-auf `feature/wake-schatten`).** Anlass 2026-10-30 07:19: „Gaston, mach die
+**Gewohnheiten statt Rückfrage (`gewohnheiten:`, seit 2026-10-31, Experiment,
+auf main seit 2026-11-01).** Anlass 2026-10-30 07:19: „Gaston, mach die
 Rollos auf“ — Laya: `auf`, kein Ziel, Rückfrage des Aktuators, danach noch eine
 des Brains; morgens war an 30 von 30 Tagen „alle Rollos“ gemeint.
 `services/gewohnheiten.py` liest eine Nachschlag-Tabelle, die ein anderer
@@ -1238,7 +1238,7 @@ nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.
 
-### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, Branch `feature/wake-schatten`)
+### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, auf main seit 2026-11-01)
 
 Jochens Idee: das Modell darf großzügig hören, eine zweite Stufe sortiert
 Fehlauslöser danach aus. `wake_pruefung.py` rechnet bei jedem Trigger die
