@@ -7,9 +7,11 @@ Vorher `tools.wake_triage --seit N --auch-trigger` laufen lassen, sonst stehen
 frische Trigger als "ohne". Gebaut für den Vergleich v5 gegen R7 voll l2
 (WAKEWORD_PROCESS.md, "Live-Versuch R7 voll l2").
 """
-import argparse, json, os
+import argparse, json, os, sys
 from collections import Counter
-from tools import wake_wort
+# auch als Skript aufrufbar (tools/wake_live_bilanz.py), nicht nur mit -m
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tools import wake_wort  # noqa: E402
 W = os.path.expanduser("~/.openclaw/workspace")
 ap = argparse.ArgumentParser(description="Trigger und Near-Misses je Label in einem Zeitraum")
 ap.add_argument("ab", help="Beginn, ISO (2026-10-24 oder 2026-10-31T18:09)")

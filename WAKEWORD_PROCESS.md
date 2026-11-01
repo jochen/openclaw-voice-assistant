@@ -1689,6 +1689,43 @@ Gelesen wird nach einer Woche dasselbe für l2, mit denselben Labelquellen
 (die Ohr-Anteile vorher angleichen, sonst vergleicht man Labelquellen).
 Mehr Fehltrigger am Tag als v5 → zurück auf v5.
 
+**Ablauf der Auswertung (vorbereitet 2026-11-01, fällig ~2026-11-07 18:09):**
+
+```bash
+ow-venv/bin/python -m tools.wake_corpus sichern            # vor jedem Neustart ohnehin
+ow-venv/bin/python -m tools.wake_triage --seit 8 --auch-trigger
+# Ohr: Fehltrigger-Kandidaten der l2-Woche anhören (review_audio.py export
+# --liste, Mikro vorher stumm), bis der Ohr-Anteil der Fehltrigger etwa dem
+# von v5 entspricht (13 von 20). Urteile nach wake_review.jsonl, dann:
+ow-venv/bin/python -m tools.wake_live_bilanz 2026-10-31T18:09 2026-11-07T18:09
+```
+
+Gelesen gegen die v5-Tabelle oben. Entscheidend ist nur „Trigger Rauschen je
+Tag“ (v5 2,5): darüber → v5 zurück (`git checkout 42797ef --
+models/wakewords/gaston/{gaston.tflite,gaston.onnx,gaston.onnx.data,manifest.yaml}`).
+Echte Rufe je Tag und verpasste Rufe sind Zusatzinformation, keine Bedingung.
+Achtung „je Tag“: das Werkzeug teilt durch Tage *mit Ereignissen*; bei einem
+Tag ohne jedes Ereignis (verreist) von Hand auf 7 Tage umrechnen.
+
+**Danach, wenn Jochen es so entscheidet: voll4 live.** Fertiges Bundle
+`~/wake-pakete/bundle_voll4/gaston/` (vier tflite als Kopien, Manifest mit
+`model:` als Liste und Kopf mit Messung und Rückweg; gegen die Messbundles
+geprüft: 20 Studio-Takes, Score-Abweichung 0, Live-Engine lädt es):
+
+```bash
+ow-venv/bin/python -m tools.wake_corpus sichern
+cd models/wakewords/gaston
+git rm -q gaston.tflite gaston.onnx gaston.onnx.data
+cp ~/wake-pakete/bundle_voll4/gaston/* .
+git add gaston_r7voll_l1.tflite gaston_r7voll_l2.tflite \
+        gaston_r7bvoll_l1.tflite gaston_r7bvoll_l2.tflite manifest.yaml
+systemctl --user restart openclaw-voice-assist.service
+journalctl --user -u openclaw-voice-assist.service | grep "Ensemble aus 4"
+```
+
+Dann eine neue Vergleichswoche ab dem Neustart, dieselbe Abbruchregel gegen
+v5 (2,5 Fehltrigger/Tag), dieselbe Auswertung wie oben.
+
 ### Paralleles Training, Probelauf r7b (2026-10-31 18:15–19:12)
 
 Erster Lauf von `wakeword_studio/train_runde.py`: dasselbe Paket und
