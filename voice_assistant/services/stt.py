@@ -237,23 +237,57 @@ class LlamaCppAsrStt:
         self.timeout = timeout
         self.state = SpeachesState()        # nur für stt_ok()/Cooldown-Semantik
 
-    def _anfrage(self, wav_bytes: bytes, kontext: str | None) -> str:
+    def _post(self, wav_bytes: bytes, kontext: str | None, praefix: str = "",
+              extra: dict | None = None) -> dict:
         msgs = ([{"role": "system", "content": kontext}] if kontext else []) + [
             {"role": "user", "content": [{
                 "type": "input_audio",
                 "input_audio": {"data": base64.b64encode(wav_bytes).decode(), "format": "wav"}}]}]
         if self.sprache:
             # Vorbelegte Antwort: llama-server setzt die letzte assistant-Nachricht fort.
-            msgs.append({"role": "assistant", "content": f"language {self.sprache}<asr_text>"})
+            msgs.append({"role": "assistant", "content": f"language {self.sprache}<asr_text>{praefix}"})
+        body = {"messages": msgs, "temperature": 0, "max_tokens": 400, **(extra or {})}
         req = urllib.request.Request(
             f"{self.url}/v1/chat/completions",
-            data=json.dumps({"messages": msgs, "temperature": 0, "max_tokens": 400}).encode(),
+            data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            text = json.loads(resp.read())["choices"][0]["message"]["content"] or ""
+            return json.loads(resp.read())["choices"][0]
+
+    def _anfrage(self, wav_bytes: bytes, kontext: str | None) -> str:
+        text = self._post(wav_bytes, kontext)["message"]["content"] or ""
         # Qwen3-ASR antwortet "language German<asr_text>…"
         return text.split("<asr_text>", 1)[-1].strip()
+
+    def anfang_logprob(self, wav_bytes: bytes, praefix: str, anfang: str) -> float:
+        """log P(nächstes Wort beginnt mit `anfang` | Audio, praefix).
+
+        Die Grammatik erzwingt `anfang` plus beliebige Buchstaben, die
+        gemeldeten Logprobs sind aber die des Modells vor der Grammatik
+        (llama-server, gemessen 2026-10-31: bei "Ganz toll" stand "anz" −0,16
+        neben "ast" −1,98). Gezählt werden die Tokens, bis `anfang` abgedeckt
+        ist. Die Buchstaben danach sind nötig, weil sonst die Zerlegung
+        mitgezwungen wird: "Gast" allein erzwang "G"+"ast", wo Qwen "G"+"aston"
+        wollte, und ein klarer Ruf fiel von −0,24 auf −4,5. Eine Untergrenze
+        (ein Pfad, der beste erlaubte je Schritt), keine Summe über alle.
+        Braucht `sprache`, sonst gibt es keinen Platz für den Präfix.
+        """
+        if not self.sprache:
+            raise ValueError("anfang_logprob braucht sprache")
+        wort = (" " if praefix else "") + anfang
+        wahl = self._post(wav_bytes, None, praefix, {
+            "grammar": "root ::= " + json.dumps(wort, ensure_ascii=False) + " [a-zäöüß]*",
+            "logprobs": True, "max_tokens": 4})
+        summe, text = 0.0, ""
+        for t in wahl["logprobs"]["content"]:
+            if len(text) >= len(wort):
+                break
+            summe += t["logprob"]
+            text += t["token"]
+        if len(text) < len(wort):
+            raise ValueError(f"Anfang nicht abgedeckt: {text!r}")
+        return summe
 
     def transcribe(self, wav_bytes: bytes) -> str | None:
         try:

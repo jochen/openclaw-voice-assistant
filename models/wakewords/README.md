@@ -18,6 +18,11 @@ model: gaston.tflite
 threshold: 0.5   # empfohlener Trigger-Score
 ```
 
+`model` darf auch eine Liste sein (`model: [lauf1.tflite, lauf2.tflite]`,
+verschiedene Dateinamen): dann mitteln Engine und Messwerkzeuge den Score der
+Modelle je Frame (Ensemble, siehe `WAKEWORD_TRAINING.de.md`, „Was sich als
+wirksam gezeigt hat“).
+
 - `manifest.yaml` + `.tflite` sind **portabel** und werden committed.
 - `samples/` bleibt lokal (`.gitignore`: `models/wakewords/*/samples/`) — Stimmen
   der Familie gehören nicht auf GitHub. Stattdessen ist `samples/` ein eigenes

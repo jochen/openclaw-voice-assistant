@@ -28,6 +28,9 @@ models); only the agent's language model is wherever you run it.
   the agent, "go deaf for an hour" for visitors.
 - **Your phone as a second microphone.** In rooms without a microphone (the
   bathroom), an Android app makes the phone a satellite.
+- **Follows household habits (experimental).** "Blinds up" in the morning
+  means the blinds that are opened every morning, without a question back.
+  The habits come from your own switching history.
 - **Everything is visible.** Every exchange is mirrored to a Telegram group;
   every decision is logged in a form the measurement tools can replay.
 
@@ -61,7 +64,7 @@ setting, not hidden in the code.
 | Switching contract for your home automation | `ACTUATOR_INTERFACE.md` |
 | Speaker state file and the gate built on it | `SPEAKER_STATE.md` |
 | Kitchen timer and its display/ringing sinks | `TIMER_INTERFACE.md` |
-| Training and measuring a wake word | `WAKEWORD_PROCESS.md`, `wakeword_studio/`, `models/wakewords/README.md` |
+| Training and measuring a wake word | `WAKEWORD_TRAINING.md` (first model and retraining loop; an agent skill in `.claude/skills/wakeword-training/` guides through it), `WAKEWORD_PROCESS.md` (measurement log), `wakeword_studio/`, `models/wakewords/README.md` |
 | Training the local classifier | `LAYA_TRAINING.md` |
 | Agent-side voice tools (OpenClaw plugin, MCP server) | `openclaw-plugin/`, `voice_assistant/mcp_actuator.py` |
 | Measurement and replay tools | `tools/` (section "Measurement tools" below) |
@@ -585,6 +588,21 @@ tied to your microphone gain than `wake_rms_min`.
 > daily use the TV practically stopped triggering; with music you have to call
 > a bit louder. Example, not a preset: check the near-misses in your own log.
 
+**Checking after the trigger (`wake_pruefung:`, experimental, log only)**
+Retraining alone did not get the model reliably under our false-trigger
+budget: two training runs on the same data differed by a factor of 2.5. The
+idea now is to let the model hear generously and to sort false triggers out
+afterwards, in a second step. For every trigger the assistant computes the
+*area* of the score curve (sum of scores above the threshold: height times
+duration) and lets the first STT stage (Qwen3-ASR, ~0.1 s) transcribe the
+wake clip. A large area passes; a small one passes only if the wake word (or a
+mishearing with the same onset) is in the text. **Without context:** given the
+wake word as context, the STT writes it even where nobody said it. Measured
+offline on our model's triggers: 5 of 15 false triggers would remain, 61 of 64
+genuine calls. That is too few false triggers for a decision, so for now the
+check only writes `wake_pruefung.jsonl` (text, area, `haette_verworfen`) and
+changes nothing; after listening to those cases it may become a gate.
+
 ## Cancelling a turn while it runs (`barge_in`, optional)
 
 A false wake-word trigger is not the expensive part. The expensive part is
@@ -924,6 +942,45 @@ before it. Translate the test sentences along with the prompt.
 
 Turns handled by the actuator itself are never seen by the backend — they are
 written as JSONL to `<workspace>/actuator_turns.log` instead.
+
+### Habits instead of a clarifying question (`gewohnheiten:`, optional, experimental)
+
+"Blinds up" without a room is ambiguous, and the actuator asks back. In the
+morning, though, it usually means the same group every day. With a
+`gewohnheiten:` block the assistant looks the sentence up in a habits file
+before asking: if the classifier found a command without a target (or a group
+the sentence does not name), a word *starts* with a device word ("blinds",
+not "kitchen blinds"), the action matches and the time lies in the habit's
+window, the question is skipped. The sentence goes to the backend with a hint
+(`locale.gewohnheit_hinweis`): which group was meant on how many of the last
+days. The backend switches exactly that group, says which one, and may still
+ask if something speaks against it.
+
+```yaml
+gewohnheiten:
+  enabled: true
+  datei: ~/path/to/habits.json   # written by whoever computes the habits
+  min_konfidenz: 0.8             # share of days on which this group was meant
+  min_tage: 10                   # at least this many days of data
+  max_alter_tage: 10             # older file = no hint, question as before
+  geraete:                       # device type -> word beginnings in the sentence
+    rollo: ["blind", "shutter"]
+```
+
+The file is not computed here. In our installation another agent derives it
+from the switching history in the time-series database (schema
+`hauswacht.gewohnheiten.v2`/`v3`, fields per habit: `geraetetyp`, `aktion`,
+`gruppe`, `fenster_beginn`/`fenster_ende` with `fenster_tz`, `tage`,
+`treffer`, `konfidenz`; see `voice_assistant/services/gewohnheiten.py`). Any
+problem with the file (missing, broken, old, unknown schema) means no hint,
+so the behaviour stays as before.
+
+**A habit must not confirm itself.** When the backend switches because of a
+hint, it sends `ziel_erschlossen: true` (target inferred, not spoken); the
+executing side records it, and whoever computes the habits leaves those
+switchings out of the group statistics (`ACTUATOR_INTERFACE.md`). The 0.8
+threshold is an estimate, not a measurement: so far every habit we have seen
+was at 1.0.
 
 ### Overseer (Stage 1 — read and report only)
 

@@ -1,0 +1,43 @@
+diff --git a/openwakeword/data.py b/openwakeword/data.py
+index 7a95306..fbe2734 100755
+--- a/openwakeword/data.py
++++ b/openwakeword/data.py
+@@ -32,6 +32,29 @@ from numpy.lib.format import open_memmap
+ from speechbrain.dataio.dataio import read_audio
+ from speechbrain.processing.signal_processing import reverberate
+ import torchaudio
++
++# --- Kompat-Shim (wakeword-studio): torchaudio>=2.9 delegiert load/info an
++# torchcodec, dessen FFmpeg-Libs auf diesem Host fehlen. Für WAV/FLAC reicht
++# soundfile vollständig aus, daher werden load/info hier ersetzt.
++import soundfile as _sf
++
++
++def _sf_load(path, *args, **kwargs):
++    data, sr = _sf.read(str(path), dtype="float32", always_2d=True)
++    return torch.from_numpy(data.T), sr
++
++
++class _SfInfo:
++    def __init__(self, path):
++        i = _sf.info(str(path))
++        self.sample_rate = i.samplerate
++        self.num_frames = i.frames
++        self.num_channels = i.channels
++        self.bits_per_sample = 16
++
++
++torchaudio.load = _sf_load
++torchaudio.info = _SfInfo
+ import mutagen
+ import acoustics
+ 
+@@ -677,7 +700,7 @@ def augment_clips(
+                 clip_data = clip_data[0:total_length]
+ 
+             if clip_sr != sr:
+-                raise ValueError("Error! Clip does not have the correct sample rate!")
++                raise ValueError(f"Error! Clip does not have the correct sample rate! {clip} sr={clip_sr}")
+ 
+             clip_data = create_fixed_size_clip(clip_data, total_length, clip_sr)
+ 

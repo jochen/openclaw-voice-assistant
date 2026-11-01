@@ -29,6 +29,9 @@ das Sprachmodell des Agenten läuft dort, wo man es betreibt.
   Agenten, „stell dich eine Stunde taub“ für Besuch.
 - **Das Handy als zweites Mikrofon.** In Räumen ohne Mikrofon (im Bad) macht
   eine Android-App das Handy zum Satelliten.
+- **Folgt den Gewohnheiten im Haus (Experiment).** „Rollos auf“ heißt morgens
+  die Rollos, die jeden Morgen aufgehen, ohne Rückfrage. Die Gewohnheiten
+  kommen aus der eigenen Schaltgeschichte.
 - **Alles ist nachvollziehbar.** Jedes Gespräch wird in eine Telegram-Gruppe
   gespiegelt, jede Entscheidung so geloggt, dass die Messwerkzeuge sie
   nachspielen können.
@@ -65,7 +68,7 @@ Vertrag oder eine Profil-Einstellung, nicht im Code versteckt.
 | Schaltvertrag für die eigene Hausautomation | `ACTUATOR_INTERFACE.md` |
 | Sprecher-Zustandsdatei und die Schranke darauf | `SPEAKER_STATE.md` |
 | Küchentimer und seine Anzeige-/Klingel-Senken | `TIMER_INTERFACE.md` |
-| Ein Wakewort trainieren und messen | `WAKEWORD_PROCESS.md`, `wakeword_studio/`, `models/wakewords/README.md` |
+| Ein Wakewort trainieren und messen | `WAKEWORD_TRAINING.de.md` (erstes Modell und Nachtrainings-Kreislauf; ein Agent-Skill in `.claude/skills/wakeword-training/` führt hindurch), `WAKEWORD_PROCESS.md` (Messtagebuch), `wakeword_studio/`, `models/wakewords/README.md` |
 | Den lokalen Klassifikator trainieren | `LAYA_TRAINING.md` |
 | Sprach-Werkzeuge auf Agenten-Seite (OpenClaw-Plugin, MCP-Server) | `openclaw-plugin/`, `voice_assistant/mcp_actuator.py` |
 | Mess- und Replay-Werkzeuge | `tools/` (Abschnitt „Mess-Werkzeuge“ unten) |
@@ -602,6 +605,22 @@ Mikrofon-Verstärkung als `wake_rms_min`.
 > nicht mehr aus; bei Musik muss man etwas lauter rufen. Beispiel, keine
 > Voreinstellung: die Near-Misses im eigenen Log ansehen.
 
+**Prüfung nach dem Trigger (`wake_pruefung:`, Experiment, nur Log)**
+Nachtraining allein brachte das Modell nicht verlässlich unter unser
+Fehlauslöser-Budget: zwei Trainingsläufe mit denselben Daten lagen um den
+Faktor 2,5 auseinander. Die Idee jetzt: das Modell darf großzügig hören,
+Fehlauslöser sortiert ein zweiter Schritt danach aus. Bei jedem Trigger rechnet
+der Assistent die *Fläche* der Score-Kurve (Summe der Scores über der
+Schwelle: Höhe mal Dauer) und lässt die erste STT-Stufe (Qwen3-ASR, ~0,1 s)
+den Wake-Clip transkribieren. Große Fläche geht durch, kleine nur, wenn das
+Wakewort (oder ein Verhörer mit gleichem Anlaut) im Text steht. **Ohne
+Kontext:** bekommt die STT das Wakewort als Kontext, schreibt sie es auch dort
+hin, wo es niemand gesagt hat. Offline an den Triggern unseres Modells
+gemessen: 5 von 15 Fehlauslösern blieben, 61 von 64 echten Rufen. Das sind zu
+wenige Fehlauslöser für eine Entscheidung, deshalb schreibt die Prüfung vorerst
+nur `wake_pruefung.jsonl` (Text, Fläche, `haette_verworfen`) und ändert
+nichts; nach dem Anhören dieser Fälle wird sie vielleicht ein Gate.
+
 ## Einen Turn abbrechen, während er läuft (`barge_in`, optional)
 
 Ein Wakeword-Fehltrigger ist nicht das Teure. Teuer ist, was danach passiert:
@@ -954,6 +973,45 @@ gehören mit übersetzt.
 
 Turns, die der Aktuator selbst erledigt, sieht das Backend nicht — sie landen
 deshalb als JSONL in `<workspace>/actuator_turns.log`.
+
+### Gewohnheiten statt Rückfrage (`gewohnheiten:`, optional, Experiment)
+
+„Rollos auf“ ohne Raum ist mehrdeutig, und der Aktuator fragt zurück. Morgens
+ist aber meist jeden Tag dieselbe Gruppe gemeint. Mit einem
+`gewohnheiten:`-Block schlägt der Assistent den Satz vor der Rückfrage in einer
+Gewohnheiten-Datei nach: Hat der Klassifikator ein Kommando ohne Ziel erkannt
+(oder eine Gruppe, die der Satz nicht nennt), *beginnt* ein Wort mit einem
+Gerätewort („Rollos“, nicht „Küchenrollos“), passt die Aktion und liegt die
+Uhrzeit im Fenster der Gewohnheit, entfällt die Rückfrage. Der Satz geht mit
+einem Hinweis an den Brain (`locale.gewohnheit_hinweis`): welche Gruppe an wie
+vielen der letzten Tage gemeint war. Der Brain schaltet genau diese Gruppe,
+sagt sie an und kann trotzdem fragen, wenn etwas dagegen spricht.
+
+```yaml
+gewohnheiten:
+  enabled: true
+  datei: ~/pfad/zu/gewohnheiten.json  # schreibt, wer die Gewohnheiten rechnet
+  min_konfidenz: 0.8                  # Anteil der Tage, an denen diese Gruppe gemeint war
+  min_tage: 10                        # mindestens so viele Tage Daten
+  max_alter_tage: 10                  # ältere Datei = kein Hinweis, Rückfrage wie bisher
+  geraete:                            # Gerätetyp -> Wortanfänge im Satz
+    rollo: ["rollo", "rolladen", "rolläden", "jalousie"]
+```
+
+Gerechnet wird die Datei nicht hier. In unserer Installation leitet ein
+anderer Agent sie aus der Schaltgeschichte in der Zeitreihen-Datenbank ab
+(Schema `hauswacht.gewohnheiten.v2`/`v3`, Felder je Gewohnheit: `geraetetyp`,
+`aktion`, `gruppe`, `fenster_beginn`/`fenster_ende` mit `fenster_tz`, `tage`,
+`treffer`, `konfidenz`; siehe `voice_assistant/services/gewohnheiten.py`).
+Jedes Problem mit der Datei (fehlt, kaputt, alt, unbekanntes Schema) heißt:
+kein Hinweis, also Verhalten wie vorher.
+
+**Eine Gewohnheit darf sich nicht selbst bestätigen.** Schaltet der Brain
+wegen eines Hinweises, schickt er `ziel_erschlossen: true` (Ziel erschlossen,
+nicht gesagt); die ausführende Seite schreibt das mit, und wer die
+Gewohnheiten rechnet, lässt solche Schaltungen aus der Gruppen-Statistik
+heraus (`ACTUATOR_INTERFACE.md`). Die Schwelle 0,8 ist geschätzt, nicht
+gemessen: bisher lag jede Gewohnheit bei 1,0.
 
 ### Überwacher (Stufe 1 — nur lesen und melden)
 

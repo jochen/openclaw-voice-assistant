@@ -84,19 +84,22 @@ if os.path.exists(_VENV) and os.path.realpath(sys.executable) != os.path.realpat
 from voice_assistant.config import (  # noqa: E402
     TRIGGER_AUDIO_DIR,
     WAKE_LOG_PATH,
+    WAKE_REVIEW_PATH,
     WORKSPACE,
     load_profile,
 )
 from voice_assistant.services.speaches import SpeachesState  # noqa: E402
 from voice_assistant.services.stt import SpeachesStt  # noqa: E402
+from tools import wake_wort  # noqa: E402
 
 TRIAGE_PATH = os.path.join(WORKSPACE, "wake_triage.jsonl")
 
-# Verhörer von "Gaston" aus echten Logs: Gasthof, Gastholm, Gastronom, Kastor,
-# Kasto, Gaston, Gastó. Absichtlich weit gefasst — ein zu weites Muster
-# verschiebt Fälle nach ECHTER RUF (harmlos, wird eh nicht zum Lockern
-# benutzt), ein zu enges verschiebt sie nach RAUSCHEN (gefährlich).
-GASTON_PAT = re.compile(r"gast|kast|gasch|aston|caston", re.IGNORECASE)
+# Woran das Wort im STT-Text erkannt wird, steht im Manifest des Bundles
+# (`text_erkennung.muster`, tools/wake_wort.py). Bei gaston die Verhörer aus
+# echten Logs: Gasthof, Gastholm, Gastronom, Kastor, Kasto, Gaston, Gastó.
+# Absichtlich weit gefasst — ein zu weites Muster verschiebt Fälle nach ECHTER
+# RUF (harmlos, wird eh nicht zum Lockern benutzt), ein zu enges verschiebt
+# sie nach RAUSCHEN (gefährlich).
 # Ab diesem no_speech_prob gilt die Aufnahme als sprachfrei. 0.7 liegt in der
 # gemessenen Lücke: Rausch-Clips lagen bei 0.79-0.86, Sprach-Clips bei 0.04-0.35.
 NO_SPEECH_SCHWELLE = 0.7
@@ -116,7 +119,7 @@ def _transcribe(stt: SpeachesStt, path: str) -> tuple[str, float | None]:
 
 
 def _klassifiziere(text: str, verworfen: bool) -> str:
-    if GASTON_PAT.search(text):
+    if wake_wort.aktiv().im_text(text):
         return ECHT
     if verworfen or not text.strip():
         return RAUSCH
@@ -205,6 +208,11 @@ def _lade_wake_events() -> list[dict]:
 # unabhängige Rufe einzusammeln.
 WIEDERHOLUNG_SEK = 15.0
 
+# Alte Barge-in-Zeilen (Audio = ursprünglicher Trigger): so weit darf das
+# bargein-Ereignis vor seiner outcome-Zeile liegen. Gemessen 2026-10-31 an den
+# 20 alten Zeilen: 0–10 s (Kommando-Endpointing mit 8-s-Deckel, dann STT).
+BARGEIN_SEK = 15.0
+
 
 def _selbst_labels(events: list[dict]) -> dict[str, dict]:
     """Labels, die das System sich selbst gibt — audio-Datei -> {klasse, grund}.
@@ -222,8 +230,27 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
        FALSCH einsortiert (darunter ein per Transkript belegtes 'Gaston macht…').
     2. Trigger, aus dem ein Schaltkommando wurde → echter Ruf. Ein Fehltrigger
        erzeugt praktisch nie ein gültiges Intent auf ein existierendes Ziel.
-    3. Trigger, den der Nutzer mit einem Stopp-Wort abgebrochen hat →
-       Fehltrigger. Der Abbruch ist ein ausdrückliches Urteil des Nutzers.
+    3. (abgeschafft 2026-10-31) Trigger, den der Nutzer mit einem Stopp-Wort
+       abgebrochen hat → Fehltrigger. Per Ohr gegengeprüft stimmte das nur in
+       16 von 29 Fällen, bei 8 war „Gaston“ klar zu hören: ein Stopp heißt
+       „nicht gemeint“, nicht „nicht gesagt“ (beiläufige Erwähnungen, ein
+       anderes Familienmitglied). Fürs Wakeword-Modell sind das Positive.
+       Solche Trigger bekommen kein Selbst-Label mehr; ``gestoppte_ohne_ohr``
+       listet sie als Kandidaten fürs Ohr. Die Zahlen: WAKEWORD_PROCESS.md.
+    4. Barge-in-Clip, in dessen Aufnahme ein Stopp-Wort erkannt wurde →
+       echter Ruf: wer „Stopp, Gaston“ sagt, hat Gaston gerufen.
+
+    Regel 3 hing bis 2026-10-31 an JEDER stopwort-Zeile und damit am Audio der
+    Zeile (Jochens Frage: „wir rufen nach einem Fehlauslöser oft ‚Stopp Gaston‘
+    hinterher“). Bei einem Barge-in ist das der Barge-in-Clip selbst, mit einem
+    echten „Stopp, Gaston“: 24 davon lagen als Fehltrigger im Korpus, 4 im
+    R5-Paket (v5), 17 im R6-Paket unter negative. Ältere Barge-ins stehen im
+    Log unter dem Audio des ursprünglichen Triggers (via=bargein, nicht die
+    erste Zeile); dort traf das Label den Trigger, auch wenn er ein echter Ruf
+    mit schlechter Antwort war („Gaston, ist alles gut bei dir?“, 2026-10-05).
+    Ein Abbruch per Barge-in sagt über den Trigger davor nichts Sicheres; er
+    bekommt keins. Den Barge-in-Clip findet Regel 4 bei diesen alten Zeilen
+    über das letzte bargein-Ereignis davor (``BARGEIN_SEK``).
 
     Bewusst NICHT als Label: 'keine_sprache' und 'leer' nach einem Trigger.
     Das sieht nach Fehltrigger aus, deckt aber auch den Fall ab, dass der Ruf
@@ -234,9 +261,14 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
     hier nie auf. Die Bilanz schätzt den Recall deshalb systematisch zu gut.
     """
     labels: dict[str, dict] = {}
+    gesehen: set[str] = set()          # Audios, zu denen es schon ein outcome gab
+    letzter_bargein: dict | None = None
     for i, ev in enumerate(events):
         audio = ev.get("audio")
         if not audio:
+            continue
+        if ev.get("result") == "bargein":
+            letzter_bargein = ev
             continue
 
         if ev.get("result") == "nearmiss":
@@ -252,14 +284,41 @@ def _selbst_labels(events: list[dict]) -> dict[str, dict]:
 
         elif ev.get("result") == "outcome":
             ausgang = ev.get("ausgang")
+            erste = audio not in gesehen
+            gesehen.add(audio)
+            bargein = ev.get("via") == "bargein" or "_bargein" in audio
+            if ausgang == "stopwort" and bargein:
+                clip = audio if "_bargein" in audio else None
+                if clip is None and letzter_bargein is not None:
+                    dt = (datetime.fromisoformat(ev["ts"])
+                          - datetime.fromisoformat(letzter_bargein["ts"])).total_seconds()
+                    if 0 <= dt <= BARGEIN_SEK:
+                        clip = letzter_bargein["audio"]
+                if clip:
+                    labels[clip] = {"klasse": ECHT, "grund": "Barge-in mit Stopp-Wort"}
+                continue
+            if not erste:
+                continue
             # "bereits": gültiger, ausgeführter Befehl, Ziel war nur schon so —
             # derselbe Beleg für einen echten Ruf wie "ausgefuehrt".
             if ausgang == "aktuator" and ev.get("status") in ("ausgefuehrt", "bereits", "zurueckgestellt"):
                 labels[audio] = {"klasse": ECHT,
                                  "grund": f"Aktuator: {ev.get('ziel')}/{ev.get('aktion')}"}
-            elif ausgang == "stopwort":
-                labels[audio] = {"klasse": RAUSCH, "grund": "vom Nutzer abgebrochen"}
     return labels
+
+
+def gestoppte_ohne_ohr(events: list[dict], ohr: set[str]) -> list[str]:
+    """Trigger, die per Stopp-Wort abgebrochen wurden und noch kein Ohr-Urteil
+    haben — die Kandidaten der nächsten Hörseite (früher Regel 3)."""
+    out, gesehen = [], set()
+    for ev in events:
+        a = ev.get("audio") or ""
+        if ev.get("result") != "outcome" or not a.endswith("_wake.wav") or a in gesehen:
+            continue
+        gesehen.add(a)
+        if ev.get("ausgang") == "stopwort" and ev.get("via") != "bargein" and a not in ohr:
+            out.append(a)
+    return out
 
 
 def _norm_text(text: str) -> str:
@@ -321,7 +380,11 @@ def main() -> int:
                          "ein Gaston drin sein, das zeigt die Trefferquote der Methode")
     ap.add_argument("--neu", action="store_true",
                     help="bereits gelabelte Dateien erneut durch die STT schicken")
+    ap.add_argument("--bundle", default=None,
+                    help="Wakewort-Bundle (Default: erstes eigenes des Profils); "
+                         "liefert das Erkennungsmuster aus seinem Manifest")
     args = ap.parse_args()
+    wake_wort.setzen(args.bundle)
 
     if not os.path.isdir(TRIGGER_AUDIO_DIR):
         print(f"Kein Trigger-Archiv unter {TRIGGER_AUDIO_DIR}")
@@ -384,13 +447,24 @@ def main() -> int:
     for row in zeilen:
         if not row.get("sprechfluss"):
             row["sprechfluss"] = _sprechfluss(wake_log.get(row["audio"], {}))
-        # Ein Selbst-Label sticht die STT-Einstufung immer — es beruht auf einer
-        # Handlung, nicht auf einem Transkript. Auch bei laengst gelabelten
-        # Zeilen, denn die Handlung kann erst nach dem letzten Lauf passiert sein.
+    # Ein Selbst-Label sticht die STT-Einstufung immer — es beruht auf einer
+    # Handlung, nicht auf einem Transkript. Auch bei laengst gelabelten
+    # Zeilen, denn die Handlung kann erst nach dem letzten Lauf passiert sein.
+    # Über ALLE bekannten Zeilen, nicht nur die des Filters: die Zeilen leben
+    # länger als das Audio im Archiv, und eine Regeländerung betrifft alle.
+    for row in {id(r): r for r in zeilen + list(bekannt.values())}.values():
         sl = selbst.get(row["audio"])
         if sl and (row.get("klasse") != sl["klasse"] or row.get("quelle") != "selbst"):
-            row["vorher_stt"] = row.get("klasse")
+            if row.get("quelle") != "selbst":
+                row["vorher_stt"] = row.get("klasse")
             row.update(klasse=sl["klasse"], quelle="selbst", grund=sl["grund"])
+            if row not in neue:
+                aktualisiert.append(row)
+        elif not sl and row.get("quelle") == "selbst":
+            # Die Regel trägt das Label nicht mehr (2026-10-31: Abbruch per
+            # Barge-in) — zurück zur STT-Einstufung, nicht als STT weiterführen.
+            row.update(klasse=row.get("vorher_stt") or UNKLAR, quelle="stt",
+                       grund="Selbst-Label zurückgezogen")
             if row not in neue:
                 aktualisiert.append(row)
 
@@ -400,6 +474,16 @@ def main() -> int:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     # --- Ausgabe -----------------------------------------------------------
+    ohr = set()
+    if os.path.exists(WAKE_REVIEW_PATH):
+        with open(WAKE_REVIEW_PATH, encoding="utf-8") as fh:
+            ohr = {json.loads(z)["audio"] for z in fh if z.strip()}
+    kandidaten = gestoppte_ohne_ohr(_lade_wake_events(), ohr)
+    if kandidaten:
+        print(f"\nPER STOPP ABGEBROCHEN, NOCH UNGEHÖRT: {len(kandidaten)} (Hörkandidaten,"
+              " seit 2026-10-31 ohne Selbst-Label)")
+        for a in kandidaten[-10:]:
+            print(f"    {a}")
     for art in ("trigger", "nearmiss"):
         teil = [r for r in zeilen if r["art"] == art]
         if not teil:

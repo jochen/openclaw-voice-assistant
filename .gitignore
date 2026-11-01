@@ -19,7 +19,9 @@ live_wakeword_and_wisphertts11.py
 test_responses_step*.py
 prompt*.txt
 verlauf_*.txt
-.claude
+# Lokale Claude-Code-Einstellungen bleiben privat; Skills für alle gehören ins Repo.
+.claude/*
+!.claude/skills/
 
 # Piper-Modelle: gitignored wegen Größe (siehe CLAUDE.md, Datei-Pfade)
 models/piper/

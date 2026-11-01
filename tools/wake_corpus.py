@@ -160,9 +160,14 @@ from voice_assistant.config import (  # noqa: E402
     WAKE_LOG_PATH,
 )
 from tools.wake_rms_replay import labels_fuer_clips  # noqa: E402
+from tools import wake_wort  # noqa: E402
 
 MANIFEST = os.path.join(WAKE_CORPUS_DIR, "manifest.jsonl")
 ORDNER = {"echter_ruf": "positiv", "rauschen": "negativ"}
+# Clips, deren Selbst-Label die Regel nicht mehr trägt. Nicht gelöscht (das
+# Audio ist im Archiv vielleicht schon weg), aber außerhalb von ORDNER, also
+# weder in `messen` noch in `paket`.
+ZURUECK = "zurueckgezogen"
 
 
 def _wake_events() -> dict[str, dict]:
@@ -183,6 +188,13 @@ def _wake_events() -> dict[str, dict]:
     except FileNotFoundError:
         pass
     return out
+
+
+def _zurueckgezogene() -> dict[str, str]:
+    pfad = os.path.join(WAKE_CORPUS_DIR, ZURUECK)
+    if not os.path.isdir(pfad):
+        return {}
+    return {n: os.path.join(pfad, n) for n in os.listdir(pfad) if n.endswith(".wav")}
 
 
 def _manifest_lesen() -> dict[str, dict]:
@@ -221,6 +233,40 @@ def run_sichern(args) -> int:
     verloren = []
     uebersprungen = Counter()
 
+    # Labels, die sich geändert haben, im Korpus nachziehen. Ohne das blieb
+    # ein einmal gesicherter Clip für immer in seinem ersten Ordner — auch als
+    # die Regel dahinter sich als falsch herausstellte (2026-10-31: Barge-in-
+    # Clips mit echtem "Stopp, Gaston" lagen als Fehltrigger im Korpus).
+    zurueck = _zurueckgezogene()
+    umgelabelt: list[tuple[str, str, str, str]] = []
+    for audio, pfad in sorted(im_korpus.items()):
+        alt = manifest.get(audio, {})
+        jetzt = labels.get(audio, {})
+        hart = jetzt.get("quelle") in ("ohr", "selbst") and jetzt.get("klasse") in ORDNER
+        if hart and (jetzt["klasse"], jetzt["quelle"]) != (alt.get("klasse"), alt.get("quelle")):
+            ziel = jetzt["klasse"]
+        elif not hart and alt.get("quelle") == "selbst":
+            ziel = None    # die Regel trägt das Label nicht mehr: aus dem Training
+        else:
+            continue
+        unter = ORDNER[ziel] if ziel else ZURUECK
+        if not args.trocken:
+            os.makedirs(os.path.join(WAKE_CORPUS_DIR, unter), exist_ok=True)
+            if os.path.dirname(pfad) != os.path.join(WAKE_CORPUS_DIR, unter):
+                shutil.move(pfad, os.path.join(WAKE_CORPUS_DIR, unter, audio))
+            eintrag = {**alt, "audio": audio}
+            if ziel:
+                eintrag.update(klasse=ziel, quelle=jetzt["quelle"])
+                eintrag.pop("zurueckgezogen", None)
+            else:
+                eintrag.update(klasse="zurueckgezogen", zurueckgezogen=
+                               f"{alt.get('klasse')}/{alt.get('quelle')} trägt nicht mehr")
+            manifest[audio] = eintrag
+        umgelabelt.append((audio, f"{alt.get('klasse')}/{alt.get('quelle')}",
+                           ziel or "zurueckgezogen", jetzt.get("quelle", "-")))
+    if not args.trocken:
+        im_korpus = _korpus_dateien()
+
     for audio, lab in sorted(labels.items()):
         klasse, quelle = lab["klasse"], lab["quelle"]
         if klasse not in ORDNER:
@@ -231,6 +277,17 @@ def run_sichern(args) -> int:
             continue
         if audio in im_korpus:
             schon += 1
+            continue
+        if audio in zurueck:
+            # War zurückgezogen, hat jetzt wieder ein hartes Label.
+            ziel_dir = os.path.join(WAKE_CORPUS_DIR, ORDNER[klasse])
+            if not args.trocken:
+                os.makedirs(ziel_dir, exist_ok=True)
+                shutil.move(zurueck[audio], os.path.join(ziel_dir, audio))
+                manifest[audio] = {**manifest.get(audio, {"audio": audio}),
+                                   "klasse": klasse, "quelle": quelle}
+                manifest[audio].pop("zurueckgezogen", None)
+            umgelabelt.append((audio, "zurueckgezogen", klasse, quelle))
             continue
         quelle_pfad = os.path.join(TRIGGER_AUDIO_DIR, audio)
         if not os.path.exists(quelle_pfad):
@@ -259,6 +316,10 @@ def run_sichern(args) -> int:
     print(f"  schon im Korpus : {schon}")
     for grund, n in uebersprungen.most_common():
         print(f"  übersprungen    : {n}  ({grund})")
+    if umgelabelt:
+        print(f"\n  {'WÜRDE UMLABELN' if args.trocken else 'UMGELABELT'}: {len(umgelabelt)}")
+        for audio, von, nach, quelle in umgelabelt:
+            print(f"      {audio}  {von} -> {nach} ({quelle})")
     if verloren:
         print(f"\n  ⚠️  {len(verloren)} gelabelte Clips haben KEIN Audio mehr "
               f"(Archiv-Cleanup nach {30} Tagen):")
@@ -425,7 +486,8 @@ def run_messen(args) -> int:
 SCHNITT_SEK = 1.8
 # Bei Sätzen mit Wortzeitstempeln: so viel nach dem Wortende stehen lassen.
 NACH_WORT_SEK = 0.15
-_WAKE_FORM = ("gast", "gas", "gest", "gust", "kast", "gerst", "erstaun", "herztau")
+# Woran ein Wort als Wakewort zählt: `text_erkennung.wortanfaenge` im Manifest
+# (tools/wake_wort.py). gaston: gast, gas, gest, gust, kast, gerst, erstaun, herztau.
 
 
 def _wav_lesen(pfad: str):
@@ -454,14 +516,13 @@ def _wake_stellen(roh: bytes, rate: int, breite: int, kan: int, stt) -> list[flo
     b = "----x" + uuid.uuid4().hex
     feld = lambda n, v: f'--{b}\r\nContent-Disposition: form-data; name="{n}"\r\n\r\n{v}\r\n'.encode()  # noqa: E731
     body = (feld("model", stt.model) + feld("response_format", "verbose_json")
-            + feld("timestamp_granularities[]", "word") + feld("language", "de")
+            + feld("timestamp_granularities[]", "word") + feld("language", wake_wort.aktiv().sprache)
             + f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="a.wav"\r\n'
               f'Content-Type: audio/wav\r\n\r\n'.encode() + buf.getvalue() + f"\r\n--{b}--\r\n".encode())
     req = urllib.request.Request(stt.base.rstrip("/") + "/v1/audio/transcriptions", data=body,
                                  headers={"Content-Type": f"multipart/form-data; boundary={b}"})
     worte = json.load(urllib.request.urlopen(req, timeout=60)).get("words") or []
-    return [w["end"] for w in worte
-            if w["word"].strip().lower().strip(",.!?-").startswith(_WAKE_FORM)]
+    return [w["end"] for w in worte if wake_wort.aktiv().wort_beginnt(w["word"])]
 
 
 def _positiv_stuecke(quelle: str, stt) -> list[tuple[str, bytes, dict]]:
@@ -640,7 +701,7 @@ def main() -> int:
     p.set_defaults(func=run_bilanz)
 
     p = sub.add_parser("messen", help="aktuelles Modell gegen den Korpus")
-    p.add_argument("--bundle", default="gaston")
+    p.add_argument("--bundle", default=None, help="Default: erstes eigenes Bundle des Profils")
     p.add_argument("--threshold", type=float, default=None)
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--gain", type=float, default=1.0,
@@ -658,15 +719,21 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=20260916,
                    help="Seed der Tagespartition — im Manifest festgehalten")
     p.add_argument("--val-anteil", type=float, default=0.3, dest="val_anteil")
-    p.add_argument("--out", default="/tmp/gaston_nachtraining_paket")
-    p.add_argument("--samples-dir", dest="samples_dir",
-                   default=os.path.join(os.path.dirname(os.path.dirname(
-                       os.path.abspath(__file__))),
-                       "models", "wakewords", "gaston", "samples"),
-                   help="Studio-Takes (gehen komplett in die Validierung)")
+    p.add_argument("--bundle", default=None, help="Default: erstes eigenes Bundle des Profils")
+    p.add_argument("--out", default=None, help="Default: /tmp/<bundle>_nachtraining_paket")
+    p.add_argument("--samples-dir", dest="samples_dir", default=None,
+                   help="Studio-Takes, gehen komplett in die Validierung "
+                        "(Default: models/wakewords/<bundle>/samples)")
     p.set_defaults(func=run_paket)
 
     args = ap.parse_args()
+    wort = wake_wort.setzen(getattr(args, "bundle", None))
+    if hasattr(args, "bundle"):
+        args.bundle = wort.bundle
+    if getattr(args, "out", "x") is None:
+        args.out = f"/tmp/{wort.bundle}_nachtraining_paket"
+    if getattr(args, "samples_dir", "x") is None:
+        args.samples_dir = os.path.join(wake_wort.BUNDLE_DIR, wort.bundle, "samples")
     return args.func(args)
 
 

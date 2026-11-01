@@ -36,6 +36,7 @@ Code merkt nichts davon:
 | `~/.openclaw/workspace/voice/corpus/` | `voice/corpus/` (gesicherte Wake-Clips) |
 | `~/.openclaw/workspace/voice/corpus_sprecher/` | `voice/corpus_sprecher/` |
 | `~/.openclaw/workspace/voice/speakers/` | `voice/speakers/` (Referenzstimmen) |
+| `~/.openclaw/workspace/wake_review.jsonl` | `wakeword/wake_review.jsonl` (Ohr-Urteile, seit 2026-10-31) |
 
 In `.gitignore` stehen diese Pfade deshalb **ohne** Schrägstrich am Ende: ein
 Muster `testsets/` passt nur auf echte Verzeichnisse, ein Symlink stünde sonst
@@ -175,6 +176,15 @@ sofort mit Live-Trigger-Semantik (Streak ≥ 3 über Threshold, 1-Frame-Gap) und
 startet den Service danach wieder. Ablage in
 `models/wakewords/<bundle>/samples/<sprecher>/` — ein Symlink ins private
 Daten-Repo (Familienstimmen, nie auf GitHub; siehe „Private Daten“ unten).
+
+Training: **`WAKEWORD_TRAINING.md`** (englisch, deutsch `.de.md`, parallel halten wie die READMEs;
+erstes Modell und Kreislauf, Befehle, Fallen), dazu der Skill
+`.claude/skills/wakeword-training/` für Fremde mit eigenem Agenten. Skripte:
+`gpu_einrichten.sh`, `clips_erzeugen.py` und
+`wakeword_studio/train_runde.py`, das auf dem GPU-Rechner im venv von
+openWakeWord läuft (nicht im `ow-venv`). Rezepte und Läufe dort parallel,
+je Lauf ein eigener `output_dir`. `WAKEWORD_PROCESS.md` ist das Messtagebuch
+dazu, aktueller Stand oben.
 
 ## Voice-Aktuator (optional, pro Profil)
 
@@ -318,6 +328,27 @@ bei einem Teil eine Bestätigung, kommt die Rückfrage nach den anderen.
 `testsets/aktuator_und/`: aus dem Tor-Set geklebt plus handgeschrieben;
 `--einzel` prüft, dass das Tor-Set nicht schlechter wird). Zahlen im
 Docstring. Tests: `tests/test_aktuator_und.py`.
+
+**Gewohnheiten statt Rückfrage (`gewohnheiten:`, seit 2026-10-31, Experiment
+auf `feature/wake-schatten`).** Anlass 2026-10-30 07:19: „Gaston, mach die
+Rollos auf“ — Laya: `auf`, kein Ziel, Rückfrage des Aktuators, danach noch eine
+des Brains; morgens war an 30 von 30 Tagen „alle Rollos“ gemeint.
+`services/gewohnheiten.py` liest eine Nachschlag-Tabelle, die ein anderer
+Agent (Hauswacht) aus der Schaltgeschichte rechnet (`datei`, Schema-Version
+geprüft, höchstens `max_alter_tage` alt). Der enge Fall: unklar, kein Ziel
+oder eine unbelegte Gruppe, ein Wort beginnt mit dem Gerätewort („Rollos“,
+nicht „Küchenrollos“), Aktion und Uhrzeitfenster passen, Konfidenz ≥ 0,8
+(geschätzt, nicht gemessen; Jochen hätte 0,7 gesagt), ≥ 10 Tage, nur
+Erst-Turn. Dann keine Rückfrage, der Satz geht mit
+`locale.gewohnheit_hinweis` an den Brain, der die Gruppe mit
+`ziel_erschlossen=true` schaltet und ansagt (Jochen: „Rückfrage weg, direkt
+schalten mit Ansage, erst der enge Fall“). Das Feld sorgt dafür, dass solche
+Schaltungen die Gewohnheit nicht selbst bestätigen (ACTUATOR_INTERFACE.md).
+Ein Brain-Test (fester Session-Key, Incognito hing an diesem Tag) schaltete
+die Gruppe mit dem Feld in 12 s; mit dem Satz zum zweiten Mal in derselben
+Session schob er ein Rollo außerhalb der Gruppe einzeln nach, daher der letzte Satz des
+Hinweises. Log: `📅 Gewohnheit` im Journal, `gewohnheit` in
+`actuator_turns.log` und `wake_events.log`. Tests: `tests/test_gewohnheiten.py`.
 
 **Wer den Aktuator in einer anderen Umgebung betreibt oder die Gegenstelle neu
 implementiert, liest `ACTUATOR_INTERFACE.md`** — dort steht der vollständige
@@ -1127,6 +1158,14 @@ Follow-up, das Wort wird vor TTS und Telegram entfernt. Tests:
 **Kein Follow-up, solange eine Ansage aussteht; leise und fremd wird verworfen (seit 2026-10-21).** Anlass 21:39: der Brain hatte „das Ergebnis sage ich dir gleich“ geschickt, die `voice_speak_text`-Ansagen warteten, das Fenster hörte Rauschen (Spitze 622), Qwen machte daraus „Ich bin ein kleiner Junge.“. `state.ansage_wartet()` zählt über `announce_queue.unfinished_tasks` (nicht `qsize()`: der Worker hält die erste Ansage schon in der Hand). Und eine Follow-up-Aufnahme mit Spitze < `_FOLLOWUP_LEISE_SPITZE` (2500) UND Sprecher `unbekannt` geht nicht an den Brain (`ausgang=followup_leise_fremd`, `spitze` im endpoint.log). Nur die Kombination trägt: kurze echte Antworten sind oft `unbekannt` („Dem Monitor ein“, 0,10), aber laut. Messung über 83 Follow-ups im Kommentar an der Konstante; nicht gehört, Follow-ups werden nicht archiviert. Tests: `tests/test_kein_followup.py`.
 
 **Ansagen des Brains laufen schon im Turn (seit 2026-10-21).** Ein OpenClaw-Turn endet erst, wenn das Modell ohne Tool-Aufruf antwortet; Text neben Tool-Aufrufen kommt bei GLM (Gateway hält ihn zurück) nie an, und `sessions_spawn` ist für main gesperrt, „im Hintergrund“ gab es also nie. `voice_speak_text`-Zwischenmeldungen warteten deshalb bis zum Turn-Ende (6 von 8 seit 2026-10-16, bis 5 min). Jetzt spricht der announce-worker reinen Text (= vom Brain) auch in STATE_WAITING, gebunden an `turn_control.turn` (Barge-in verwirft), ohne `daempfen()` (die Turn-Logik dämpft über `tts_lock`); Tupel (Timer, Mikro) warten weiter auf LISTENING. Voice-Direktive und AGENTS.md („Reaktion bei längeren Aufgaben“) sagen jetzt: Zwischenmeldung per `voice_speak_text`, im selben Zug weiterarbeiten, Schlussantwort ohne Wiederholung. Tests: `tests/test_ansage_im_turn.py`.
+Die Wiederholung verbietet seit 2026-10-30 der Code (`state.TurnAnsagen`): der
+Brain hielt sich 0 von 3 Mal an die Regel und sagte die Ansage wortgleich als
+Schlussantwort noch einmal (07:20, zweimal gesprochen, zweimal im Chat). Sätze
+der Schlussantwort, die im selben Turn schon angesagt wurden, werden weder
+gesprochen noch gespiegelt (Vergleich ohne Satzzeichen/Groß-klein);
+`pending_reply_text` behält die ganze Antwort, das Follow-up bleibt. Die erste
+Ansage im Turn spiegelt vorher die Eingabe 🎤. Tests:
+`tests/test_ansage_doppelt.py`.
 Seit 2026-10-21 23:12 im Versuch: **Sub-Agents für main frei** (`openclaw.json`, Sicherung `openclaw.json.bak-vor-subagents-20261021`), `sessions_yield` bleibt gesperrt, Sub-Agents ohne `voice_speak_text` (`tools.subagents.tools.deny`). Lange Aufgaben: abgeben, Turn kurz beenden, das Ergebnis kommt als eigener Turn in den Hauskanal zurück und wird per `voice_speak_text` angesagt (AGENTS.md). Offen: ob Telegram das Ergebnis doppelt bekommt (Gateway-Zustellung + 🔊-Spiegel der Ansage).
 
 **Warum überhaupt zwei Sätze:** Bei laufendem Fernseher endete die Aufnahme
@@ -1199,6 +1238,29 @@ nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.
 
+### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, Branch `feature/wake-schatten`)
+
+Jochens Idee: das Modell darf großzügig hören, eine zweite Stufe sortiert
+Fehlauslöser danach aus. `wake_pruefung.py` rechnet bei jedem Trigger die
+Fläche der Score-Kurve (Summe über der Schwelle) und lässt Qwen den Wake-Clip
+transkribieren (ohne Kontext, der lässt Qwen Gaston erfinden; ~0,1 s). Hohe
+Fläche oder das Wort im Text (`anrede_im_text(..., woerter=None)`, das Wort
+steht im Wake-Clip am Ende) → durch, sonst `haette_verworfen`. **Nur Log**
+(`wake_pruefung.jsonl`), am Turn ändert sich nichts. Offline an v5 gemessen:
+5 von 15 Fehlauslösern blieben, 61 von 64 Rufen (Zahlen und Grenzen in
+`WAKEWORD_PROCESS.md`). Erst nach Ohr-Review der `haette_verworfen`-Fälle
+wird daraus eine Schranke. Verworfen: zweites Modell als Gegenprobe (nicht
+nachvollziehbar), Richtung (Mikro an der Wand, Fernseher und Sprecher aus
+derselben Richtung), Fernseher-Zustand (der Umgebungspegel deckt Lärm schon
+vor dem Trigger ab). **Seit 2026-10-31 zusätzlich das Anfangs-Maß**
+(`anfang: Gast`): Qwen schätzt an jeder Wortgrenze, wie gut „Gast…“ passt
+(erzwungene Grammatik, Logprobs vor der Grammatik,
+`LlamaCppAsrStt.anfang_logprob`). Unabhängig von der Schreibweise („Ganz
+toll. Also.“ war ein echter Ruf). Gemessen: echte Rufe 205/223 statt 190
+(Wortregel), Ohr-Fehlauslöser beide 0/23. Eigenes Urteil
+`haette_verworfen_anfang`, die alte Regel bleibt daneben. Tests:
+`tests/test_wake_pruefung.py`.
+
 **Gelabelte Clips gehören gesichert, bevor das Archiv sie löscht.**
 `TRIGGER_AUDIO_DIR` räumt beim Service-Start alles älter als
 `TRIGGER_AUDIO_MAX_AGE_DAYS` ab; die Labels dazu leben unbegrenzt weiter. Am
@@ -1208,6 +1270,11 @@ belegte Fehltrigger. Seither verschont `_cleanup_trigger_audio` ungesicherte
 Ohr-Urteile, und `tools/wake_corpus.py` hebt gelabelte Clips in einen
 Dauer-Korpus (`sichern`), meldet Erosion (`bilanz`) und misst das laufende
 Bundle gegen den Korpus (`messen` — die Vorher-Zahl fürs Nachtraining).
+`sichern` zieht seit 2026-10-31 geänderte Labels nach (Ordner wechseln, ein
+Selbst-Label ohne Regel dahinter → `zurueckgezogen/`). Anlass: ein Abbruch
+per Stopp-Wort labelte den Barge-in-Clip mit echtem „Stopp, Gaston“ als
+Fehltrigger (`wake_triage._selbst_labels`, Tests
+`tests/test_wake_selbst_labels.py`).
 
 ## Threading Model
 

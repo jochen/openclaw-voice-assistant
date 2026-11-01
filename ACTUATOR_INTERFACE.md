@@ -207,6 +207,36 @@ anderer Befund als „falsches Licht ausgeschaltet“, und seine Korrektur
 
 `ausgefuehrt` und `grund` sind optional und landen nur im Mitschnitt.
 
+### Optional: erschlossenes Ziel (`ziel_erschlossen`)
+
+Ergänzung vom 2026-10-31. Ein **optionales** Feld im Intent:
+
+```json
+{ "ist_kommando": true, "ziel": "alle_rollos", "aktion": "auf",
+  "quelle": "aktuator", "request_id": "…", "ziel_erschlossen": true }
+```
+
+`true` heißt: der Sprecher hat das Ziel nicht genannt, es wurde erschlossen,
+etwa aus einer Gewohnheit („Rollos auf“ am Morgen → die Gruppe, die morgens
+immer gemeint war). Fehlt das Feld oder ist es nicht `true`, gilt `false`. Die
+ausführende Seite prüft es nicht und verzweigt nicht danach; sie reicht es nur
+durch, an die Stelle, wo sie festhält, wer was geschaltet hat.
+
+Warum: wer Gewohnheiten aus der Schaltgeschichte ableitet, darf die
+Schaltungen nicht mitzählen, deren Ziel selbst aus dieser Gewohnheit kam, sonst
+bestätigt sich die Gewohnheit selbst. Der Wunsch zählt weiter („morgens wollte
+jemand die Rollos auf“), nur die Zielwahl wird herausgerechnet. Ein eigener
+Grund-Text wurde verworfen: ein Wahrheitswert reicht und lässt sich zählen.
+
+In dieser Installation schreibt die ausführende Seite jede ausgeführte
+Schaltung als eine Zeile je angefordertem Ziel in eine Zeitreihe (Gruppen
+nicht aufgelöst, mit `quelle`, Weg, `request_id` und `ziel_erschlossen`);
+Rückfragen und Ablehnungen nicht. Das Haus-MCP-Werkzeug des Brains
+(`haus_schalten`) kennt dasselbe Argument, ebenso `haus_schalten` des
+MCP-Servers in diesem Repo (`voice_assistant/mcp_actuator.py`). Gesetzt wird
+es vom Brain, wenn er wegen eines Gewohnheits-Hinweises schaltet (README,
+„Gewohnheiten statt Rückfrage“); der schnelle Schaltweg selbst setzt es nie.
+
 ### Der Bestätigungs-Handshake
 
 Für Ziele, bei denen ein Irrtum teuer wäre („alle Rollos", „Nachtruhe"):

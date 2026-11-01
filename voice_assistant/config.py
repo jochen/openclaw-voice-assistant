@@ -166,6 +166,23 @@ _DEFAULT_UNKLAR_HINWEIS = (
     "sonst frag kurz nach.]"
 )
 
+# Rollo-Befehl ohne Ziel, aber mit passender Gewohnheit
+# (services/gewohnheiten.py): statt der Rückfrage des Aktuators schaltet der
+# Brain die gewohnte Gruppe und sagt sie an (Jochen 2026-10-31). Der letzte
+# Satz, weil der Brain im Test „alle Rollos“ als jedes Rollo im Haus las und
+# ein Rollo außerhalb der Gruppe einzeln nachschob (eine Session, Satz zum zweiten Mal).
+# Platzhalter: {name} (Gruppenname), {gruppe} (id), {treffer}, {tage},
+# {beginn}, {ende}.
+_DEFAULT_GEWOHNHEIT_HINWEIS = (
+    "[Hinweis zur Aufnahme: Der Satz nennt kein Ziel, geschaltet wurde noch "
+    "nichts. Zu dieser Uhrzeit ({beginn} bis {ende} Uhr) war mit diesem Befehl "
+    "an {treffer} von {tage} Tagen \"{name}\" gemeint (Ziel {gruppe}). Wenn "
+    "nichts dagegen spricht, schalte genau dieses Ziel ohne Rückfrage, mit "
+    "ziel_erschlossen=true, und sag dabei, was du geschaltet hast. Schalte "
+    "keine weiteren Geräte einzeln dazu: was nicht zu diesem Ziel gehört, "
+    "steht mit Absicht anders.]"
+)
+
 # Handy-Turns (audio/satellit.py): Gaston erfährt sonst nicht, dass die Eingabe
 # vom persönlichen Gerät kam. Nur ein Beleg dafür, wem das Gerät gehört; der
 # [Sprecher: …] bleibt das Ergebnis der Messung.
@@ -188,6 +205,7 @@ class LocaleConfig:
     openclaw_voice_erinnerung: str = _DEFAULT_VOICE_ERINNERUNG
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
+    gewohnheit_hinweis: str = _DEFAULT_GEWOHNHEIT_HINWEIS
     satellit_hinweis: str = _DEFAULT_SATELLIT_HINWEIS
     thinking_phrases: list = field(default_factory=lambda: [
         "Einen Moment bitte.",
@@ -201,6 +219,14 @@ class LocaleConfig:
         # replace statt format: Transkripte dürfen geschweifte Klammern enthalten
         return (self.unklar_hinweis.replace("{erst}", erst or "")
                 .replace("{grund}", grund or "unbekannt"))
+
+    def gewohnheit_hinweis_fuer(self, g, name: str) -> str:
+        werte = {"name": name, "gruppe": g.gruppe, "treffer": g.treffer,
+                 "tage": g.tage, "beginn": g.fenster_beginn, "ende": g.fenster_ende}
+        text = self.gewohnheit_hinweis
+        for k, v in werte.items():
+            text = text.replace("{" + k + "}", str(v))
+        return text
 
 
 @dataclass
@@ -420,6 +446,23 @@ class MikroConfig:
 
 
 @dataclass
+class GewohnheitenConfig:
+    """Gewohnheiten als Hinweis an den Brain (services/gewohnheiten.py).
+
+    Default enabled=False. ``datei`` ist die Nachschlag-Tabelle, die ein
+    anderer Agent aus der Schaltgeschichte rechnet. ``geraete``: Gerätetyp →
+    Wortanfänge, an denen der Satz das Gerät ohne Ort nennt.
+    """
+    enabled: bool = False
+    datei: str = ""
+    max_alter_tage: float = 10.0
+    min_konfidenz: float = 0.8
+    min_tage: int = 10
+    geraete: dict = field(default_factory=lambda: {
+        "rollo": ["rollo", "rolladen", "rolläden", "jalousie"]})
+
+
+@dataclass
 class WatcherConfig:
     """Überwacher Stufe 1 (nur LESEN + MELDEN, siehe services/watcher.py und
     tools/actuator_watch.py). Default enabled=False: ohne den `watcher:`-Block
@@ -495,6 +538,23 @@ class UmgebungConfig:
     nah_faktor: float = 6.0
     gleit_sec: float = 30.0
     ruhe_stunden: float = 24.0
+
+
+@dataclass
+class WakePruefungConfig:
+    """Prüfung nach dem Trigger, im Schatten (voice_assistant/wake_pruefung.py).
+    Seit 2026-10-27. Nur Log, verworfen wird nichts.
+
+    flaeche_grenze: Summe der Scores über der Schwelle, ab der ein Trigger
+    ohne Text-Prüfung als echt gälte (gemessen an v5, WAKEWORD_PROCESS.md).
+    anfang: Wortanfang des Wakeworts (hier "Gast"), dessen Wahrscheinlichkeit
+    Qwen zusätzlich schätzt; leer = aus. Braucht stt_llamacpp_sprache.
+    anfang_grenze: log P, unter der das Anfangs-Maß verworfen hätte.
+    """
+    enabled: bool = False
+    flaeche_grenze: float = 2.7
+    anfang: str = ""
+    anfang_grenze: float = -4.0
 
 
 @dataclass
@@ -791,11 +851,17 @@ class Profile:
     # Umgebungspegel — fehlt der Block: kein strengeres Wakewort im Lärm.
     umgebung: UmgebungConfig = field(default_factory=UmgebungConfig)
 
+    # Prüfung nach dem Trigger (Schatten) — fehlt der Block: nichts geprüft.
+    wake_pruefung: WakePruefungConfig = field(default_factory=WakePruefungConfig)
+
     # Rückspul-Puffer — fehlt der Block: nichts wird gepuffert.
     rewind: RewindConfig = field(default_factory=RewindConfig)
 
     # Mikro stumm schalten — fehlt der Block: kein „stell dich taub“.
     mikro: MikroConfig = field(default_factory=MikroConfig)
+
+    # Gewohnheiten als Hinweis — fehlt der Block: Rückfrage wie bisher.
+    gewohnheiten: GewohnheitenConfig = field(default_factory=GewohnheitenConfig)
 
     # Abbruch mitten im Turn ("Stopp Gaston"). Default: aus.
     barge_in: BargeInConfig = field(default_factory=BargeInConfig)
@@ -1090,6 +1156,15 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         ruhe_stunden=float(um_raw.get("ruhe_stunden", _dum.ruhe_stunden)),
     )
 
+    wp_raw = raw.get("wake_pruefung") or {}
+    _dwp = WakePruefungConfig()
+    wake_pruefung = WakePruefungConfig(
+        enabled=bool(wp_raw.get("enabled", _dwp.enabled)),
+        flaeche_grenze=float(wp_raw.get("flaeche_grenze", _dwp.flaeche_grenze)),
+        anfang=str(wp_raw.get("anfang", _dwp.anfang) or ""),
+        anfang_grenze=float(wp_raw.get("anfang_grenze", _dwp.anfang_grenze)),
+    )
+
     md_raw = raw.get("musik_ducking") or {}
     _dmd = MusikDuckingConfig()
     musik_ducking = MusikDuckingConfig(
@@ -1154,6 +1229,18 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         mqtt_topic=str(mk_raw.get("mqtt_topic") or _dmk.mqtt_topic),
     )
 
+    gw_raw = raw.get("gewohnheiten") or {}
+    _dgw = GewohnheitenConfig()
+    gewohnheiten = GewohnheitenConfig(
+        enabled=bool(gw_raw.get("enabled", _dgw.enabled)),
+        datei=os.path.expanduser(str(gw_raw.get("datei") or _dgw.datei)),
+        max_alter_tage=float(gw_raw.get("max_alter_tage", _dgw.max_alter_tage)),
+        min_konfidenz=float(gw_raw.get("min_konfidenz", _dgw.min_konfidenz)),
+        min_tage=int(gw_raw.get("min_tage", _dgw.min_tage)),
+        geraete={str(k): [str(w) for w in v]
+                 for k, v in (gw_raw.get("geraete") or _dgw.geraete).items()},
+    )
+
     locale_raw = raw.get("locale") or {}
     _dloc = LocaleConfig()
     locale = LocaleConfig(
@@ -1167,6 +1254,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
         unklar_hinweis=str(locale_raw.get("unklar_hinweis", _dloc.unklar_hinweis)),
+        gewohnheit_hinweis=str(locale_raw.get("gewohnheit_hinweis", _dloc.gewohnheit_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
 
@@ -1225,11 +1313,13 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         watcher=watcher,
         dienstwaechter=dienstwaechter,
         umgebung=umgebung,
+        wake_pruefung=wake_pruefung,
         musik_ducking=musik_ducking,
         timer=timer,
         aussprache=aussprache,
         rewind=rewind,
         mikro=mikro,
+        gewohnheiten=gewohnheiten,
         wakewords=wakewords,
         barge_in=barge_in,
         satelliten=satelliten,

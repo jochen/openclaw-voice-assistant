@@ -9,6 +9,10 @@
 #
 # Das alte flache Schema (ohne mode/local_audio/respeaker/leds-Blöcke) wird
 # weiterhin akzeptiert und als mode: local interpretiert.
+#
+# Diese Datei zeigt nicht jeden Block. Die vollständige Liste aller
+# Einstellungen samt Defaults steht in voice_assistant/config.py (die
+# Dataclasses *Config); die READMEs beschreiben jeden optionalen Block.
 
 # Optionaler voice-analysis-Container (akustisches Stimmungssignal).
 # Leer oder weggelassen = Stimmungsanalyse aus, der Assistent läuft normal.
@@ -77,6 +81,21 @@ profiles:
   #     # Ziel-Typen, die der Beispielblock im Prompt schon vorfuehrt — der
   #     # erzeugte Kontrast-Block laesst sie dann aus.
   #     beispiel_typen: ["rollo"]
+
+  # Gewohnheiten statt Rückfrage (optional, Experiment, standardmäßig AUS).
+  # Rollo-Befehl ohne Ort zu einer gewohnten Uhrzeit: statt der Rückfrage des
+  # Aktuators schaltet der Brain die gewohnte Gruppe und sagt sie an. Die
+  # Datei rechnet jemand anderes aus der Schaltgeschichte (README,
+  # „Gewohnheiten statt Rückfrage“, Felder in services/gewohnheiten.py).
+  #
+  #   gewohnheiten:
+  #     enabled: true
+  #     datei: "~/pfad/zu/gewohnheiten.json"
+  #     min_konfidenz: 0.8     # geschätzt, nicht gemessen
+  #     min_tage: 10
+  #     max_alter_tage: 10
+  #     geraete:
+  #       rollo: ["rollo", "rolladen", "rolläden", "jalousie"]
 
   # ---------------------------------------------------------------------
   # Beispiel "local" - Mikrofon/Lautsprecher direkt am Pi
@@ -165,6 +184,17 @@ profiles:
     #   laut_faktor: 4.0
     #   streng_min_hits: 4
     #   nah_faktor: 6.0
+
+    # Prüfung nach dem Trigger — Experiment, NUR Log (wake_pruefung.jsonl).
+    # Fläche der Score-Kurve + erste STT-Stufe (stt_llamacpp_url) auf dem
+    # Wake-Clip; verworfen wird nichts. Siehe voice_assistant/wake_pruefung.py.
+    # wake_pruefung:
+    #   enabled: false
+    #   flaeche_grenze: 2.7
+    #   # Wortanfang des Wakeworts; Qwen schätzt, wie gut er passt (braucht
+    #   # stt_llamacpp_sprache). Leer = aus.
+    #   anfang: ""
+    #   anfang_grenze: -4.0
 
     # Rückspul-Puffer — optional. Hält die letzten Minuten Mikro samt jedem
     # Wakeword-Score im RAM; auf die Platte nur bei einem Anlass: die

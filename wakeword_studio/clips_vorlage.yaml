@@ -1,0 +1,97 @@
+# Synthetische Clips für ein Wakewort (clips_erzeugen.py). Das Beispiel ist
+# das gaston-Modell dieser Installation, so wie es 2026-07 entstand.
+# Für ein anderes Wort: modell, Schreibweisen, Stimmen und Negative ersetzen.
+
+modell: gaston              # = model_name der Trainings-Config
+stimmen_ordner: voices      # Piper-Stimmen (.onnx + .onnx.json), fehlende werden geladen
+
+# Schreibweisen des Worts. Die TTS spricht, was dasteht; deshalb mehrere
+# Kandidaten per Hörprobe vergleichen und die nehmen, die wie im Haus klingen.
+# phoneme: true = text ist IPA und geht an espeak vorbei (hier das nasale
+# „-on“, das die deutschen Stimmen aus „Gaston“ nicht machen). Fehlt einer
+# Stimme ein Laut (hier „̃“), lässt sie ihn weg und warnt im Log; das ergibt
+# dann effektiv „Gastó“, was hier gewollt war.
+# stimmen: Name -> Sprechtempi (length_scale; > 1 langsamer). Stimmen, die
+# nur gedrosselt brauchbar klingen, bekommen nur langsame Tempi.
+positiv:
+  - name: nasal
+    text: "ɡastˈɔ̃"
+    phoneme: true
+    anteil: 0.6
+    stimmen:
+      de_DE-thorsten-medium: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-thorsten-high: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-thorsten_emotional-medium: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-karlsson-low: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-pavoque-low: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-ramona-low: [1.0, 1.1, 1.2, 1.3]       # unter 1.0 unbrauchbar
+      de_DE-kerstin-low: [1.2, 1.3, 1.4, 1.5]      # nur stark gedrosselt
+  - name: gastong
+    text: Gastong
+    anteil: 0.4
+    stimmen:
+      de_DE-thorsten-medium: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-thorsten-high: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-thorsten_emotional-medium: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-karlsson-low: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-pavoque-low: [0.8, 0.9, 1.0, 1.1, 1.2]
+      de_DE-eva_k-x_low: [0.9, 1.0, 1.1, 1.2]      # für die Nasal-Form nicht
+      de_DE-ramona-low: [1.0, 1.1, 1.2, 1.3]
+
+# Adversariale Negative: Wörter und Sätze, die ähnlich klingen und im Alltag
+# vorkommen. Sie lehren die Grenze; die große Masse an Nicht-Wort kommt aus
+# den ACAV100M-Merkmalen der Trainings-Config.
+negativ:
+  texte:
+    - Bastion
+    - Station
+    - Tankstelle
+    - Gastank
+    - Gastro
+    - Gasthof
+    - Gasthaus
+    - Gaststätte
+    - Gastgeber
+    - Kasten
+    - Kastanie
+    - Gasse
+    - Gassi
+    - Gast
+    - Gäste
+    - gestern
+    - Karton
+    - Balkon
+    - Beton
+    - Salon
+    - Saison
+    - Waggon
+    - Chanson
+    - Marathon
+    - Pastor
+    - Gas
+    - Gasflasche
+    - der Gast ist da
+    - auf dem Balkon
+    - die Gäste kommen
+    - mach das Gas an
+    - im Salon sitzen
+  stimmen:
+    de_DE-thorsten-medium: [0.9, 1.0, 1.1]
+    de_DE-thorsten-high: [0.9, 1.0, 1.1]
+    de_DE-thorsten_emotional-medium: [0.9, 1.0, 1.1]
+    de_DE-karlsson-low: [0.9, 1.0, 1.1]
+    de_DE-pavoque-low: [0.9, 1.0, 1.1]
+    de_DE-eva_k-x_low: [0.9, 1.0, 1.1]
+    de_DE-ramona-low: [1.0, 1.1, 1.2]
+    de_DE-kerstin-low: [1.1, 1.2, 1.3]
+
+anzahl:
+  positive_train: 30000
+  positive_test: 3000
+  negative_train: 30000
+  negative_test: 3000
+
+# Variabilität der Piper-Synthese (noise_scale, noise_scale_w).
+rauschen:
+  noise_scales: [0.333, 0.667, 1.0]
+  noise_scale_ws: [0.6, 0.8, 1.0]

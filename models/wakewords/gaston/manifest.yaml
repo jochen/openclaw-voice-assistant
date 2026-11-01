@@ -1,3 +1,11 @@
+# VERSUCH seit 2026-10-31 abends: R7 "voll" Lauf 2 (Fablab, 30k synthetisch +
+# 440 echte Positive / 289 Negative je x10, mit korrigierten Stopp-Labels).
+# Hat die Schranke VERFEHLT (WAKEWORD_PROCESS.md, "Nachtraining Runde 7 —
+# Ergebnis"): Fehltrigger R5-Val 12 statt <= 11; FP/h 0,28 (v5 0,09). Neue
+# Fehltrigger 7/14 statt 14/14, Geraeusche 0/3 statt 3/3. Live-Versuch auf
+# Jochens Entscheidung, Vergleich gegen v5-Woche 24.-31.10. (dort). Gate-
+# Parameter unveraendert. Rueckweg v5: diese Dateien aus Git 42797ef.
+#
 # Gaston-Wakeword — trainiert 2026-10-02 auf ai-stack (Runde 4: 30k synthetisch
 # + 131 echte Rufe + 43 per Ohr belegte Fehltrigger, je x10; Positive vom
 # Paket selbst auf 1,8 s geschnitten, Marker-Rufe je Wakewort-Vorkommen).
@@ -65,3 +73,10 @@ training:
     augmented_test_recall_at_0.5: 0.19
     raw_clip_recall_kerncluster: 0.93-1.00
     false_per_hour_at_0.5: 0.19
+# Woran die Wake-Werkzeuge (wake_triage, wake_corpus, wake_paket) das Wort im
+# STT-Text erkennen, siehe tools/wake_wort.py. Die Verhörer stammen aus echten
+# Logs dieser Installation (Qwen und Speaches medium, deutsch).
+text_erkennung:
+  muster: "gast|kast|gasch|aston|caston"
+  wortanfaenge: [gast, gas, gest, gust, kast, gerst, erstaun, herztau]
+  sprache: de

@@ -48,6 +48,7 @@ from voice_assistant.state import (
     STATE_WAITING,
     announce_queue,
     current_state,
+    turn_ansagen,
     turn_control,
 )
 from voice_assistant.services import aussprache, telegram
@@ -483,6 +484,9 @@ def start_announce_worker(
         turn = turn_control.turn if im_turn else None
         print(f"📢  Announcing{' (im Turn)' if im_turn else ''}: "
               f"'{text[:80]}{'...' if len(text) > 80 else ''}'")
+        # Im Turn: die Eingabe 🎤 zuerst, und die Schlussantwort soll diese
+        # Sätze nicht noch einmal sagen (state.TurnAnsagen).
+        turn_ansagen.angesagt(turn, text)
         if spiegeln and telegram_bot_token and telegram_chat_id:
             telegram.send(telegram_bot_token, telegram_chat_id, text, prefix="🔊 ")
         # daempfen(): Kontext, der die Musik leiser macht, oder None.
