@@ -298,17 +298,24 @@ def _wav_kopf_lesen(resp) -> tuple[int, int]:
 
 
 class SpeachesTts:
-    def __init__(self, state: SpeachesState, base: str, model: str, voice: str) -> None:
+    def __init__(self, state: SpeachesState, base: str, model: str, voice: str,
+                 fest: bool = False, timeout: float = SPEACHES_TIMEOUT) -> None:
+        """fest=True: Modell und Stimme immer aus dem Konstruktor, nicht aus
+        voice_state (fuer den Antwort-Dienst, der die Piper-Stimmen nicht
+        kennt). timeout: kurz fuer einen Dienst auf einem anderen Rechner —
+        ist der weg, soll der Rueckfall nicht 15 s warten."""
         self.state = state
         self.base = base
         self.model = model
         self.voice = voice
+        self.fest = fest
+        self.timeout = timeout
 
     def _parameter(self, text: str) -> tuple[str, str, float, str]:
         from voice_assistant.state import voice_state
         vm, vv, vsp = voice_state.get()
-        model = vm or self.model
-        voice = vv or self.voice
+        model = self.model if self.fest else (vm or self.model)
+        voice = self.voice if self.fest else (vv or self.voice)
         speed = vsp if vsp else 1.0
         # Problemwoerter als [[Phoneme]] (services/aussprache.py). Erst HIER,
         # nach clean_for_tts — das entfernt eckige Klammern.
@@ -350,13 +357,13 @@ class SpeachesTts:
         try:
             try:
                 resp = urllib.request.urlopen(
-                    self._anfrage(model, voice, speed, text, STROM_RATE), timeout=SPEACHES_TIMEOUT)
+                    self._anfrage(model, voice, speed, text, STROM_RATE), timeout=self.timeout)
             except urllib.error.HTTPError as e:
                 if e.code != 404:
                     raise
                 self._modell_laden(model)
                 resp = urllib.request.urlopen(
-                    self._anfrage(model, voice, speed, text, STROM_RATE), timeout=SPEACHES_TIMEOUT)
+                    self._anfrage(model, voice, speed, text, STROM_RATE), timeout=self.timeout)
             with resp:
                 rate, kanaele = _wav_kopf_lesen(resp)
                 rahmen = 2 * kanaele
@@ -674,6 +681,7 @@ class ReplySpeaker:
         leds,  # LedDirector
         tts_prefix: str = "",
         strom_oeffnen: Callable | None = None,
+        antwort_tts: "SpeachesTts | None" = None,
     ) -> None:
         self.speaches = speaches
         self.play_wav = play_wav
@@ -682,6 +690,26 @@ class ReplySpeaker:
         # Senke.strom_oeffnen (audio/strom.py) oder None = Dateien wie bisher.
         # Nur Brain-Antworten (ReplyStreamSession) gehen als Strom.
         self.strom_oeffnen = strom_oeffnen
+        # Eigener TTS-Dienst nur fuer Brain-Antworten im Strom (antwort_tts im
+        # Profil, z. B. CosyVoice im Fablab). Rueckfall: speaches, dann Piper —
+        # eine andere Stimme, und genau daran hoert man, dass er weg ist
+        # (Jochen 2026-11-08).
+        self.antwort_tts = antwort_tts
+
+    def strom_kandidaten(self) -> list["SpeachesTts"]:
+        """TTS-Dienste fuer einen Satz im Strom, in dieser Reihenfolge.
+
+        Hat jemand per Werkzeug eine andere Stimme gewaehlt (voice_state weicht
+        vom Profil ab), gilt die: dann nur speaches."""
+        from voice_assistant.state import voice_state
+        vm, vv, _ = voice_state.get()
+        eigene_wahl = (vm or self.speaches.model, vv or self.speaches.voice) != (
+            self.speaches.model, self.speaches.voice)
+        kandidaten = []
+        if self.antwort_tts is not None and not eigene_wahl:
+            kandidaten.append(self.antwort_tts)
+        kandidaten.append(self.speaches)
+        return [k for k in kandidaten if k.state.tts_ok()]
 
     def _play_speaches_sentence(self, sentence: str, recorder: ReplyRecorder | None = None) -> bool:
         audio_data = self.speaches.synth(sentence)
@@ -819,7 +847,7 @@ class ReplyStreamSession:
         if self._strom is not None and self._strom.beginnen():
             return self._strom
         self._strom_abwarten()
-        if self.sp.strom_oeffnen is None or not self.sp.speaches.state.tts_ok():
+        if self.sp.strom_oeffnen is None:
             return None
         tts_lock.acquire()
         # Zweite Pruefung im Lock — siehe ReplySpeaker.speak().
@@ -845,20 +873,22 @@ class ReplyStreamSession:
 
     def _satz_in_strom(self, clean: str, strom) -> None:
         geschrieben: list[bytes] = []
-        try:
+        for dienst in self.sp.strom_kandidaten():
             try:
-                for block in self.sp.speaches.synth_strom(clean):
-                    if turn_stopped(self.turn) or not strom.schreiben(block):
-                        return
-                    geschrieben.append(block)
-                return
-            finally:
-                # Ein Eintrag je Satz im Recorder (finalize zaehlt Eintraege).
-                self.rec.add_pcm(clean, b"".join(geschrieben), (2, 2, STROM_RATE))
-        except Exception as e:
-            print(f"⚠️  Speaches-Strom fehlgeschlagen: {e}")
-            if geschrieben:
-                return
+                try:
+                    for block in dienst.synth_strom(clean):
+                        if turn_stopped(self.turn) or not strom.schreiben(block):
+                            return
+                        geschrieben.append(block)
+                    return
+                finally:
+                    # Ein Eintrag je Satz im Recorder (finalize zaehlt Eintraege).
+                    if geschrieben:
+                        self.rec.add_pcm(clean, b"".join(geschrieben), (2, 2, STROM_RATE))
+            except Exception as e:
+                print(f"⚠️  TTS-Strom ({dienst.model}) fehlgeschlagen: {e}")
+                if geschrieben:
+                    return
         print("⚠️  → Piper fallback (in den Strom)")
         tmp_wav = piper_synth(clean)
         if not tmp_wav:

@@ -203,11 +203,15 @@ class FakeLeds:
 
 
 class FakeTts:
-    def __init__(self, fehler: bool = False) -> None:
+    def __init__(self, fehler: bool = False, model: str = "piper", voice: str = "thorsten") -> None:
         self.state = SpeachesState()
         self.fehler = fehler
+        self.model = model
+        self.voice = voice
+        self.saetze: list[str] = []
 
     def synth_strom(self, text):
+        self.saetze.append(text)
         if self.fehler:
             raise RuntimeError("weg")
         yield zu_48k_stereo(_ton(0.05), 48000, 1)
@@ -298,6 +302,51 @@ class SitzungTest(unittest.TestCase):
                 os.unlink(pfad)
         self.assertEqual(senke.stroeme[0][0].audio_bytes, len(zu_48k_stereo(_ton(0.2, 22050), 22050, 1)))
         self.assertFalse(tts_lock.locked())
+
+
+class AntwortDienstTest(unittest.TestCase):
+    """antwort_tts (CosyVoice im Fablab) zuerst, Rueckfall speaches."""
+
+    def setUp(self):
+        from voice_assistant.state import voice_state
+        self.voice_state = voice_state
+        self.alt = voice_state.get()
+        voice_state.set(model="piper", voice="thorsten", speed=1.0)
+
+    def tearDown(self):
+        m, v, sp = self.alt
+        self.voice_state.set(model=m, voice=v, speed=sp)
+
+    def _lauf(self, cosy, lokal):
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(),
+                              strom_oeffnen=senke.strom_oeffnen, antwort_tts=cosy)
+        sitz = sp.stream_session(restore_leds=False, turn=None)
+        sitz.feed("Satz.")
+        sitz.end()
+        return senke
+
+    def test_antwort_dienst_zuerst(self):
+        cosy, lokal = FakeTts(model="cosyvoice3"), FakeTts()
+        self._lauf(cosy, lokal)
+        self.assertEqual((len(cosy.saetze), len(lokal.saetze)), (1, 0))
+
+    def test_antwort_dienst_weg_dann_speaches(self):
+        cosy, lokal = FakeTts(fehler=True, model="cosyvoice3"), FakeTts()
+        senke = self._lauf(cosy, lokal)
+        self.assertEqual((len(cosy.saetze), len(lokal.saetze)), (1, 1))
+        self.assertGreater(senke.stroeme[0][0].audio_bytes, 0)
+
+    def test_eigene_stimmwahl_ohne_antwort_dienst(self):
+        self.voice_state.set(model="piper", voice="eva", speed=1.0)
+        cosy, lokal = FakeTts(model="cosyvoice3"), FakeTts()
+        self._lauf(cosy, lokal)
+        self.assertEqual((len(cosy.saetze), len(lokal.saetze)), (0, 1))
+
+    def test_fest_ignoriert_voice_state(self):
+        self.voice_state.set(model="piper", voice="eva", speed=1.0)
+        d = tts.SpeachesTts(SpeachesState(), "http://x", "cosyvoice3", "thorsten", fest=True)
+        self.assertEqual(d._parameter("Hallo.")[:2], ("cosyvoice3", "thorsten"))
 
 
 # --- ReSpeaker-Senke mit echtem HTTP ------------------------------------------

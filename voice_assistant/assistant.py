@@ -1218,12 +1218,21 @@ def run() -> None:
               + (f", Sprache fest: {profile.stt_llamacpp_sprache}"
                  if profile.stt_llamacpp_sprache else ""))
     stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt, llamacpp_stt)
+    antwort_tts = None
+    if profile.tts_strom and profile.antwort_tts_url:
+        antwort_tts = SpeachesTts(
+            SpeachesState(), profile.antwort_tts_url,
+            profile.antwort_tts_model, profile.antwort_tts_voice,
+            fest=True, timeout=8,
+        )
     speaker = ReplySpeaker(
         speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix,
         strom_oeffnen=getattr(audio_sink, "strom_oeffnen", None) if profile.tts_strom else None,
+        antwort_tts=antwort_tts,
     )
     if profile.tts_strom:
-        print("🔊 TTS als Strom: " + ("an" if speaker.strom_oeffnen else "Senke kann keinen Strom, Dateien wie bisher"))
+        print("🔊 TTS als Strom: " + ("an" if speaker.strom_oeffnen else "Senke kann keinen Strom, Dateien wie bisher")
+              + (f", Antworten über {profile.antwort_tts_url} ({profile.antwort_tts_voice})" if antwort_tts else ""))
     thinking = ThinkingWorker(
         audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts
     )

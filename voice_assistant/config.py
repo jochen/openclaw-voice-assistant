@@ -786,6 +786,12 @@ class Profile:
     # (audio/strom.py): der erste Ton kommt, waehrend der Satz noch entsteht.
     # Nur Haupt-Geraet im respeaker-Modus, sonst wie bisher. Default aus.
     tts_strom: bool = False
+    # Eigener TTS-Dienst nur fuer Brain-Antworten im Strom (Speaches-API,
+    # z. B. CosyVoice im Fablab, seit 2026-11-08). Leer = speaches wie bisher.
+    # Wirkt nur mit tts_strom. Rueckfall: speaches, dann Piper.
+    antwort_tts_url: str = ""
+    antwort_tts_model: str = ""
+    antwort_tts_voice: str = ""
 
     # Telegram
     telegram_bot_token: str = ""
@@ -1316,6 +1322,9 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         openclaw_instructions=bool(raw.get("openclaw_instructions", True)),
         anrede_hinweis=bool(raw.get("anrede_hinweis", False)),
         tts_strom=bool(raw.get("tts_strom", False)),
+        antwort_tts_url=str(raw.get("antwort_tts_url", "")),
+        antwort_tts_model=str(raw.get("antwort_tts_model", "")),
+        antwort_tts_voice=str(raw.get("antwort_tts_voice", "")),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),
