@@ -161,6 +161,20 @@ _ACK_DELAY_SEC = 0.4
 # schaltet das Tischlicht aus."). Braucht die Wake-Schranke (sonst kein Text
 # rechtzeitig). Erfindet Qwen Wörter, fängt _ist_nur_wakewort den Turn.
 _BEFEHL_IM_CLIP_WOERTER = 2
+# Echo des eigenen "Ja?" (2026-11-08): die Echo-Unterdrückung lässt es durch,
+# über 124 archivierte Aufnahmen endet der Pegelstoß im Median 0,76 s, p90
+# 0,88 s nach dem Abspielbefehl. Qwen liest ihn mal "Ja.", mal "So. Da.",
+# "Danke." — am Text nicht zu fassen. Deshalb zählt der VAD in diesem Fenster
+# keine Sprache (das Audio bleibt). Kommt danach eine Dialog-Nachlauflänge
+# lang keine Sprache, endet die Aufnahme als "keine Sprache" (so schnell wie
+# vorher, als das Echo die Aufnahme beendete) und geht nicht an den Brain.
+# Sicher, weil ein "Ja?" nur noch läuft, wenn im Wake-Clip höchstens ein Wort
+# hinter dem Wakewort stand (_BEFEHL_IM_CLIP_WOERTER): ein Befehl im Pre-Roll
+# bekommt kein "Ja?" mehr. Am Archiv: 13 von 14 solcher Befehle hätten kein
+# "Ja?" bekommen, der 14. lag unter der Schranke. Verworfen, weil gemessen:
+# das Echo aus dem Audio schneiden (Qwen erfindet dann Sätze, echte Befehle
+# gingen kaputt) und nur 10 s warten (14 Befehle im Pre-Roll verloren).
+_ACK_ECHO_SEC = 1.0
 # Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
 # straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
 # typisch 1–2 Chunks (~0,16 s) — 0,5 s liegt sicher darüber und ist von jedem
@@ -1537,6 +1551,7 @@ def run() -> None:
     turn_wake_nach: int | None = None   # Wörter hinter dem Wakewort im Wake-Clip
     ack_gespielt = False                # "Ja?" lief in der laufenden Aufnahme
     aufnahme_ack_echo = False           # ... in der Aufnahme, deren STT gerade läuft
+    ack_idx = 0                         # Chunk-Index der Aufnahme beim "Ja?"
     # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
     # stehen (anders als trigger_audio_id), damit der AUSGANG des Turns noch auf
     # den Trigger bezogen protokolliert werden kann. Siehe _log_outcome().
@@ -2143,6 +2158,9 @@ def run() -> None:
                 _is_speech, _rms, _sf, _tf = _chunk_speech_stats(
                     vad, audio_16, _vad_rms_min
                 )
+                # Echo des eigenen "Ja?" ist keine Sprache (_ACK_ECHO_SEC).
+                if ack_gespielt and (len(recorded_chunks) - ack_idx) * _chunk_sec <= _ACK_ECHO_SEC:
+                    _is_speech = False
                 turn_rms.append(_rms)
                 turn_frames_speech += _sf
                 turn_frames_total += _tf
@@ -2265,6 +2283,7 @@ def run() -> None:
                         print(f"[{now:.1f}s] 🔇 Barge-in — kein Ja?")
                     elif os.path.exists(ack_path):
                         print(f"[{now:.1f}s] 🔊 Playing acknowledgement...")
+                        ack_idx = len(recorded_chunks)
                         audio_sink.play_wav(ack_path)
                         ack_gespielt = True
 
@@ -2295,6 +2314,12 @@ def run() -> None:
                     )
 
                 timeout = (now - state_start) > turn_max_sec
+                # Nach dem "Ja?" nichts gesagt (das Echo zählt nicht, siehe
+                # _ACK_ECHO_SEC): nach einer Nachlauflänge Schluss.
+                kein_start = (ack_gespielt and not speech_detected
+                              and (len(recorded_chunks) - ack_idx) * _chunk_sec
+                              > _ACK_ECHO_SEC + turn_silence_limit * _chunk_sec)
+                timeout = timeout or kein_start
                 stop = speech_detected and silence_counter >= turn_silence_limit
                 # Reiner Abbruch: nach einem Barge-in kommt eine Nachlauf-Laenge
                 # lang keine Sprache. Das Stopp-Wort steckt dann ganz im
@@ -2317,7 +2342,8 @@ def run() -> None:
 
                 if (stop or timeout or still_abbruch) and not schranke_wartet:
                     reason = ("silence" if stop
-                              else "bargein_still" if still_abbruch else "timeout")
+                              else "bargein_still" if still_abbruch
+                              else "kein_start_nach_ja" if kein_start else "timeout")
                     pre_roll_sec = pre_roll_chunks * _chunk_sec
                     dur = len(recorded_chunks) * _chunk_sec
                     print(

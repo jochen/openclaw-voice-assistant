@@ -13,6 +13,11 @@ hieße, Qwen eine Stille zu geben, und auf Stille erfindet Qwen Sätze ("Ich
 habe keine Ahnung.", gemessen an denselben Aufnahmen). Angewendet wird sie
 nur im Erst-Turn, wenn in genau dieser Aufnahme das "Ja?" lief: ein "Ja"
 ohne vorherige Frage trägt dort keinen Inhalt.
+
+Das ist das zweite Netz. Das erste ist der VAD (assistant._ACK_ECHO_SEC):
+das Echo zählt nicht als Sprache, und eine Aufnahme ohne Sprache nach dem
+"Ja?" kommt gar nicht erst zur STT. Nötig, weil Qwen dasselbe Echo auch
+"So. Da." oder "Danke." liest (Live-Test 2026-11-08 12:10).
 """
 
 from __future__ import annotations

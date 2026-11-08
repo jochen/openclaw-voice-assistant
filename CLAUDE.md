@@ -1167,14 +1167,18 @@ den Brain zu schicken. Das gilt einmal je Trigger, nicht nach Follow-up,
 Rückfrage oder Barge-in. `endpoint.log`: `ausgang=nur_wakewort`, danach
 `nach_nur_wakewort`, außerdem `wake_rms` und `laute_sprache_s` je Aufnahme.
 
-**Das eigene „Ja?“ ist keine Eingabe (seit 2026-11-08, `ack_echo.py`).** Die
+**Das eigene „Ja?“ ist keine Eingabe (seit 2026-11-08).** Die
 Echo-Unterdrückung lässt das kurze „Ja?“ durch, Qwen liest den Pegelstoß
-0,3–0,9 s nach dem Abspielen als „Ja.“ — fünfmal ging so ein reines „Ja.“
-an den Brain. Reine „Ja.“-Sätze am Anfang/Ende des Transkripts fallen weg,
-nur im Erst-Turn und nur, wenn das „Ja?“ in dieser Aufnahme lief
-(`aufnahme_ack_echo`); bleibt nichts, `ausgang=nur_ack_echo`. Jede Änderung
-als `result: "ack_echo"` im wake_events.log. Nicht am Audio lösen: auf
-stummgeschalteter Stille erfindet Qwen Sätze. Dazu **kein verspätetes „Ja?“**:
+0,3–0,9 s nach dem Abspielen als „Ja.“, „So. Da.“ oder „Danke.“ — fünfmal
+ging so etwas an den Brain. Erstes Netz: der VAD zählt die erste Sekunde
+nach dem „Ja?“ nicht als Sprache (`_ACK_ECHO_SEC`); folgt eine
+Nachlauflänge lang nichts, endet die Aufnahme als „keine Sprache“
+(`reason=kein_start_nach_ja`), ohne STT. Zweites Netz (`ack_echo.py`): reine
+„Ja.“-Sätze am Rand des Transkripts fallen weg; bleibt nichts,
+`ausgang=nur_ack_echo`, Änderungen als `result: "ack_echo"`. Verworfen,
+gemessen: das Echo aus dem Audio schneiden (Qwen erfindet Sätze, echte
+Befehle gingen kaputt). Das erste Netz ist nur sicher zusammen mit dem
+folgenden Punkt — ohne ihn gingen Befehle im Pre-Roll verloren (14 im Archiv). Dazu **kein verspätetes „Ja?“**:
 stehen im Wake-Clip-Text der Schranke ≥ 2 Wörter hinter dem Wakewort
 (`_BEFEHL_IM_CLIP_WOERTER`), war der Befehl schon gesagt, bevor der Trigger
 feuerte (langer Streak). Dann kein „Ja?“, der Pre-Roll zählt als Sprache,
