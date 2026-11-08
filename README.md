@@ -300,6 +300,32 @@ Two things to know if you build on this:
   next regression of this kind into something you read instead of something you
   hear.
 
+**Replies as a stream (`tts_strom: true`, optional).** By default every
+sentence is synthesised completely, written to a file and then played. With
+a fast TTS (Piper, ~0.1 s per sentence) you do not notice; with a slower,
+better one (CosyVoice and similar) the first sound waits for the whole first
+sentence. With the switch on, a brain reply goes to the ReSpeaker as **one
+growing WAV over HTTP**, sentence after sentence, while it is still being
+synthesised (`voice_assistant/audio/strom.py`). Measured on the device
+(ESPHome 2026.9.1), worth knowing if you build something similar:
+
+- The media player plays a WAV that is still growing: placeholder lengths in
+  the header, no `Content-Length`, closing the connection ends it. Gaps of 2 s
+  and 8 s without data did not break anything; its reader gives up after 30 s.
+- **Only 48 kHz stereo 16 bit.** A 24 kHz mono stream gave "Incompatible stream
+  settings" and left the player in an error loop until the next command.
+- It starts only once a start buffer is full: 1 s of audio, at most 3/4 of the
+  media player's `buffer_size` (default 1 MB). `buffer_size: 128000` makes it
+  0.5 s (both firmware files here).
+- The stream fills its own gaps with silence, so the length sent is the length
+  played and the end is computed exactly as for a file (the rule above). It
+  closes itself after 1.5 s without a new sentence, so a long tool phase of the
+  brain does not sit in the speaker as minutes of silence.
+
+Listened to at home: no clicks, no gaps between sentences, barge-in in the
+middle of a stream stops it at once. Only the main device streams; phone
+satellites, confirmations and outside announcements keep using files.
+
 ## A phone as a satellite (`satelliten:`, optional)
 
 One microphone doesn't cover the whole home. For rooms you rarely talk in

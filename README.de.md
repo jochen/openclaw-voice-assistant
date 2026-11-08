@@ -305,6 +305,34 @@ Zwei Dinge, die man wissen muss, wenn man darauf aufbaut:
   länger dauert als das Audio, macht aus der nächsten Regression dieser Art
   etwas zum Lesen statt zum Hören.
 
+**Antworten als Strom (`tts_strom: true`, optional).** Ohne den Schalter wird
+jeder Satz erst komplett synthetisiert, als Datei abgelegt und dann
+abgespielt. Bei einem schnellen TTS (Piper, ~0,1 s je Satz) merkt man das
+nicht; bei einem langsameren, besseren (CosyVoice und Ähnliche) wartet der
+erste Ton auf den ganzen ersten Satz. Mit dem Schalter geht eine Antwort des
+Brains als **eine wachsende WAV über HTTP** zum ReSpeaker, Satz für Satz,
+während sie noch entsteht (`voice_assistant/audio/strom.py`). Am Gerät
+gemessen (ESPHome 2026.9.1), wissenswert für einen Nachbau:
+
+- Der Media-Player spielt eine WAV, die noch wächst: Platzhalter-Längen im
+  Kopf, kein `Content-Length`, das Schließen der Verbindung beendet sie. Lücken
+  von 2 s und 8 s ohne Daten haben nichts abgebrochen; sein Leser gibt nach
+  30 s auf.
+- **Nur 48 kHz Stereo 16 bit.** Ein Strom mit 24 kHz mono brachte „Incompatible
+  stream settings“, der Player hing danach in einer Fehlerschleife bis zum
+  nächsten Befehl.
+- Er beginnt erst, wenn ein Startpuffer voll ist: 1 s Audio, höchstens 3/4 der
+  `buffer_size` des Media-Players (Default 1 MB). `buffer_size: 128000` macht
+  0,5 s daraus (beide Firmware-Dateien hier).
+- Der Strom füllt Lücken selbst mit Stille. So ist die gesendete Länge die
+  gespielte, und das Ende wird genau wie bei einer Datei ausgerechnet (Regel
+  oben). Nach 1,5 s ohne neuen Satz schließt er sich, damit eine lange
+  Werkzeug-Phase des Brains nicht als minutenlange Stille im Lautsprecher hängt.
+
+Daheim angehört: kein Knacken, keine Pausen zwischen den Sätzen, ein Barge-in
+mitten im Strom beendet ihn sofort. Gestreamt wird nur zum Haupt-Gerät;
+Handy-Satelliten, Bestätigungen und Ansagen von außen bleiben bei Dateien.
+
 ## Ein Handy als Satellit (`satelliten:`, optional)
 
 Ein Mikrofon deckt nicht die ganze Wohnung ab. Für Räume, in denen man selten

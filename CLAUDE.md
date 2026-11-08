@@ -953,6 +953,25 @@ Schwelle lag mitten im Messbereich und erklärte gültige Läufe für ungültig.
 Jetzt entscheidet, ob die Wiedergabe stattgefunden hat (Dauer gegen
 Dateilänge), und der Raum-Grundpegel wird gemessen statt angenommen.
 
+### Antworten als Strom (`tts_strom`, seit 2026-11-08)
+
+Anlass: CosyVoice als Piper-Ersatz. Die Wiedergabe war Satz für Satz als
+Datei — bei CosyVoice käme der erste Ton erst nach dem ganzen ersten Satz
+(Median 1,6 s). Jetzt geht eine Brain-Antwort (`ReplyStreamSession`) als
+**ein Strom** zum ReSpeaker (`audio/strom.py`, `RespeakerSink.strom_oeffnen`,
+Adresse `/strom_*.wav` im jetzt mehrfädigen HTTP-Server). Gemessen am Gerät
+und im Docstring von `strom.py`: wachsende WAV geht, nur 48 kHz Stereo 16 bit,
+Startpuffer 1 s → `buffer_size: 128000` (0,5 s) in beiden Firmware-Dateien.
+Der Strom füllt Lücken mit Stille (gesendete Länge = gespielte, Falle 3 bleibt
+gelöst), schließt nach 1,5 s Leerlauf und hält `tts_lock`, bis der Player
+fertig ist — die Senke ruft dann `bei_ende` aus ihrem Thread, der gibt den
+Lock frei. `SpeachesTts.synth_strom` bestellt 48 kHz beim Dienst. Piper-
+Rückfall schreibt in denselben Strom, nur solange vom Satz noch nichts
+geschrieben ist. Satelliten, Bestätigung, Ansagen: weiter Dateien.
+Hörprobe daheim 2026-11-08 (Jochen: „sehr sehr gut, kein Knacksen“), Ende
+jedes Stroms konstant +0,81 s über der gesendeten Länge, Abbruch mitten im
+Strom sofort. Tests: `tests/test_tts_strom.py`.
+
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 
 `RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die
