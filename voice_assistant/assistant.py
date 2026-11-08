@@ -116,7 +116,11 @@ from voice_assistant.wakeword.respeaker import RespeakerWakeword
 from voice_assistant.anrede import anrede_im_text
 from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
 from voice_assistant.nearmiss_shadow import NearMissShadow
-from voice_assistant.wake_pruefung import TIMEOUT_SEC as _PRUEF_TIMEOUT, WakePruefung
+from voice_assistant.wake_pruefung import (
+    SCHRANKE_FRIST_SEC as _SCHRANKE_FRIST, TIMEOUT_SEC as _PRUEF_TIMEOUT,
+    VERWORFEN as _SCHRANKE_VERWORFEN, WARTEN as _SCHRANKE_WARTEN,
+    WakePruefung, entscheid as _schranke_entscheid,
+)
 from voice_assistant.rewind import RewindBuffer
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
@@ -1484,11 +1488,17 @@ def run() -> None:
             flaeche_grenze=profile.wake_pruefung.flaeche_grenze,
             anfang=profile.wake_pruefung.anfang,
             anfang_grenze=profile.wake_pruefung.anfang_grenze,
+            schranke=profile.wake_pruefung.schranke,
         )
-        print(f"🔎 Wake-Prüfung im Schatten aktiv (Fläche ≥ {profile.wake_pruefung.flaeche_grenze}"
-              " oder Qwen hört das Wort"
-              + (f"; Anfang „{profile.wake_pruefung.anfang}“ ≥ {profile.wake_pruefung.anfang_grenze}"
-                 if profile.wake_pruefung.anfang else "") + ", nur Log)")
+        if wake_pruefung.schranke:
+            print(f"🚧 Wake-Schranke aktiv: Anfang „{profile.wake_pruefung.anfang}“ "
+                  f"≥ {profile.wake_pruefung.anfang_grenze}, sonst Near-Miss "
+                  f"(Ausfall/Frist {_SCHRANKE_FRIST:.0f} s → durch)")
+        else:
+            print(f"🔎 Wake-Prüfung im Schatten aktiv (Fläche ≥ {profile.wake_pruefung.flaeche_grenze}"
+                  " oder Qwen hört das Wort"
+                  + (f"; Anfang „{profile.wake_pruefung.anfang}“ ≥ {profile.wake_pruefung.anfang_grenze}"
+                     if profile.wake_pruefung.anfang else "") + ", nur Log)")
     # Rückspul-Puffer (profile.rewind): letzte Minuten Mikro + Score-Verlauf im
     # RAM; gesichert nur bei Trigger (Vorlauf) und manuellem Marker.
     _rewind_cfg = profile.rewind
@@ -1508,6 +1518,14 @@ def run() -> None:
               f"Marker: {_rewind_cfg.marker_topic or 'keiner'})")
     _wake_ring_max = int(RATE_OW * 3.0)
     trigger_audio_id: str | None = None    # verbindet wake- und rec-Clip eines Triggers
+    # Wake-Schranke (wake_pruefung.schranke): Urteil der laufenden Prüfung. Bis
+    # es da ist, läuft die Aufnahme, aber Trigger-Zeile und Wake-Clip sind noch
+    # nicht geschrieben — verworfen wird daraus ein Near-Miss.
+    schranke_urteil = None
+    schranke_frist = 0.0
+    schranke_t0 = 0.0
+    schranke_event: dict = {}
+    schranke_chunks: list = []
     # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
     # stehen (anders als trigger_audio_id), damit der AUSGANG des Turns noch auf
     # den Trigger bezogen protokolliert werden kann. Siehe _log_outcome().
@@ -1869,7 +1887,8 @@ def run() -> None:
                             # FOLLOWUP (ohne neuen Trigger), der Zähler muss sie
                             # also überleben.
                             unklar_round = 0
-                            _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                            if not (wake_pruefung is not None and wake_pruefung.schranke):
+                                _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                             turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                             turn_wake_audio = turn_audio
                             # Die Sekunden VOR dem Trigger sichern: vergebliche Versuche
@@ -1883,6 +1902,7 @@ def run() -> None:
                             # Trigger genauso protokollieren wie den Near-Miss —
                             # ein Sweep braucht beide Klassen im selben Log.
                             trigger_event = {
+                                "ts": datetime.now().isoformat(timespec="seconds"),
                                 "result": "trigger",
                                 **({"umgebung": _um.als_log()} if _um is not None else {}),
                                 "bundle": trigger_audio_bundle,
@@ -1897,9 +1917,16 @@ def run() -> None:
                                 "beam": float(beam) if beam is not None else None,
                                 "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
                             }
-                            _log_wake_event(trigger_event)
-                            if wake_pruefung is not None:
-                                wake_pruefung.start(trigger_event, list(wake_ring))
+                            if wake_pruefung is not None and wake_pruefung.schranke:
+                                schranke_urteil = wake_pruefung.start(trigger_event, list(wake_ring))
+                                schranke_t0 = now
+                                schranke_frist = now + _SCHRANKE_FRIST
+                                schranke_event = trigger_event
+                                schranke_chunks = list(wake_ring)
+                            else:
+                                _log_wake_event(trigger_event)
+                                if wake_pruefung is not None:
+                                    wake_pruefung.start(trigger_event, list(wake_ring))
                             # Ein-Satz-Kommando: LED SOFORT, kein play_wav.
                             # Pre-Roll aus dem Ring VOR dem clear() abgreifen — er
                             # trägt den Anfang eines durchgesprochenen Kommandos
@@ -2019,7 +2046,8 @@ def run() -> None:
                         print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)} (Timeout){beam_str}")
                         trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                         trigger_audio_bundle = current_wakeword.bundle
-                        _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                        if not (wake_pruefung is not None and wake_pruefung.schranke):
+                            _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                         turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                         turn_wake_audio = turn_audio
                         # Die Sekunden VOR dem Trigger sichern: vergebliche Versuche
@@ -2031,7 +2059,8 @@ def run() -> None:
                                 extra={"wake_audio": turn_audio},
                             )
                         _um = _umgebung_urteil(wake_hits, _wake_level_rms(wake_ring), now)
-                        _log_wake_event({
+                        trigger_event = {
+                            "ts": datetime.now().isoformat(timespec="seconds"),
                             "result": "trigger",
                             "via": "timeout",
                             **({"umgebung": _um.als_log()} if _um is not None else {}),
@@ -2044,7 +2073,18 @@ def run() -> None:
                             "scores": [round(s, 3) for s in recent_scores],
                             "beam": float(beam) if beam is not None else None,
                             "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
-                        })
+                        }
+                        # Prüfung wie in Pfad 1 (bis 2026-11-08 lief sie hier nicht).
+                        if wake_pruefung is not None and wake_pruefung.schranke:
+                            schranke_urteil = wake_pruefung.start(trigger_event, list(wake_ring))
+                            schranke_t0 = now
+                            schranke_frist = now + _SCHRANKE_FRIST
+                            schranke_event = trigger_event
+                            schranke_chunks = list(wake_ring)
+                        else:
+                            _log_wake_event(trigger_event)
+                            if wake_pruefung is not None:
+                                wake_pruefung.start(trigger_event, list(wake_ring))
                         # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
                         # kein play_wav, Pre-Roll statt flush, "Ja?" verzögert.
                         pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
@@ -2102,12 +2142,64 @@ def run() -> None:
                 elif speech_detected:
                     silence_counter += 1
 
+                # Wake-Schranke: bis das Urteil da ist, läuft nur die Aufnahme
+                # weiter; "Ja?" und das Aufnahme-Ende warten.
+                schranke_wartet = False
+                if schranke_urteil is not None:
+                    _se = _schranke_entscheid(schranke_urteil, now >= schranke_frist)
+                    if _se == _SCHRANKE_WARTEN:
+                        schranke_wartet = True
+                    else:
+                        _sj = schranke_urteil.job
+                        _sinfo = {
+                            "ergebnis": _se,
+                            "anfang_lp": _sj.get("anfang_lp"),
+                            "anfang_grenze": _sj.get("anfang_grenze"),
+                            "text": _sj.get("text"),
+                            "wartezeit_s": round(now - schranke_t0, 2),
+                        }
+                        schranke_urteil = None
+                        _sid, _sb = trigger_audio_id, trigger_audio_bundle
+                        if _se == _SCHRANKE_VERWORFEN:
+                            nm_event = {
+                                **schranke_event,
+                                "result": "nearmiss",
+                                "failed_on": "anfang",
+                                "schranke": _sinfo,
+                                "audio": f"{_sid}_{_sb}_nearmiss.wav",
+                            }
+                            _save_trigger_audio(schranke_chunks, _sb, "nearmiss", _sid)
+                            _log_wake_event(nm_event)
+                            print(f"[{now:.1f}s] ⚡ Near-Miss [{_sb}] (Schranke: Anfang "
+                                  f"{_sinfo['anfang_lp']} < {_sinfo['anfang_grenze']}, "
+                                  f"„{_sinfo['text']}“, nach {_sinfo['wartezeit_s']:.2f} s)")
+                            if nearmiss_shadow is not None:
+                                # Was seit dem Trigger aufgenommen wurde, ist der
+                                # Anfang des Mitschnitts danach.
+                                nearmiss_shadow.start(nm_event, recorded_chunks)
+                            leds.set_phase(LED_NEAR_MISS)
+                            near_miss_until = now + 0.6
+                            if musik_ducker is not None:
+                                musik_ducker.verworfen()
+                            trigger_audio_id = None
+                            turn_audio = None
+                            turn_wake_audio = None
+                            ack_pending = False
+                            schranke_event, schranke_chunks = {}, []
+                            state = STATE_LISTENING
+                            continue
+                        _save_trigger_audio(schranke_chunks, _sb, "wake", _sid)
+                        _log_wake_event({**schranke_event, "schranke": _sinfo})
+                        schranke_event, schranke_chunks = {}, []
+                        if _se != "durch":
+                            print(f"[{now:.1f}s] 🚧 Schranke ohne Urteil ({_se}) → durch")
+
                 # Ein-Satz-Kommando: "Ja?" verzögert spielen. Nach _ACK_DELAY_SEC
                 # entscheiden: Sprache erkannt → User spricht weiter → kein "Ja?"
                 # (LED-Ring reicht). Still → "Ja?" spielen wie bisher.
                 # play_wav blockiert ~0,6s — währenddessen läuft Audio weiter in
                 # den Puffer, der nächste Loop-Durchlauf holt es ab. KEIN flush.
-                if ack_pending and now >= ack_deadline:
+                if ack_pending and now >= ack_deadline and not schranke_wartet:
                     ack_pending = False
                     # Diese Entscheidung ist die einzige verlässliche Auskunft
                     # darüber, ob durchgesprochen wurde — aus dem Wake-Clip
@@ -2187,7 +2279,7 @@ def run() -> None:
                     len(recorded_chunks) - pre_roll_chunks, turn_silence_limit,
                 )
 
-                if stop or timeout or still_abbruch:
+                if (stop or timeout or still_abbruch) and not schranke_wartet:
                     reason = ("silence" if stop
                               else "bargein_still" if still_abbruch else "timeout")
                     pre_roll_sec = pre_roll_chunks * _chunk_sec

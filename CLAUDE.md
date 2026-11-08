@@ -92,7 +92,13 @@ dauerhaft aus haben: `podman stop` (setzt `StoppedByUser`), nicht `kill`.
 Nicht dabei, weil `restart: no`: `paperless-https`, `speaches-warmup`,
 `mood-warmup` — die laufen nach einem Reboot nicht von selbst.
 Geprüft mit einem Wegwerf-Container (erzeugt, nie gestartet → gestartet,
-Port im eigenen Scope); ein echter Reboot steht noch aus.
+Port im eigenen Scope). **Erster echter Reboot 2026-11-08 08:50:** alles kam
+hoch, aber auch die alte `llamacpp-gemma` (3060 Ti, Port 8090): sie stand auf
+`StoppedByUser=false`, war also nie per `podman stop` aus. Sie nahm 2,9 GB,
+Laya fiel per CUDA-OOM auf die CPU und lief in jedem Turn in den Timeout
+(Gemma entschied, still bis auf `Laya fiel aus` im Journal). Jetzt per
+`podman stop` aus (`StoppedByUser=true`). Nach einem Reboot prüfen:
+`/health` von Laya muss `"device":"cuda"` sagen.
 
 Der alte Monolith `voice_assistant.py` wurde in ein Package refaktoriert und
 liegt übergangsweise als `voice_assistant_legacy.py` weiter im Repo (zum
@@ -1258,7 +1264,19 @@ nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.
 
-### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, auf main seit 2026-11-01)
+### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, Schranke seit 2026-11-08)
+
+**Seit 2026-11-08 verwirft das Anfangs-Maß wirklich** (`schranke: true`,
+`anfang_grenze` −6,5): in der ersten Live-Woche mit Ohr-Labels lagen echte
+Rufe alle ≥ −5,05, Fehlauslöser alle ≤ −8,2 (Zahlen in
+`WAKEWORD_PROCESS.md`, „Schranke Anfangs-Maß“). Die Aufnahme läuft während
+der Prüfung weiter; nur „Ja?“ und das Aufnahme-Ende warten (`schranke_wartet`
+in STATE_RECORDING, höchstens `SCHRANKE_FRIST_SEC` 2 s). Ausfall von Qwen
+oder Frist → durch, ein toter Dienst darf keine Rufe kosten. Verworfen →
+Near-Miss mit `failed_on: "anfang"` (Jochen: „auf jeden Fall log, mit
+Grund“), Trigger-Zeile und Wake-Clip entstehen erst nach dem Urteil. Rückweg:
+`schranke: false`. Der Rest des Abschnitts beschreibt die Schatten-Zeit.
+
 
 Jochens Idee: das Modell darf großzügig hören, eine zweite Stufe sortiert
 Fehlauslöser danach aus. `wake_pruefung.py` rechnet bei jedem Trigger die

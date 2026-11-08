@@ -5,18 +5,17 @@ wurde, Runde für Runde, mit allen Zahlen. **Wie man nachtrainiert** (Ablauf,
 Befehle, Fallen) steht in `WAKEWORD_TRAINING.de.md` (englisch `WAKEWORD_TRAINING.md`); diese Datei ist der Beleg
 dazu und wächst nach unten.
 
-## Stand (2026-10-31)
+## Stand (2026-11-08)
 
-- **Live seit 2026-10-31 18:08: R7 voll l2, als Versuch.** Kein Lauf von
-  Runde 7 hat die Schranke bestanden; voll l2 verfehlte nur die alten
-  Fehltrigger um einen Clip (Abschnitt „Nachtraining Runde 7 — Ergebnis“).
-  Jochen: ausprobieren. Vergleich nach etwa einer Woche gegen die v5-Woche
-  davor, Abbruchregel: mehr Fehltrigger am Tag als v5 → zurück auf v5
-  (Bundle aus `42797ef`). Abschnitt „Live-Versuch R7 voll l2“.
-- **Prüfung nach dem Trigger im Schatten** (`wake_pruefung.jsonl`): Fläche,
-  Wort im Qwen-Text und seit 2026-10-31 das Anfangs-Maß. Offen: die
-  `haette_verworfen*`-Fälle per Ohr zählen, dann entscheiden, ob daraus ein
-  Gate wird.
+- **Live: R7 voll l2 (seit 2026-10-31 18:08), Woche ausgewertet, bleibt.**
+  Nach Ohr 1,9 Fehltrigger/Tag gegen 2,6 bei v5, echte Rufe gleich
+  (Abschnitt „Live-Versuch R7 voll l2“, Ergebnis). Nächster Modellschritt:
+  voll4-Ensemble, erst wenn die Schranke eine Woche gelaufen ist.
+- **Seit 2026-11-08 Schranke nach dem Trigger: das Anfangs-Maß verwirft**
+  (`wake_pruefung.schranke`, Grenze −6,5). In der l2-Woche lagen echte Rufe
+  alle ≥ −5,05, Ohr-Fehlauslöser alle ≤ −8,2. Verworfenes steht als
+  Near-Miss `failed_on: "anfang"` in wake_events.log. Abschnitt
+  „Schranke Anfangs-Maß“.
 - **Streuung je Lauf** bleibt das Hauptproblem jeder Schranke (gleiche Daten,
   acht Läufe: FP/h 0,19 bis 1,22). Ensemble (Score-Mittel aller Läufe eines
   Rezepts) gemessen: voll4 besteht die R7-Schranke, die Live-Engine kann es
@@ -1725,6 +1724,51 @@ journalctl --user -u openclaw-voice-assist.service | grep "Ensemble aus 4"
 
 Dann eine neue Vergleichswoche ab dem Neustart, dieselbe Abbruchregel gegen
 v5 (2,5 Fehltrigger/Tag), dieselbe Auswertung wie oben.
+
+**Ergebnis (ausgewertet 2026-11-08).** Die 36 Trigger, die die STT als
+rauschen/unklar führte, alle per Ohr gehört (`review: l2_woche_2026-11-08`):
+22 echte Rufe, 13 Fehltrigger, 1 unklar. Vor dem Anhören sah l2 nach 3,4
+Fehltriggern und halb so vielen echten Rufen aus; das war die STT.
+
+| je Tag (7 Tage) | v5 | R7 l2 |
+|---|---|---|
+| Trigger echter Ruf | 7,3 (57) | 6,9 (48, 22 per Ohr) |
+| Trigger Rauschen (Fehltrigger) | 2,6 (20, 13 per Ohr) | **1,9** (13, alle per Ohr) |
+| Trigger unklar | 1,3 (10) | 0,1 (1) |
+| Near-Miss echter Ruf (STT) | 3,2 (25) | 3,4 (24) |
+
+Abbruchregel nicht erfüllt, l2 bleibt. Grenze der Aussage: bei v5 sind 7
+der 20 Fehltrigger nur STT; wären sie alle echte Rufe, stünde v5 bei 1,7.
+Besser ist l2 also nicht belegt, schlechter auch nicht. 6 der 13
+Fehltrigger wurden per „Stopp“ abgebrochen.
+
+### Schranke Anfangs-Maß (seit 2026-11-08)
+
+Das Anfangs-Maß (Abschnitt „Anfangs-Maß statt Wortliste“) über alle 74
+Trigger seit 2026-10-31 13:05 mit Labels:
+
+| Grenze | echte Rufe verloren (von 53) | Fehlauslöser durch (16, 13 per Ohr) |
+|---|---|---|
+| −4 (Schatten) | 2 („Kasten.“ −5,05, „Das doch.“ −4,49) | 1 (STT-Label, „Gaston Marello.“ −0,02) |
+| −5,5 … −8 | 0 | dieselbe 1 |
+
+Die eine durchgelassene ist ein STT-Label mit „Gaston“ im Text, vermutlich
+ein echter Ruf. Per Ohr: echte Rufe ≥ −5,05, Fehlauslöser ≤ −8,2 (offline
+2026-10-31: bester Fehlauslöser −8,5). Gewählt −6,5, etwa die Mitte der
+Lücke. Die alte Regel (Fläche oder Wort) hätte nur 5 der 13 Fehlauslöser der
+l2-Woche verworfen; sie bleibt Log.
+
+Umsetzung (`wake_pruefung.py`, `assistant.py`): die Aufnahme beginnt sofort,
+Qwen rechnet parallel (Median 0,43 s, p90 0,72, max 1,27); „Ja?“ und
+Aufnahme-Ende warten auf das Urteil, höchstens 2 s. Ausfall oder Frist →
+durch. Trigger-Zeile und Wake-Clip werden erst nach dem Urteil geschrieben:
+durch → `trigger` mit Block `schranke`, verworfen → `nearmiss`,
+`failed_on: "anfang"`, `_nearmiss.wav`, Near-Miss-Schatten mit dem schon
+Aufgenommenen als Anfang. Live-Probe 11:47–11:48: 4 Rufe (2 mit Pause, 2
+durchgesprochen) durch, −0,01 bis −0,14, Wartezeit 0,29–0,55 s.
+
+Zu beobachten: verworfene Fälle per Ohr prüfen (`failed_on: anfang` in
+wake_triage), und ob die Grenze bei mehr Fehlauslösern hält.
 
 ### Paralleles Training, Probelauf r7b (2026-10-31 18:15–19:12)
 

@@ -551,18 +551,21 @@ class UmgebungConfig:
 @dataclass
 class WakePruefungConfig:
     """Prüfung nach dem Trigger, im Schatten (voice_assistant/wake_pruefung.py).
-    Seit 2026-10-27. Nur Log, verworfen wird nichts.
+    Seit 2026-10-27. Ohne ``schranke`` nur Log, verworfen wird nichts.
 
     flaeche_grenze: Summe der Scores über der Schwelle, ab der ein Trigger
     ohne Text-Prüfung als echt gälte (gemessen an v5, WAKEWORD_PROCESS.md).
     anfang: Wortanfang des Wakeworts (hier "Gast"), dessen Wahrscheinlichkeit
     Qwen zusätzlich schätzt; leer = aus. Braucht stt_llamacpp_sprache.
     anfang_grenze: log P, unter der das Anfangs-Maß verworfen hätte.
+    schranke: das Anfangs-Maß verwirft wirklich (seit 2026-11-08); braucht
+    ``anfang``. Verworfene Trigger werden Near-Miss mit failed_on "anfang".
     """
     enabled: bool = False
     flaeche_grenze: float = 2.7
     anfang: str = ""
     anfang_grenze: float = -4.0
+    schranke: bool = False
 
 
 @dataclass
@@ -1173,6 +1176,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         flaeche_grenze=float(wp_raw.get("flaeche_grenze", _dwp.flaeche_grenze)),
         anfang=str(wp_raw.get("anfang", _dwp.anfang) or ""),
         anfang_grenze=float(wp_raw.get("anfang_grenze", _dwp.anfang_grenze)),
+        schranke=bool(wp_raw.get("schranke", _dwp.schranke)),
     )
 
     md_raw = raw.get("musik_ducking") or {}
