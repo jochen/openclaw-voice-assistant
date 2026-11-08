@@ -700,11 +700,15 @@ class ReplySpeaker:
         """TTS-Dienste fuer einen Satz im Strom, in dieser Reihenfolge.
 
         Hat jemand per Werkzeug eine andere Stimme gewaehlt (voice_state weicht
-        vom Profil ab), gilt die: dann nur speaches."""
+        vom Profil ab), gilt die: dann nur speaches. Ein Piper-Modell hat genau
+        eine Stimme, dort zählt nur das Modell: die gespeicherte Wahl „thorsten“
+        und der Profil-Default „de_DE-thorsten-medium“ sind dieselbe Stimme
+        (2026-11-08 hat genau das CosyVoice still übersprungen)."""
         from voice_assistant.state import voice_state
         vm, vv, _ = voice_state.get()
-        eigene_wahl = (vm or self.speaches.model, vv or self.speaches.voice) != (
-            self.speaches.model, self.speaches.voice)
+        vm = vm or self.speaches.model
+        eigene_wahl = vm != self.speaches.model or (
+            "piper" not in vm.lower() and (vv or self.speaches.voice) != self.speaches.voice)
         kandidaten = []
         if self.antwort_tts is not None and not eigene_wahl:
             kandidaten.append(self.antwort_tts)
@@ -880,6 +884,7 @@ class ReplyStreamSession:
                         if turn_stopped(self.turn) or not strom.schreiben(block):
                             return
                         geschrieben.append(block)
+                    print(f"   ↳ {dienst.model}/{dienst.voice}")
                     return
                 finally:
                     # Ein Eintrag je Satz im Recorder (finalize zaehlt Eintraege).

@@ -307,6 +307,8 @@ class SitzungTest(unittest.TestCase):
 class AntwortDienstTest(unittest.TestCase):
     """antwort_tts (CosyVoice im Fablab) zuerst, Rueckfall speaches."""
 
+    PIPER = "speaches-ai/piper-de_DE-thorsten-medium"
+
     def setUp(self):
         from voice_assistant.state import voice_state
         self.voice_state = voice_state
@@ -338,8 +340,22 @@ class AntwortDienstTest(unittest.TestCase):
         self.assertGreater(senke.stroeme[0][0].audio_bytes, 0)
 
     def test_eigene_stimmwahl_ohne_antwort_dienst(self):
-        self.voice_state.set(model="piper", voice="eva", speed=1.0)
-        cosy, lokal = FakeTts(model="cosyvoice3"), FakeTts()
+        self.voice_state.set(model="speaches-ai/piper-de_DE-eva_k-x_low", voice="eva", speed=1.0)
+        cosy, lokal = FakeTts(model="cosyvoice3"), FakeTts(model=self.PIPER, voice="de_DE-thorsten-medium")
+        self._lauf(cosy, lokal)
+        self.assertEqual((len(cosy.saetze), len(lokal.saetze)), (0, 1))
+
+    def test_gespeicherte_wahl_gleiches_piper_modell(self):
+        # Live 2026-11-08: Regel=gespeichert setzt voice='thorsten', das Profil
+        # sagt 'de_DE-thorsten-medium' -- dieselbe Stimme, CosyVoice muss bleiben.
+        self.voice_state.set(model=self.PIPER, voice="thorsten", speed=1.0)
+        cosy, lokal = FakeTts(model="cosyvoice3"), FakeTts(model=self.PIPER, voice="de_DE-thorsten-medium")
+        self._lauf(cosy, lokal)
+        self.assertEqual((len(cosy.saetze), len(lokal.saetze)), (1, 0))
+
+    def test_andere_stimme_im_mehrstimmen_modell(self):
+        self.voice_state.set(model="kokoro", voice="af_bella", speed=1.0)
+        cosy, lokal = FakeTts(model="cosyvoice3"), FakeTts(model="kokoro", voice="af_sky")
         self._lauf(cosy, lokal)
         self.assertEqual((len(cosy.saetze), len(lokal.saetze)), (0, 1))
 
