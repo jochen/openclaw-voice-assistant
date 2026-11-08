@@ -1167,6 +1167,20 @@ den Brain zu schicken. Das gilt einmal je Trigger, nicht nach Follow-up,
 Rückfrage oder Barge-in. `endpoint.log`: `ausgang=nur_wakewort`, danach
 `nach_nur_wakewort`, außerdem `wake_rms` und `laute_sprache_s` je Aufnahme.
 
+**Das eigene „Ja?“ ist keine Eingabe (seit 2026-11-08, `ack_echo.py`).** Die
+Echo-Unterdrückung lässt das kurze „Ja?“ durch, Qwen liest den Pegelstoß
+0,3–0,9 s nach dem Abspielen als „Ja.“ — fünfmal ging so ein reines „Ja.“
+an den Brain. Reine „Ja.“-Sätze am Anfang/Ende des Transkripts fallen weg,
+nur im Erst-Turn und nur, wenn das „Ja?“ in dieser Aufnahme lief
+(`aufnahme_ack_echo`); bleibt nichts, `ausgang=nur_ack_echo`. Jede Änderung
+als `result: "ack_echo"` im wake_events.log. Nicht am Audio lösen: auf
+stummgeschalteter Stille erfindet Qwen Sätze. Dazu **kein verspätetes „Ja?“**:
+stehen im Wake-Clip-Text der Schranke ≥ 2 Wörter hinter dem Wakewort
+(`_BEFEHL_IM_CLIP_WOERTER`), war der Befehl schon gesagt, bevor der Trigger
+feuerte (langer Streak). Dann kein „Ja?“, der Pre-Roll zählt als Sprache,
+Kommando-Nachlauf; `ack` trägt `befehl_im_wakeclip`. Erfindet Qwen Wörter,
+holt `_ist_nur_wakewort` das „Ja?“ nach. Tests: `tests/test_ack_echo.py`.
+
 **Follow-up ohne Sprache endet nach 10 s** (`_FOLLOWUP_START_SEC`, seit
 2026-10-15), vorher erst am 30-s-Deckel (Jochen: „bleibt sehr lang aktiv“).
 Die Grenze ist geschätzt, nicht gegen ein Archiv gemessen: Follow-up-Aufnahmen
