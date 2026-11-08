@@ -139,6 +139,10 @@ media_player:
   - platform: speaker
     id: respeaker_player
     name: "ReSpeaker Player"
+    # Startpuffer = min(1 s Audio, 3/4 buffer_size). Default 1 MB -> 1 s vor
+    # dem ersten Ton, auch bei einem Strom. 128 kB -> 96 kB = 0,5 s bei
+    # 48 kHz Stereo 16 bit (Strom-Probe 2026-11-08).
+    buffer_size: 128000
     announcement_pipeline:
       speaker: i2s_out_speaker
       format: WAV

@@ -782,6 +782,10 @@ class Profile:
     # und der Sprecher nicht bekannt ist (voice_assistant/anrede.py). Der Text
     # steht in locale.anrede_hinweis. Default aus.
     anrede_hinweis: bool = False
+    # Brain-Antworten als Strom zum ReSpeaker statt Satz fuer Satz als Datei
+    # (audio/strom.py): der erste Ton kommt, waehrend der Satz noch entsteht.
+    # Nur Haupt-Geraet im respeaker-Modus, sonst wie bisher. Default aus.
+    tts_strom: bool = False
 
     # Telegram
     telegram_bot_token: str = ""
@@ -1311,6 +1315,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         openclaw_stream=bool(raw.get("openclaw_stream", True)),
         openclaw_instructions=bool(raw.get("openclaw_instructions", True)),
         anrede_hinweis=bool(raw.get("anrede_hinweis", False)),
+        tts_strom=bool(raw.get("tts_strom", False)),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),

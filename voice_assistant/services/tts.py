@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import struct
 import subprocess
 import tempfile
 import threading
@@ -19,6 +20,7 @@ import urllib.request
 import wave
 from typing import Callable
 
+from voice_assistant.audio.strom import RATE as STROM_RATE, zu_48k_stereo
 from voice_assistant.services import aussprache
 from voice_assistant.config import (
     ABORT_BEEP_PATH,
@@ -263,12 +265,125 @@ class StreamingSentenceBuffer:
 # ---------------------------------------------------------------------------
 # Speaches TTS
 # ---------------------------------------------------------------------------
+def _genau(resp, n: int) -> bytes:
+    daten = b""
+    while len(daten) < n:
+        block = resp.read(n - len(daten))
+        if not block:
+            raise ValueError("TTS-Strom endet im WAV-Kopf")
+        daten += block
+    return daten
+
+
+def _wav_kopf_lesen(resp) -> tuple[int, int]:
+    """WAV-Kopf aus einem Strom lesen bis zum Beginn der Daten.
+
+    Die Laengen im Kopf sind beim Streamen Platzhalter (siehe synth()), sie
+    werden hier nicht benutzt. Gibt (rate, kanaele) zurueck; nur 16 bit PCM."""
+    if _genau(resp, 12)[8:12] != b"WAVE":
+        raise ValueError("TTS-Antwort ist keine WAV")
+    rate = kanaele = None
+    while True:
+        kennung = _genau(resp, 8)
+        name, groesse = kennung[:4], struct.unpack("<I", kennung[4:])[0]
+        if name == b"data":
+            if rate is None:
+                raise ValueError("WAV ohne fmt vor data")
+            return rate, kanaele
+        inhalt = _genau(resp, groesse + (groesse & 1))
+        if name == b"fmt ":
+            fmt, kanaele, rate, _, _, bits = struct.unpack("<HHIIHH", inhalt[:16])
+            if fmt != 1 or bits != 16:
+                raise ValueError(f"WAV-Format {fmt}/{bits} bit nicht unterstuetzt")
+
+
 class SpeachesTts:
     def __init__(self, state: SpeachesState, base: str, model: str, voice: str) -> None:
         self.state = state
         self.base = base
         self.model = model
         self.voice = voice
+
+    def _parameter(self, text: str) -> tuple[str, str, float, str]:
+        from voice_assistant.state import voice_state
+        vm, vv, vsp = voice_state.get()
+        model = vm or self.model
+        voice = vv or self.voice
+        speed = vsp if vsp else 1.0
+        # Problemwoerter als [[Phoneme]] (services/aussprache.py). Erst HIER,
+        # nach clean_for_tts — das entfernt eckige Klammern.
+        return model, voice, speed, aussprache.fuer_piper(text, model)
+
+    def _anfrage(self, model: str, voice: str, speed: float, text: str,
+                 sample_rate: int | None = None) -> urllib.request.Request:
+        body = {"model": model, "input": text, "voice": voice,
+                "response_format": "wav", "speed": speed}
+        if sample_rate:
+            body["sample_rate"] = sample_rate
+        return urllib.request.Request(
+            f"{self.base}/v1/audio/speech",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+    def _modell_laden(self, model: str) -> None:
+        print(f"⚠️  Speaches TTS 404 für '{model}' — versuche zu laden …")
+        encoded = urllib.parse.quote(model, safe="")
+        load_req = urllib.request.Request(f"{self.base}/v1/models/{encoded}", data=b"", method="POST")
+        with urllib.request.urlopen(load_req, timeout=30):
+            pass
+
+    def synth_strom(self, text: str):
+        """Wie synth(), aber als Folge von PCM-Bloecken (48 kHz Stereo int16),
+        sobald sie ankommen — fuer audio/strom.py.
+
+        48 kHz wird beim Dienst bestellt (Speaches: ``sample_rate``), dann
+        ist hier nur noch Mono → Stereo zu tun. Liefert er eine andere Rate,
+        wird der ganze Satz am Ende auf einmal umgerechnet: Block fuer Block
+        gaebe an jeder Grenze einen Filter-Einschwinger.
+
+        Fehler werfen; der Aufrufer entscheidet ueber den Rueckfall (nur,
+        solange noch nichts geschrieben ist — sonst kaeme der Satzanfang
+        doppelt)."""
+        model, voice, speed, text = self._parameter(text)
+        try:
+            try:
+                resp = urllib.request.urlopen(
+                    self._anfrage(model, voice, speed, text, STROM_RATE), timeout=SPEACHES_TIMEOUT)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                self._modell_laden(model)
+                resp = urllib.request.urlopen(
+                    self._anfrage(model, voice, speed, text, STROM_RATE), timeout=SPEACHES_TIMEOUT)
+            with resp:
+                rate, kanaele = _wav_kopf_lesen(resp)
+                rahmen = 2 * kanaele
+                rest = b""
+                gesammelt: list[bytes] = []
+                lesen = getattr(resp, "read1", resp.read)
+                while True:
+                    block = lesen(16384)
+                    if not block:
+                        break
+                    block = rest + block
+                    n = len(block) - len(block) % rahmen
+                    rest = block[n:]
+                    if not n:
+                        continue
+                    if rate == STROM_RATE:
+                        yield zu_48k_stereo(block[:n], rate, kanaele)
+                    else:
+                        gesammelt.append(block[:n])
+                if gesammelt:
+                    yield zu_48k_stereo(b"".join(gesammelt), rate, kanaele)
+            self.state.mark_tts_ok()
+        except GeneratorExit:
+            raise
+        except Exception:
+            self.state.mark_tts_failed()
+            raise
 
     def _do_synth(self, model: str, voice: str, speed: float, text: str) -> bytes | None:
         """Führt einen einzelnen Speaches-Aufruf durch. Gibt Bytes oder None zurück.
@@ -313,14 +428,7 @@ class SpeachesTts:
            Stichprobe von eins, und ein Befund, der beim ersten Mal ausbleibt,
            kann beim zweiten da sein.
         """
-        from voice_assistant.state import voice_state
-        vm, vv, vsp = voice_state.get()
-        model = vm or self.model
-        voice = vv or self.voice
-        speed = vsp if vsp else 1.0
-        # Problemwoerter als [[Phoneme]] (services/aussprache.py). Erst HIER,
-        # nach clean_for_tts — das entfernt eckige Klammern.
-        text = aussprache.fuer_piper(text, model)
+        model, voice, speed, text = self._parameter(text)
 
         try:
             data = self._do_synth(model, voice, speed, text)
@@ -512,6 +620,19 @@ class ReplyRecorder:
             self._texts.append(text.strip())
         self._frames.append(frames)
 
+    def add_pcm(self, text: str, pcm: bytes, params: tuple[int, int, int]) -> None:
+        """Rohes PCM (nchannels, sampwidth, framerate) — fuer den Strom-Weg."""
+        if not self.active or not pcm:
+            return
+        if self._params is None:
+            self._params = params
+        elif params != self._params:
+            print("⚠️  last-reply buffer: Sample-Rate-Mismatch, Teil verworfen")
+            return
+        if text and text.strip():
+            self._texts.append(text.strip())
+        self._frames.append(pcm)
+
     def add_file(self, text: str, path: str) -> None:
         if not self.active:
             return
@@ -552,11 +673,15 @@ class ReplySpeaker:
         play_wav: PlayWav,
         leds,  # LedDirector
         tts_prefix: str = "",
+        strom_oeffnen: Callable | None = None,
     ) -> None:
         self.speaches = speaches
         self.play_wav = play_wav
         self.leds = leds
         self.tts_prefix = tts_prefix
+        # Senke.strom_oeffnen (audio/strom.py) oder None = Dateien wie bisher.
+        # Nur Brain-Antworten (ReplyStreamSession) gehen als Strom.
+        self.strom_oeffnen = strom_oeffnen
 
     def _play_speaches_sentence(self, sentence: str, recorder: ReplyRecorder | None = None) -> bool:
         audio_data = self.speaches.synth(sentence)
@@ -674,6 +799,78 @@ class ReplyStreamSession:
         self._led_set = False
         self._first = True
         self.rec = ReplyRecorder(active=restore_leds)
+        # Strom-Weg (ReplySpeaker.strom_oeffnen): EIN Strom traegt die Saetze
+        # hintereinander und haelt tts_lock, bis der Player fertig ist (die
+        # Senke ruft dann bei_ende, aus ihrem Thread). Schliesst er sich im
+        # Leerlauf (Brain denkt zwischen zwei Saetzen), oeffnet der naechste
+        # Satz einen neuen.
+        self._strom = None
+        self._strom_ende: threading.Event | None = None
+
+    def _strom_abwarten(self) -> None:
+        if self._strom_ende is not None:
+            self._strom_ende.wait()
+        self._strom = None
+        self._strom_ende = None
+
+    def _strom_holen(self):
+        """Laufender oder neuer Strom, belegt fuer einen Satz (beginnen()).
+        None = Datei-Weg; "stop" = Turn abgebrochen."""
+        if self._strom is not None and self._strom.beginnen():
+            return self._strom
+        self._strom_abwarten()
+        if self.sp.strom_oeffnen is None or not self.sp.speaches.state.tts_ok():
+            return None
+        tts_lock.acquire()
+        # Zweite Pruefung im Lock — siehe ReplySpeaker.speak().
+        if turn_stopped(self.turn):
+            tts_lock.release()
+            return "stop"
+        ende = threading.Event()
+
+        def bei_ende() -> None:
+            tts_lock.release()
+            ende.set()
+
+        strom = self.sp.strom_oeffnen(bei_ende)
+        if strom is None or not strom.beginnen():
+            if strom is None:
+                tts_lock.release()
+            else:
+                strom.abbrechen()
+                ende.wait()
+            return None
+        self._strom, self._strom_ende = strom, ende
+        return strom
+
+    def _satz_in_strom(self, clean: str, strom) -> None:
+        geschrieben: list[bytes] = []
+        try:
+            try:
+                for block in self.sp.speaches.synth_strom(clean):
+                    if turn_stopped(self.turn) or not strom.schreiben(block):
+                        return
+                    geschrieben.append(block)
+                return
+            finally:
+                # Ein Eintrag je Satz im Recorder (finalize zaehlt Eintraege).
+                self.rec.add_pcm(clean, b"".join(geschrieben), (2, 2, STROM_RATE))
+        except Exception as e:
+            print(f"⚠️  Speaches-Strom fehlgeschlagen: {e}")
+            if geschrieben:
+                return
+        print("⚠️  → Piper fallback (in den Strom)")
+        tmp_wav = piper_synth(clean)
+        if not tmp_wav:
+            return
+        try:
+            with wave.open(tmp_wav, "rb") as wf:
+                pcm = wf.readframes(wf.getnframes())
+                block = zu_48k_stereo(pcm, wf.getframerate(), wf.getnchannels())
+            if not turn_stopped(self.turn) and strom.schreiben(block):
+                self.rec.add_pcm(clean, block, (2, 2, STROM_RATE))
+        finally:
+            os.unlink(tmp_wav)
 
     def feed(self, sentence: str) -> None:
         from voice_assistant.services.leds import (
@@ -685,6 +882,24 @@ class ReplyStreamSession:
         clean = (self.sp.tts_prefix if self._first else "") + clean_for_tts(sentence)
         self._first = False
         if not clean.strip():
+            return
+        strom = self._strom_holen()
+        if strom == "stop":
+            return
+        if strom is not None:
+            try:
+                if not self._led_set:
+                    self.sp.leds.set_phase(
+                        LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW
+                    )
+                    self._led_set = True
+                if self.restore_leds:
+                    self.sp.leds.set_phase(LED_AUDIO_OUT)
+                print(f"🔊 Sentence (Strom): '{clean}'")
+                self._satz_in_strom(clean, strom)
+                self.spoke = True
+            finally:
+                strom.beenden()
             return
         with tts_lock:
             # Zweite Pruefung im Lock — siehe ReplySpeaker.speak(). Genau hier
@@ -725,6 +940,9 @@ class ReplyStreamSession:
     def end(self) -> bool:
         """Gibt True zurück, wenn mindestens ein Satz gesprochen wurde."""
         from voice_assistant.services.leds import LED_OPENCLAW
+        if self._strom is not None:
+            self._strom.schliessen()
+        self._strom_abwarten()
         self.rec.finalize()
         if not self.restore_leds:
             self.sp.leds.set_phase(LED_OPENCLAW)

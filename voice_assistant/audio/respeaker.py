@@ -30,6 +30,9 @@ from scipy.signal import resample_poly
 
 import aioesphomeapi
 
+from typing import Callable
+
+from voice_assistant.audio.strom import BYTES_JE_S, WiedergabeStrom
 from voice_assistant.config import CHUNK_SIZE, VOICE_DIR, RespeakerAudio
 
 log = logging.getLogger(__name__)
@@ -694,9 +697,22 @@ class RespeakerClient:
 # HTTP-Server für TTS-WAV-Dateien
 # ---------------------------------------------------------------------------
 
-def _make_http_handler(serve_dir: str):
+def _make_http_handler(serve_dir: str, stroeme: dict | None = None):
+    """stroeme: Pfad -> WiedergabeStrom. Ein Strom wird ohne Content-Length
+    ausgeliefert, das Schliessen der Verbindung ist sein Ende (audio/strom.py)."""
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            strom = (stroeme or {}).get(self.path.lstrip("/"))
+            if strom is not None:
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.end_headers()
+                # Haengt der Player, ohne die Verbindung zu schliessen, soll
+                # das Schreiben nicht ewig blockieren (sein eigener Leser gibt
+                # nach 30 s ohne Daten auf).
+                self.connection.settimeout(35)
+                strom.ausliefern(self.wfile)
+                return
             filepath = os.path.join(serve_dir, self.path.lstrip("/"))
             if not os.path.isfile(filepath):
                 self.send_response(404)
@@ -790,6 +806,7 @@ class RespeakerSink:
         # dieselbe Adresse. Eine eindeutige URL nimmt jede Frage nach
         # Zwischenspeichern und Entdoppeln aus dem Weg.
         self._folge = 0
+        self._stroeme: dict[str, WiedergabeStrom] = {}
         self._start_http_server()
         if cfg.mitschnitt:
             self._mitschnitt_aufraeumen()
@@ -831,8 +848,10 @@ class RespeakerSink:
             log.warning("Mitschnitt leer — kommt der zweite Kanal an? (%s)", basis)
 
     def _start_http_server(self) -> None:
-        handler = _make_http_handler(self._serve_dir)
-        srv = http.server.HTTPServer(("", self._cfg.http_port), handler)
+        handler = _make_http_handler(self._serve_dir, self._stroeme)
+        # Threading: ein Strom haelt seine Anfrage offen, solange er laeuft.
+        srv = http.server.ThreadingHTTPServer(("", self._cfg.http_port), handler)
+        srv.daemon_threads = True
         threading.Thread(target=srv.serve_forever, daemon=True, name="respeaker-http").start()
         log.info("TTS HTTP server on :%d (%s)", self._cfg.http_port, self._serve_dir)
 
@@ -1008,6 +1027,69 @@ class RespeakerSink:
             log.info("Keine Mic-Session nach der Wiedergabe → Start-Button")
             client.press_start_button()
 
+    # So lange darf der Player brauchen, um einen Strom abzuholen. Gemessen
+    # 2026-11-08: 0,02-0,05 s nach dem Befehl.
+    _STROM_ABHOLEN_S = 3.0
+
+    def strom_oeffnen(self, bei_ende: Callable[[], None]) -> WiedergabeStrom | None:
+        """Wiedergabe als Strom starten (audio/strom.py). None = geht nicht
+        (keine Verbindung, Satellit, abgebrochen) — der Aufrufer nimmt dann
+        den Weg ueber Dateien.
+
+        bei_ende wird genau einmal gerufen, wenn der Player fertig ist (oder
+        der Strom abbrach) — aus einem eigenen Thread."""
+        client = self._client
+        if self._cfg.satellit or client._loop is None or client._api is None:
+            return None
+        with self._lock:
+            if self._stopped:
+                return None
+            self._folge += 1
+            folge = self._folge
+        name = f"strom_{os.getpid()}_{folge}.wav"
+        strom = WiedergabeStrom()
+        with self._lock:
+            self._stroeme[name] = strom
+        url = f"http://{self._pi_ip}:{self._cfg.http_port}/{name}"
+        t_start = time.monotonic()
+        if not client.play_url(url):
+            with self._lock:
+                self._stroeme.pop(name, None)
+            return None
+        log.info("Strom → %s", url)
+        threading.Thread(target=self._strom_abwarten, args=(name, strom, t_start, bei_ende),
+                         daemon=True, name="respeaker-strom").start()
+        return strom
+
+    def _strom_abwarten(self, name: str, strom: WiedergabeStrom, t_start: float,
+                        bei_ende: Callable[[], None]) -> None:
+        try:
+            if not strom.abgeholt.wait(self._STROM_ABHOLEN_S):
+                log.warning("Strom: Player hat %s nicht abgeholt", name)
+                strom.abbrechen()
+            else:
+                strom.fertig.wait()
+            ende = strom.ende_geschaetzt()
+            if not strom.abgebrochen and ende is not None:
+                self._sleep_unless_stopped(ende - time.monotonic())
+                self._client.wait_player(busy=False, timeout=self._END_NACHFRIST)
+            ueberhang = (time.monotonic() - t_start - strom.gesendet_s)
+            log.info("Strom fertig: %.1fs Audio, %.1fs gesendet, %.2fs ueber gesendet%s",
+                     strom.audio_bytes / BYTES_JE_S, strom.gesendet_s, ueberhang,
+                     " (abgebrochen)" if strom.abgebrochen else "")
+        except Exception as exc:
+            log.error("Strom: %s", exc)
+        finally:
+            with self._lock:
+                self._stroeme.pop(name, None)
+            try:
+                bei_ende()
+            except Exception as exc:
+                log.error("Strom bei_ende: %s", exc)
+            if not self._client.in_session():
+                log.info("Keine Mic-Session nach dem Strom → Start-Button")
+                self._client.press_start_button()
+
     # Wie lange auf das Ende einer Satelliten-Ansage gewartet wird, ueber die
     # Dateilaenge hinaus. Gemessen 0,4 s (Holen + Decoder); WLAN am Handy
     # schwankt mehr als am ESP.
@@ -1051,6 +1133,9 @@ class RespeakerSink:
     def stop(self) -> None:
         with self._lock:
             self._stopped = True
+            stroeme = list(self._stroeme.values())
+        for strom in stroeme:
+            strom.abbrechen()
         self._client.stop_playback()
 
     def resume(self) -> None:
