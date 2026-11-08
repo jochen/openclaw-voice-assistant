@@ -129,6 +129,18 @@ def entscheid(urteil: Urteil, frist_um: bool) -> str:
     return VERWORFEN if v else DURCH
 
 
+def woerter_nach_wakewort(job: dict) -> int | None:
+    """Wörter in Qwens Text des Wake-Clips hinter dem Wort mit dem Anfang.
+
+    None ohne Anfangs-Maß. Gebraucht für das verspätete "Ja?": stehen hier
+    schon Wörter, war der Befehl gesagt, bevor der Trigger feuerte.
+    """
+    if "anfang_nach" not in job:
+        return None
+    woerter = (job.get("text") or "").split()
+    return max(0, len(woerter) - job["anfang_nach"] - 1)
+
+
 class WakePruefung:
     """Ein Thread, eine Warteschlange; jeder Trigger wird eine Zeile."""
 

@@ -119,8 +119,9 @@ from voice_assistant.nearmiss_shadow import NearMissShadow
 from voice_assistant.wake_pruefung import (
     SCHRANKE_FRIST_SEC as _SCHRANKE_FRIST, TIMEOUT_SEC as _PRUEF_TIMEOUT,
     VERWORFEN as _SCHRANKE_VERWORFEN, WARTEN as _SCHRANKE_WARTEN,
-    WakePruefung, entscheid as _schranke_entscheid,
+    WakePruefung, entscheid as _schranke_entscheid, woerter_nach_wakewort,
 )
+from voice_assistant.ack_echo import ohne_ack_echo
 from voice_assistant.rewind import RewindBuffer
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
@@ -153,6 +154,13 @@ _FOLLOWUP_MIN_VAD = 0.20
 # nach Hardware-Wechsel neu messen. Satelliten sind ausgenommen (andere Skala).
 _FOLLOWUP_LEISE_SPITZE = 2500
 _ACK_DELAY_SEC = 0.4
+# Verspätetes "Ja?" (2026-11-08): stehen in Qwens Text des Wake-Clips so viele
+# Wörter hinter dem Wakewort, war der Befehl schon gesagt, als der Trigger
+# feuerte — kein "Ja?", sondern Kommando-Nachlauf. Im Archiv 7 von 7 echten
+# Rufen mit gespieltem "Ja?" und ≥ 2 Wörtern ("Gastor, gut Nacht.", "…
+# schaltet das Tischlicht aus."). Braucht die Wake-Schranke (sonst kein Text
+# rechtzeitig). Erfindet Qwen Wörter, fängt _ist_nur_wakewort den Turn.
+_BEFEHL_IM_CLIP_WOERTER = 2
 # Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
 # straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
 # typisch 1–2 Chunks (~0,16 s) — 0,5 s liegt sicher darüber und ist von jedem
@@ -1526,6 +1534,9 @@ def run() -> None:
     schranke_t0 = 0.0
     schranke_event: dict = {}
     schranke_chunks: list = []
+    turn_wake_nach: int | None = None   # Wörter hinter dem Wakewort im Wake-Clip
+    ack_gespielt = False                # "Ja?" lief in der laufenden Aufnahme
+    aufnahme_ack_echo = False           # ... in der Aufnahme, deren STT gerade läuft
     # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
     # stehen (anders als trigger_audio_id), damit der AUSGANG des Turns noch auf
     # den Trigger bezogen protokolliert werden kann. Siehe _log_outcome().
@@ -1961,6 +1972,8 @@ def run() -> None:
                             turn_frames_speech = 0
                             turn_frames_total = 0
                             ack_pending = True
+                            ack_gespielt = False
+                            turn_wake_nach = None
                             ack_deadline = now + _ACK_DELAY_SEC
                             ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                             ack_suppress = False
@@ -2114,6 +2127,8 @@ def run() -> None:
                         turn_frames_speech = 0
                         turn_frames_total = 0
                         ack_pending = True
+                        ack_gespielt = False
+                        turn_wake_nach = None
                         ack_deadline = now + _ACK_DELAY_SEC
                         ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
                         ack_suppress = False
@@ -2159,6 +2174,7 @@ def run() -> None:
                             "wartezeit_s": round(now - schranke_t0, 2),
                         }
                         schranke_urteil = None
+                        turn_wake_nach = woerter_nach_wakewort(_sj)
                         _sid, _sb = trigger_audio_id, trigger_audio_bundle
                         if _se == _SCHRANKE_VERWORFEN:
                             nm_event = {
@@ -2201,6 +2217,9 @@ def run() -> None:
                 # den Puffer, der nächste Loop-Durchlauf holt es ab. KEIN flush.
                 if ack_pending and now >= ack_deadline and not schranke_wartet:
                     ack_pending = False
+                    befehl_im_clip = (not speech_detected and not ack_suppress
+                                      and turn_wake_nach is not None
+                                      and turn_wake_nach >= _BEFEHL_IM_CLIP_WOERTER)
                     # Diese Entscheidung ist die einzige verlässliche Auskunft
                     # darüber, ob durchgesprochen wurde — aus dem Wake-Clip
                     # allein ist sie NICHT rekonstruierbar (er endet, bevor das
@@ -2211,7 +2230,8 @@ def run() -> None:
                     _log_wake_event({
                         "result": "ack",
                         "bundle": current_wakeword.bundle,
-                        "ein_satz": speech_detected,
+                        "ein_satz": speech_detected or befehl_im_clip,
+                        **({"befehl_im_wakeclip": turn_wake_nach} if befehl_im_clip else {}),
                         "audio": (f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                                   if trigger_audio_id else None),
                     })
@@ -2226,11 +2246,27 @@ def run() -> None:
                         # so ein Turn endet nach Sekunden statt am Deckel.
                         turn_ein_satz = True
                         print(f"[{now:.1f}s] ⚡ Ein-Satz erkannt — kein Ja?")
+                    elif befehl_im_clip:
+                        # Der Befehl steckt im Pre-Roll, danach kommt nichts
+                        # mehr. Ohne "Ja?" gäbe es keine Sprache für den VAD,
+                        # die Aufnahme liefe bis zum Deckel: deshalb zählt der
+                        # Pre-Roll hier als Sprache, und es gilt der
+                        # Kommando-Nachlauf. Spricht der Nutzer weiter, hält
+                        # der VAD die Aufnahme wie gewohnt offen.
+                        turn_ein_satz = True
+                        speech_detected = True
+                        silence_counter = 0
+                        turn_mode = "kommando"
+                        turn_silence_limit = _command_silence_limit
+                        turn_max_sec = profile.command_max_seconds
+                        print(f"[{now:.1f}s] ⚡ Befehl schon im Wake-Clip "
+                              f"({turn_wake_nach} Wörter nach dem Wakewort) — kein Ja?")
                     elif ack_suppress:
                         print(f"[{now:.1f}s] 🔇 Barge-in — kein Ja?")
                     elif os.path.exists(ack_path):
                         print(f"[{now:.1f}s] 🔊 Playing acknowledgement...")
                         audio_sink.play_wav(ack_path)
+                        ack_gespielt = True
 
                 # Kommando-Modus wird NICHT schon von der Ein-Satz-Einstufung
                 # scharf, sondern erst, wenn wirklich gesprochen wurde. Grund:
@@ -2289,6 +2325,7 @@ def run() -> None:
                         f"{dur:.1f}s audio (davon {pre_roll_sec:.1f}s Pre-Roll)"
                     )
                     ack_pending = False  # egal ob gespielt oder nicht — Turn ist vorbei
+                    aufnahme_ack_echo, ack_gespielt = ack_gespielt, False
                     endpoint_meta = {
                         "phase": "recording",
                         "reason": reason,
@@ -2369,6 +2406,19 @@ def run() -> None:
                     bargein_round = 0
                     war_bargein_still = bargein_still
                     bargein_still = False
+                    # Eigenes "Ja?" im Transkript (voice_assistant/ack_echo.py):
+                    # nur Erst-Turn, nur wenn es in dieser Aufnahme lief.
+                    ack_echo_vorher = None
+                    if (aufnahme_ack_echo and followup_round == 0 and not unklar_round
+                            and not war_bargein and pending_confirm is None
+                            and pending_timer is None):
+                        _ohne = ohne_ack_echo(text)
+                        if _ohne != text:
+                            print(f"[{now:.1f}s] 🔁 Eigenes Ja? im Transkript: '{text}' → '{_ohne}'")
+                            _log_wake_event({"result": "ack_echo", "audio": turn_wake_audio,
+                                             "vorher": text, "nachher": _ohne})
+                            ack_echo_vorher, text = text, _ohne
+                    aufnahme_ack_echo = False
                     leise_verdict = None
                     if followup_leise:
                         # Nur bei leiser Aufnahme auf den Sprecher warten (~50 ms),
@@ -2397,6 +2447,23 @@ def run() -> None:
                         followup_round = 0
                         state = STATE_LISTENING
                         print(f"[{now:.1f}s] 🎤 Ready – waiting for wakeword...")
+                    elif ack_echo_vorher is not None and not text:
+                        # Nur das eigene "Ja?" gehört: nichts an den Brain.
+                        # Wer gerufen hat und schweigt, ruft noch einmal.
+                        print(f"[{now:.1f}s] 🔁 Nur das eigene Ja? gehört → nichts an den Brain")
+                        _log_outcome("nur_ack_echo", transcript=ack_echo_vorher)
+                        _flush_endpoint(ack_echo_vorher, ausgang="nur_ack_echo")
+                        try:
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        state = STATE_LISTENING
                     elif pending_confirm is not None:
                         # Ja/Nein-Antwort auf eine Aktuator-Rückfrage (Handshake).
                         try:
@@ -3472,6 +3539,8 @@ def run() -> None:
                         unklar_round = 0
                         bargein_round = 1
                         ack_pending = True
+                        ack_gespielt = False
+                        turn_wake_nach = None
                         ack_deadline = now + _ACK_DELAY_SEC
                         ack_path = ""
                         ack_suppress = True
