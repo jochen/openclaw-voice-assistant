@@ -146,11 +146,16 @@ export default definePluginEntry({
         const langLabel = { de: "deutsch", en: "englisch", all: "alle Sprachen" }[appliedLang] ?? appliedLang;
 
         const lines = [];
-        lines.push(`Sprachfilter: ${langLabel}.`);
+        const eigene = available.some((v) => v.beschreibung !== undefined);
+        // Eigene Stimmen sprechen jede Sprache, der Filter greift dort nicht.
+        if (!eigene) lines.push(`Sprachfilter: ${langLabel}.`);
         if (available.length) {
           lines.push("Verfügbare Stimmen:");
           for (const v of available) {
-            lines.push(`- ${v.voice} (Modell ${v.model}, Sprache ${v.language})`);
+            // Eigene Stimmen (CosyVoice) tragen eine Beschreibung, Piper-Stimmen nicht.
+            lines.push(v.beschreibung
+              ? `- ${v.voice}: ${v.beschreibung}`
+              : `- ${v.voice} (Modell ${v.model}, Sprache ${v.language})`);
           }
         } else {
           lines.push("Keine Stimmen verfügbar.");
@@ -181,7 +186,7 @@ export default definePluginEntry({
         additionalProperties: false,
         required: ["voice"],
         properties: {
-          voice: { type: "string", description: "Stimmenname aus voice_list_voices (z.B. 'kerstin')." },
+          voice: { type: "string", description: "Stimmenname aus voice_list_voices (genau wie dort geschrieben)." },
           model: { type: "string", description: "Optional: exakte Modell-ID, falls eine Stimme in mehreren Modellen existiert." },
           speed: { type: "number", description: "Optional: Sprechtempo (1.0 normal, >1 schneller, <1 langsamer)." },
           for_speaker: { type: "string", description: "Optional: erkannter Sprechername, für den diese Stimme dauerhaft gemerkt werden soll." },
