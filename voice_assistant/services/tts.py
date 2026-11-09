@@ -729,7 +729,13 @@ class ReplySpeaker:
         return [k for k in kandidaten if k.state.tts_ok()]
 
     def _play_speaches_sentence(self, sentence: str, recorder: ReplyRecorder | None = None) -> bool:
-        audio_data = self.speaches.synth(sentence)
+        # Datei-Weg (Satelliten, Senke ohne Strom): erst der Antwort-Dienst,
+        # wenn er dran ist, dann speaches — dieselbe Reihenfolge wie im Strom.
+        audio_data = None
+        for dienst in self.strom_kandidaten():
+            audio_data = dienst.synth(sentence)
+            if audio_data:
+                break
         if not audio_data:
             return False
         if recorder:
@@ -761,6 +767,22 @@ class ReplySpeaker:
             LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION, LED_OPENCLAW,
         )
         if turn_stopped(turn):
+            return
+        if self.strom_oeffnen is not None and self.antwort_tts is not None:
+            # Bestaetigung, Quittungen, Ansagen: derselbe Weg wie die Antworten
+            # (Strom, Antwort-Dienst zuerst), seit 2026-11-09. Die Sitzung
+            # nimmt tts_lock selbst und prueft den Abbruch im Lock; kann die
+            # Senke keinen Strom (Satellit), spielt sie Dateien.
+            clean = self.tts_prefix + clean_for_tts(text)
+            if not clean.strip():
+                return
+            print(f"🔊 Speaking: '{clean}'")
+            sitz = self.stream_session(restore_leds=restore_leds, turn=turn)
+            for satz in split_into_sentences(clean):
+                if turn_stopped(turn):
+                    break
+                sitz.feed(satz, bereinigt=True)
+            sitz.end()
             return
         with tts_lock:
             # Zweite Pruefung INNERHALB des Locks, und die ist der eigentliche
@@ -920,14 +942,19 @@ class ReplyStreamSession:
         finally:
             os.unlink(tmp_wav)
 
-    def feed(self, sentence: str) -> None:
+    def feed(self, sentence: str, bereinigt: bool = False) -> None:
+        """bereinigt: Satz kommt aus speak(), schon durch clean_for_tts und mit
+        tts_prefix — nicht noch einmal."""
         from voice_assistant.services.leds import (
             LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION,
         )
         if turn_stopped(self.turn):
             return
         # tts_prefix nur dem ersten Satz voranstellen (wie speak(): prefix ungecleant)
-        clean = (self.sp.tts_prefix if self._first else "") + clean_for_tts(sentence)
+        if bereinigt:
+            clean = sentence
+        else:
+            clean = (self.sp.tts_prefix if self._first else "") + clean_for_tts(sentence)
         self._first = False
         if not clean.strip():
             return
@@ -1011,9 +1038,13 @@ class ThinkingWorker:
         min_quiet: float = 10.0,
         max_quiet: float = 30.0,
         interval: float = 25.0,
+        fest=None,  # Callable[[str], str | None]: gespeicherte Fassung (services/stimmen.py)
     ) -> None:
         self.play_wav = play_wav
         self._phrases = phrases
+        # Feste Sätze in der Stimme des Antwort-Dienstes (Pfad im Cache, nicht
+        # löschen). None/kein Treffer → wie bisher Speaches, dann Piper.
+        self.fest = fest
         # Optionaler Speaches-TTS: Heartbeat-Phrasen folgen der aktiven Stimme.
         # Fällt auf lokalen Piper zurück, wenn None oder Speaches gerade fehlschlägt.
         self.speaches = speaches
@@ -1031,8 +1062,17 @@ class ThinkingWorker:
     def _render(self, phrase: str) -> str | None:
         """Rendert die Heartbeat-Phrase als WAV-Datei und gibt den Pfad zurück.
 
-        Bevorzugt Speaches (aktive Stimme); bei Fehler/None → Piper-Fallback.
+        Bevorzugt die gespeicherte Fassung des Antwort-Dienstes, dann Speaches
+        (aktive Stimme); bei Fehler/None → Piper-Fallback.
         """
+        if self.fest is not None:
+            gespeichert = self.fest(phrase)
+            if gespeichert:
+                import shutil
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                    pass
+                shutil.copyfile(gespeichert, f.name)
+                return f.name
         if self.speaches is not None and self.speaches.state.tts_ok():
             audio = self.speaches.synth(phrase)
             if audio:

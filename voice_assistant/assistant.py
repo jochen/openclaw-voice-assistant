@@ -37,6 +37,7 @@ from voice_assistant.config import (
     OPENCLAW_OVERALL_TIMEOUT,
     PIPER_OUT,
     STIMMEN_DIR,
+    STIMMEN_CACHE_DIR,
     RATE_OW,
     RECORDING_MAX_SEC,
     SILENCE_CHUNKS_LIMIT,
@@ -86,7 +87,7 @@ from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import (
     LlamaCppAsrStt, LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
 )
-from voice_assistant.services.stimmen import AntwortTts, StimmenLager
+from voice_assistant.services.stimmen import AntwortTts, StimmenLager, wav_dauer
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -177,6 +178,10 @@ _BEFEHL_IM_CLIP_WOERTER = 2
 # das Echo aus dem Audio schneiden (Qwen erfindet dann Sätze, echte Befehle
 # gingen kaputt) und nur 10 s warten (14 Befehle im Pre-Roll verloren).
 _ACK_ECHO_SEC = 1.0
+# Seit 2026-11-09 kann das "Ja?" aus dem Antwort-Dienst kommen und ist dann
+# länger als Pipers 0,3 s. Das Fenster ist mindestens _ACK_ECHO_SEC und
+# reicht bis Ende des "Ja?" plus diesen Nachhall (0,3 + 0,7 = die alte 1 s).
+_ACK_ECHO_NACH_SEC = 0.7
 # Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
 # straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
 # typisch 1–2 Chunks (~0,16 s) — 0,5 s liegt sicher darüber und ist von jedem
@@ -1049,8 +1054,20 @@ def run() -> None:
     # Callback: bei jedem erfolgreichen Stimmwechsel die "Ja?"-Quittung
     # (PIPER_OUT) in der nun aktiven Stimme neu rendern. Minimale Kopplung —
     # Quittungstext + SpeachesTts stecken hier im Closure, nicht im Controller.
+    # Antwort-Dienst (CosyVoice), weiter unten gesetzt; hier ein Halter, weil
+    # der Stimmwechsel-Hook schon vorher gebaut wird.
+    _antwort = {"tts": None}
+
+    def _feste_saetze() -> list[str]:
+        saetze = [w.ack for w in profile.wakewords] + list(profile.locale.thinking_phrases)
+        if profile.barge_in.enabled and profile.barge_in.ack:
+            saetze.append(profile.barge_in.ack)
+        return [t for t in dict.fromkeys(saetze) if t]
+
     def _rerender_ack() -> None:
         rerender_ja_speaches(speaches_tts, profile.locale.wakeword_ack)
+        if _antwort["tts"] is not None:
+            _antwort["tts"].vorbereiten(_feste_saetze())
 
     # Eigene Stimmen des Antwort-Dienstes (services/stimmen.py): nur, wenn die
     # Standard-Stimme des Profils dort liegt — sonst alter Weg (Stimme beim Dienst).
@@ -1236,8 +1253,12 @@ def run() -> None:
     antwort_tts = None
     if profile.tts_strom and profile.antwort_tts_url:
         if stimmen_lager is not None:
-            antwort_tts = AntwortTts(stimmen_lager, SpeachesState(), timeout=8)
-            stimmen_lager.vorab_hochladen(profile.antwort_tts_voice)
+            antwort_tts = AntwortTts(stimmen_lager, SpeachesState(), timeout=8,
+                                     cache=STIMMEN_CACHE_DIR)
+            _antwort["tts"] = antwort_tts
+            # Hochladen und die festen Sätze rechnen, beides im Hintergrund
+            # (vorbereiten lädt beim ersten 404 selbst hoch).
+            antwort_tts.vorbereiten(_feste_saetze())
         else:
             # Stimme liegt nur beim Dienst (alter Weg, vor dem Lager)
             antwort_tts = SpeachesTts(
@@ -1253,8 +1274,19 @@ def run() -> None:
     if profile.tts_strom:
         print("🔊 TTS als Strom: " + ("an" if speaker.strom_oeffnen else "Senke kann keinen Strom, Dateien wie bisher")
               + (f", Antworten über {profile.antwort_tts_url} ({profile.antwort_tts_voice})" if antwort_tts else ""))
+    def _fest(text: str) -> str | None:
+        """Gespeicherte Fassung in der Stimme des Antwort-Dienstes, solange der
+        dran ist (sonst None → Piper wie bisher)."""
+        if antwort_tts is not None and antwort_tts in speaker.strom_kandidaten():
+            return antwort_tts.feste_datei(text, nur_vorhanden=True)
+        return None
+
+    def _ack_wahl(ww) -> str:
+        return _fest(ww.ack) or ack_paths.get(ww.bundle, PIPER_OUT)
+
     thinking = ThinkingWorker(
-        audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts
+        audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts,
+        fest=_fest,
     )
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
     if profile.sprecher_verifikation:
@@ -1586,6 +1618,7 @@ def run() -> None:
     ack_gespielt = False                # "Ja?" lief in der laufenden Aufnahme
     aufnahme_ack_echo = False           # ... in der Aufnahme, deren STT gerade läuft
     ack_idx = 0                         # Chunk-Index der Aufnahme beim "Ja?"
+    ack_echo_s = _ACK_ECHO_SEC          # Echo-Fenster des laufenden "Ja?" (Länge + Nachhall)
     # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
     # stehen (anders als trigger_audio_id), damit der AUSGANG des Turns noch auf
     # den Trigger bezogen protokolliert werden kann. Siehe _log_outcome().
@@ -2024,7 +2057,7 @@ def run() -> None:
                             ack_gespielt = False
                             turn_wake_nach = None
                             ack_deadline = now + _ACK_DELAY_SEC
-                            ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                            ack_path = _ack_wahl(current_wakeword)
                             ack_suppress = False
                     elif wake_hits >= 1:
                         # Wakeword-Name mitloggen: current_wakeword wurde von den
@@ -2179,7 +2212,7 @@ def run() -> None:
                         ack_gespielt = False
                         turn_wake_nach = None
                         ack_deadline = now + _ACK_DELAY_SEC
-                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                        ack_path = _ack_wahl(current_wakeword)
                         ack_suppress = False
                     wake_hits = 0
                     wake_peak = 0.0
@@ -2193,7 +2226,7 @@ def run() -> None:
                     vad, audio_16, _vad_rms_min
                 )
                 # Echo des eigenen "Ja?" ist keine Sprache (_ACK_ECHO_SEC).
-                if ack_gespielt and (len(recorded_chunks) - ack_idx) * _chunk_sec <= _ACK_ECHO_SEC:
+                if ack_gespielt and (len(recorded_chunks) - ack_idx) * _chunk_sec <= ack_echo_s:
                     _is_speech = False
                 turn_rms.append(_rms)
                 turn_frames_speech += _sf
@@ -2318,6 +2351,10 @@ def run() -> None:
                     elif os.path.exists(ack_path):
                         print(f"[{now:.1f}s] 🔊 Playing acknowledgement...")
                         ack_idx = len(recorded_chunks)
+                        try:
+                            ack_echo_s = max(_ACK_ECHO_SEC, wav_dauer(ack_path) + _ACK_ECHO_NACH_SEC)
+                        except Exception:
+                            ack_echo_s = _ACK_ECHO_SEC
                         audio_sink.play_wav(ack_path)
                         ack_gespielt = True
 
@@ -2352,7 +2389,7 @@ def run() -> None:
                 # _ACK_ECHO_SEC): nach einer Nachlauflänge Schluss.
                 kein_start = (ack_gespielt and not speech_detected
                               and (len(recorded_chunks) - ack_idx) * _chunk_sec
-                              > _ACK_ECHO_SEC + turn_silence_limit * _chunk_sec)
+                              > ack_echo_s + turn_silence_limit * _chunk_sec)
                 timeout = timeout or kein_start
                 stop = speech_detected and silence_counter >= turn_silence_limit
                 # Reiner Abbruch: nach einem Barge-in kommt eine Nachlauf-Laenge

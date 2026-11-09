@@ -1492,6 +1492,8 @@ SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
 # Eigene Stimmen des Antwort-Dienstes (services/stimmen.py), privat.
 STIMMEN_DIR = os.path.join(VOICE_DIR, "stimmen")
+# Gerechnete feste Sätze je Stimme („Ja?“, Denk-Phrasen), abgeleitet, nicht privat.
+STIMMEN_CACHE_DIR = os.path.join(VOICE_DIR, "stimmen_cache")
 
 # Wer zuletzt per Stimme gesprochen hat — geschrieben nach JEDEM Voice-Turn,
 # gelesen von Werkzeugen AUSSERHALB dieses Repos (siehe SPEAKER_STATE.md), die

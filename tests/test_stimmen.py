@@ -15,7 +15,9 @@ from tests.test_tts_strom import FakeLeds, FakeSenke, FakeTts, _ton, _wav_strom 
 from voice_assistant.audio.strom import zu_48k_stereo  # noqa: E402
 from voice_assistant.services import tts  # noqa: E402
 from voice_assistant.services.speaches import SpeachesState  # noqa: E402
-from voice_assistant.services.stimmen import AntwortTts, StimmenLager  # noqa: E402
+from voice_assistant.services.stimmen import (  # noqa: E402
+    AntwortTts, StimmenLager, _sprache_schneiden, wav_dauer,
+)
 from voice_assistant.services.voice_control import VoiceController  # noqa: E402
 from voice_assistant.state import voice_state  # noqa: E402
 
@@ -35,7 +37,13 @@ class _Cosy(http.server.BaseHTTPRequestHandler):
         _Cosy.anfragen.append(body)
         if body["voice"] not in _Cosy.stimmen:
             return self._antwort(404, b'{"error": "unbekannt"}', "application/json")
-        self._antwort(200, _wav_strom(_ton(0.1), 48000), "audio/wav")
+        if body.get("sample_rate") == 48000:
+            return self._antwort(200, _wav_strom(_ton(0.1), 48000), "audio/wav")
+        # am Stueck, 24 kHz: Stille, Ton, Stille (wie CosyVoice bei "Ja?")
+        n = len(_Cosy.anfragen)
+        ton = _ton(0.3 + 0.1 * (n % 3), 24000)
+        pcm = bytes(24000) + ton + bytes(12000)
+        self._antwort(200, _wav_strom(pcm, 24000), "audio/wav")
 
     def _antwort(self, code, daten, typ):
         self.send_response(code)
@@ -175,6 +183,103 @@ class VoiceControllerTest(_Basis):
 
     def test_wirksam_meldet_die_sprechende_stimme(self):
         self.assertEqual(self._vc().wirksam()[:2], ("cosyvoice3", "gaston2"))
+
+
+class FesteSaetzeTest(_Basis):
+    def setUp(self):
+        super().setUp()
+        self.cache = tempfile.mkdtemp()
+        self.t = AntwortTts(self.lager, SpeachesState(), cache=self.cache)
+
+    def tearDown(self):
+        shutil.rmtree(self.cache)
+        super().tearDown()
+
+    def test_stille_wird_abgeschnitten(self):
+        import numpy as np
+        pcm = np.concatenate([np.zeros(24000, np.int16),
+                              np.frombuffer(_ton(0.4, 24000), np.int16), np.zeros(12000, np.int16)])
+        kern = _sprache_schneiden(pcm, 24000)
+        self.assertAlmostEqual(len(kern) / 24000, 0.4 + 2 * 0.04, delta=0.03)
+
+    def test_fester_satz_aus_mehreren_versuchen_geschnitten_und_gespeichert(self):
+        pfad = self.t.feste_datei("Ja?")
+        self.assertTrue(pfad.startswith(self.cache))
+        self.assertLess(wav_dauer(pfad), 0.7)          # Stille ist weg
+        self.assertEqual(len(_Cosy.anfragen), 5 + 1)   # 404 + Upload + 5 Versuche
+        n = len(_Cosy.anfragen)
+        self.assertEqual(self.t.feste_datei("Ja?"), pfad)
+        self.assertEqual(len(_Cosy.anfragen), n, "zweites Mal aus dem Cache")
+
+    def test_andere_stimme_eigener_eintrag(self):
+        a = self.t.feste_datei("Ja?")
+        voice_state.set(model="cosyvoice3", voice="thorsten", speed=1.0)
+        b = self.t.feste_datei("Ja?")
+        self.assertNotEqual(os.path.dirname(a), os.path.dirname(b))
+
+    def test_nur_vorhanden_rechnet_im_hintergrund(self):
+        self.assertIsNone(self.t.feste_datei("Okay.", nur_vorhanden=True))
+        for _ in range(100):
+            if self.t.feste_datei("Okay.", nur_vorhanden=True):
+                break
+            threading.Event().wait(0.05)
+        self.assertIsNotNone(self.t.feste_datei("Okay.", nur_vorhanden=True))
+
+    def test_synth_am_stueck_fuer_den_datei_weg(self):
+        daten = self.t.synth("Ein ganzer Satz.")
+        self.assertEqual(daten[:4], b"RIFF")
+        self.assertTrue(_Cosy.anfragen[-1]["voice"].startswith("haus/gaston2-"))
+        self.assertNotIn("sample_rate", _Cosy.anfragen[-1])
+
+
+class SprechenUeberStromTest(_Basis):
+    def test_speak_geht_ueber_den_strom_zum_antwort_dienst(self):
+        from voice_assistant.state import tts_lock
+        cosy = FakeTts(model="cosyvoice3")
+        lokal = FakeTts(model="speaches-ai/piper-de_DE-thorsten-medium", voice="de_DE-thorsten-medium")
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(), tts_prefix="hm ",
+                              strom_oeffnen=senke.strom_oeffnen, antwort_tts=cosy)
+        sp.speak("Ich habe verstanden: Licht an. Gleich.", restore_leds=False)
+        self.assertEqual(cosy.saetze, ["hm Ich habe verstanden: Licht an.", "Gleich."])
+        self.assertEqual((len(senke.stroeme), senke.dateien, lokal.saetze), (1, [], []))
+        self.assertFalse(tts_lock.locked())
+
+    def test_ohne_antwort_dienst_bleibt_speak_beim_datei_weg(self):
+        lokal = FakeTts()
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(), strom_oeffnen=senke.strom_oeffnen)
+        lokal.state.mark_tts_failed()   # Speaches weg -> Piper (Datei)
+        orig = tts.piper_synth
+        tts.piper_synth = lambda text, *a, **k: None
+        try:
+            sp.speak("Hallo.")
+        finally:
+            tts.piper_synth = orig
+        self.assertEqual(senke.stroeme, [])
+
+    def test_datei_weg_nimmt_erst_den_antwort_dienst(self):
+        class Dienst(FakeTts):
+            def synth(self, text):
+                self.saetze.append(text)
+                return b"RIFF" + bytes(200)
+        cosy, lokal = Dienst(model="cosyvoice3"), Dienst(
+            model="speaches-ai/piper-de_DE-thorsten-medium", voice="de_DE-thorsten-medium")
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(), antwort_tts=cosy)
+        self.assertTrue(sp._play_speaches_sentence("Satz."))
+        self.assertEqual((cosy.saetze, lokal.saetze), (["Satz."], []))
+
+    def test_denk_phrase_aus_dem_cache(self):
+        quelle = os.path.join(self.ordner, "fest.wav")
+        with open(quelle, "wb") as f:
+            f.write(b"RIFF-fest")
+        w = tts.ThinkingWorker(lambda p: None, ["Moment."], fest=lambda t: quelle)
+        pfad = w._render("Moment.")
+        self.assertNotEqual(pfad, quelle, "Kopie, das Original im Cache bleibt")
+        with open(pfad, "rb") as f:
+            self.assertEqual(f.read(), b"RIFF-fest")
+        os.unlink(pfad)
 
 
 if __name__ == "__main__":
