@@ -986,8 +986,18 @@ Dienst bekommt sie per `POST /v1/voices`, wenn er 404 sagt, Kennung
 Profil galt als eigene Wahl und übersprang CosyVoice still — jetzt steht je
 Satz `↳ modell/stimme` im Journal. Speicher des Dienstes am 2026-11-09 von
 9,5 auf 5,5 GB (TensorRT-Engine mit Obergrenze 2000 statt 3000 Frames, vLLM
-0,07 mit `max_model_len` 4096; Messung im MemPalace). Bestätigung, „Ja?“ und
-Quittungen sprechen noch Piper (Schritt 2). Tests: `tests/test_stimmen.py`.
+0,07 mit `max_model_len` 4096; Messung im MemPalace). **Seit 2026-11-09
+spricht alles über den Antwort-Dienst** (Jochen: „die gewählte Stimme gilt
+für alles“): `speak()` (Bestätigung, Quittungen, Ansagen) geht am
+Haupt-Gerät denselben Strom wie die Antworten, der Datei-Weg (Satelliten)
+fragt erst `AntwortTts.synth`. Feste kurze Sätze („Ja?“, „Okay.“,
+Denk-Phrasen) kommen aus `voice/stimmen_cache/` — CosyVoice ist bei so kurzen
+Texten unzuverlässig („Ja?“ roh 0,8–1,6 s, teils 1 s Stille davor; Piper
+0,3 s), darum 5 Versuche, Stille weg, der zur erwarteten Länge passendste
+(geschätzt, per Hörseite abzunehmen). Fehlt ein Satz im Cache, spielt Piper
+und er wird im Hintergrund gerechnet. Das Echo-Fenster des „Ja?“ wächst mit
+dessen Länge (`_ACK_ECHO_NACH_SEC`, mindestens die alte 1 s). Rückfall überall
+Piper thorsten. Tests: `tests/test_stimmen.py`.
 
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 

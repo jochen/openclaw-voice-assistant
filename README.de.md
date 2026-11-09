@@ -347,7 +347,15 @@ noch einmal; die Kennung trägt einen Namensraum je Assistent und einen
 Prüfwert der Probe, so sehen sich zwei Häuser nie gegenseitig, und eine
 ersetzte Probe wird von selbst übernommen. Mit so einem Lager bieten die
 Stimm-Werkzeuge des Brains (`voice_list_voices`, `voice_set_voice`) diese
-Stimmen an statt der Piper-Liste (`voice_assistant/services/stimmen.py`).
+Stimmen an statt der Piper-Liste (`voice_assistant/services/stimmen.py`). Die
+gewählte Stimme gilt für alles: Bestätigungen und Quittungen laufen durch
+denselben Strom, Dateien (Handy-Satelliten) fragen zuerst den Dienst, und
+feste kurze Sätze (das „Ja?“, „Okay.“, Denk-Phrasen) werden je Stimme einmal
+gerechnet und gespeichert. Ein Stimmklon ist bei so kurzen Texten
+unzuverlässig (das „Ja?“ kam mit 0,8–1,6 s heraus, teils mit einer Sekunde
+Stille davor, Piper braucht 0,3 s), deshalb mehrere Versuche, Stille weg, und
+der zur erwarteten Länge passendste bleibt — einmal anhören. Das Echo-Fenster
+nach dem „Ja?“ wächst mit dessen Länge.
 Gelernt beim Auswählen nach Gehör: die geklonte Stimme übernimmt
 **Lautstärke, Tempo und Stimmung der Probe**. Eine gespielte Szene klang zu
 emotional, eine Probe mit −31 LUFS kam 14 dB leiser heraus als die anderen —

@@ -340,7 +340,15 @@ carries a namespace per assistant and a hash of the clip, so two homes never
 see each other's voices and a replaced clip is picked up by itself. With such
 a store, the brain's voice tools (`voice_list_voices`, `voice_set_voice`)
 offer these voices instead of the Piper list
-(`voice_assistant/services/stimmen.py`). Learned while choosing clips by ear:
+(`voice_assistant/services/stimmen.py`). The chosen voice is used for
+everything: confirmations and acks go through the same stream, files (phone
+satellites) ask the service first, and fixed short phrases (the wake ack,
+"Okay.", thinking phrases) are rendered once per voice and cached. A voice
+clone is unreliable on such short texts (the ack came out 0.8–1.6 s long,
+sometimes with a second of silence in front, against Piper's 0.3 s), so each
+is rendered several times, silence is trimmed and the take closest to the
+expected length is kept — listen to the result once. The echo window after
+the ack grows with its length. Learned while choosing clips by ear:
 the cloned voice copies **loudness, pace and mood of the clip**. An acted
 scene sounded too emotional, and a clip at −31 LUFS came out 14 dB quieter
 than the others — normalise clips (e.g. ffmpeg `loudnorm` to −18 LUFS) and
