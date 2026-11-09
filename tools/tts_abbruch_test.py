@@ -42,6 +42,10 @@ Messreihe
   0,4 s gekürzt **6/60**; gaston2kurz (nur der erste Satz, 5,3 s) **0/60**,
   dazu Rechenzeit 0,46 statt 0,75 der Sprechzeit. Es liegt an der Probe:
   einsätzige Proben (gaston2kurz, thorsten, misterhandy) brachen nie ab.
+- Heikel, nach Gehör gewählte Stücke derselben Probe
+  (``tools/stimmprobe_zerlegen.py``): erster Satz 4,8 s **0/60**, zweiter
+  Satz 4,4 s **0/60**; Längen-Streuung beim zweiten größer (bis 8,8 s statt
+  6,7 s). Der erste ist seit dem Abend die Stimme ``gaston``.
 """
 from __future__ import annotations
 
