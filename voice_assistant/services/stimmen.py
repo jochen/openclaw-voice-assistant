@@ -14,6 +14,12 @@ Ablage je Stimme (Ordner ``<ordner>/<name>/``):
 - ``meta.json`` — optional: ``beschreibung``, ``quelle``, ``angelegt``,
   ``freigegeben`` (fehlt = freigegeben; ``false`` = nicht wählbar)
 
+Dazu ``<ordner>/_standard.json``: die Standard-Stimme „für alle“, per
+``voice_set_voice`` mit ``fuer_alle`` gesetzt. Sie gewinnt gegen
+``antwort_tts_voice`` im Profil, solange es die Stimme gibt (Anlass
+2026-11-09: der Brain sollte „für alle“ umstellen, hatte dafür kein Werkzeug
+und sagte trotzdem „erledigt“).
+
 Die Kennung beim Dienst trägt einen Prüfwert über Probe und Text
 (``gaston/gaston2-1a2b3c4d``): wer eine Probe ersetzt, bekommt beim nächsten
 Satz von selbst die neue, ohne dass jemand den Dienst aufräumen muss.
@@ -32,6 +38,7 @@ import logging
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 import wave
@@ -55,6 +62,28 @@ class StimmenLager:
         self.standard = standard
         self.timeout = timeout
         self._lock = threading.Lock()
+        gesetzt = self._standard_gesetzt()
+        if gesetzt and gesetzt != standard and self.hat(gesetzt):
+            log.info("Standard-Stimme %s (gesetzt, statt %s aus dem Profil)", gesetzt, standard)
+            self.standard = gesetzt
+
+    def _standard_gesetzt(self) -> str | None:
+        try:
+            with open(os.path.join(self.ordner, "_standard.json"), encoding="utf-8") as f:
+                return str(json.load(f).get("stimme") or "") or None
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def standard_setzen(self, name: str, von: str | None = None) -> None:
+        """Standard-Stimme für alle, dauerhaft (überlebt Neustarts)."""
+        if not self.hat(name):
+            raise ValueError(f"Stimme {name!r} gibt es nicht")
+        pfad = os.path.join(self.ordner, "_standard.json")
+        with open(pfad + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"stimme": name, "von": von or "", "zeit": time.strftime("%Y-%m-%dT%H:%M:%S")},
+                      f, ensure_ascii=False)
+        os.replace(pfad + ".tmp", pfad)
+        self.standard = name
 
     # --- lokal ----------------------------------------------------------
 
@@ -316,6 +345,40 @@ class AntwortTts(SpeachesTts):
               f"(aus {len(kandidaten)} Versuchen)")
         self._cache_aufraeumen()
         return pfad
+
+    def fest_kandidaten(self, text: str, name: str, n: int, versuche: int) -> list[tuple[np.ndarray, int]]:
+        """Bis zu ``n`` Fassungen eines festen Satzes, die die STT-Rückprobe
+        bestehen, Stille geschnitten, die zur erwarteten Länge passendste zuerst."""
+        kandidaten = []
+        for _ in range(versuche):
+            if len(kandidaten) >= n:
+                break
+            pcm, rate = self._roh(text, name)
+            kern = _sprache_schneiden(pcm, rate)
+            if len(kern) <= 0.15 * rate:
+                continue
+            if self.pruefen is not None and not self.pruefen(kern, rate, text):
+                continue
+            kandidaten.append((kern, rate))
+        return sorted(kandidaten, key=lambda k: abs(len(k[0]) / k[1] - _erwartet_s(text)))
+
+    def fest_uebernehmen(self, text: str, name: str, wav_pfad: str, quelle: str = "") -> str:
+        """Eine gehörte Fassung wird die gespielte (Hörseite, Telegram-Wahl)."""
+        ziel = self._cache_pfad(text, name)
+        if ziel is None:
+            raise ValueError("kein Cache für feste Sätze eingerichtet")
+        os.makedirs(os.path.dirname(ziel), exist_ok=True)
+        with open(wav_pfad, "rb") as f:
+            daten = f.read()
+        with open(ziel + ".tmp", "wb") as f:
+            f.write(daten)
+        os.replace(ziel + ".tmp", ziel)
+        with open(os.path.join(self.cache, "auswahl.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"zeit": time.strftime("%Y-%m-%dT%H:%M:%S"), "stimme": name,
+                                "satz": text, "dienst_id": self.lager.dienst_id(name),
+                                "dauer_s": round(wav_dauer(ziel), 2), "quelle": quelle},
+                               ensure_ascii=False) + "\n")
+        return ziel
 
     def _cache_aufraeumen(self) -> None:
         try:

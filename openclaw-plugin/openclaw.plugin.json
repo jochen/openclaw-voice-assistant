@@ -19,7 +19,9 @@
       "voice_aussprache_zeigen",
       "voice_aussprache_loeschen",
       "voice_stimme_einreichen",
-      "voice_stimme_waehlen"
+      "voice_stimme_waehlen",
+      "voice_stimme_kurz_anhoeren",
+      "voice_stimme_kurz_waehlen"
     ]
   },
   "configSchema": {

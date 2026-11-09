@@ -23,6 +23,12 @@ von Hand die Stimme ``gaston`` ergab (``tools/stimmprobe_zerlegen.py``):
    zweisätzige Probe brach 9/60 ab, die einzelnen Sätze 0/60.
 5. Bestanden → ins Lager, feste Sätze vorrechnen. Umschalten bleibt eigener
    Schritt (``voice_set_voice``).
+6. Gleich danach je kurzem festem Satz („Ja?“, „Okay.“) bis zu ``FASSUNGEN``
+   Fassungen als Sprachnachricht (``kurz_anhoeren``, auch später für eine
+   vorhandene Stimme), Wahl per ``kurz_waehlen(satz, fassung)``. Die
+   Qwen-Rückprobe ist bei Einzelwörtern blind („hh oh“ als „okay“), das Ohr
+   entscheidet — so auch im Fablab ohne Hörseite (Jochen 2026-11-09: „2–3
+   Beispiele reichen“). Ohne Antwort bleibt die automatisch gewählte.
 
 Es läuft immer nur ein Auftrag; Meldungen gehen per Telegram, weil das
 Zerlegen ~1 min und der Abbruch-Test ~4 min dauern.
@@ -61,6 +67,8 @@ ABBRUCH_SAETZE = [
 ]
 ABBRUCH_WDH = 15
 HOERPROBEN_MAX = 5
+FASSUNGEN = 3           # je kurzem festem Satz
+KURZ_VERSUCHE = 8       # Rechnungen, bis FASSUNGEN die Rückprobe bestehen
 VORAUSWAHL_MAX = 8      # so viele Stücke werden transkribiert und gerechnet
 ZIEL_S = 6.0            # Regel für neue Stimmen: ein ruhiger Satz, 5–8 s
 DAUER_MIN_S, DAUER_MAX_S = 3.0, 180.0
@@ -233,7 +241,10 @@ class StimmenEingang:
     def __init__(self, lager, asr, melden: Callable[[str], None],
                  melden_audio: Callable[[bytes, str], None], ordner: str,
                  erlaubt: list[str], vorbereiten: Callable[[str], None] | None = None,
-                 tts_bauen: Callable | None = None, abbruch_wdh: int = ABBRUCH_WDH) -> None:
+                 tts_bauen: Callable | None = None, abbruch_wdh: int = ABBRUCH_WDH,
+                 antwort=None, kurze_saetze: list[str] | tuple = ()) -> None:
+        """antwort: AntwortTts des Assistenten (feste Sätze, Cache);
+        kurze_saetze: die festen Sätze, die das Ohr wählen soll („Ja?“, „Okay.“)."""
         from voice_assistant.services.speaches import SpeachesState
         from voice_assistant.services.stimmen import AntwortTts, StimmenLager
         self.lager, self.asr = lager, asr
@@ -241,6 +252,7 @@ class StimmenEingang:
         self.ordner, self.erlaubt = ordner, erlaubt
         self.vorbereiten = vorbereiten
         self.abbruch_wdh = abbruch_wdh
+        self.antwort, self.kurze_saetze = antwort, list(kurze_saetze)
         self._lock = threading.Lock()
         self.laeuft: str | None = None
         # Probe-Lager je Auftrag; Kennungen beim Dienst in eigenem Namensraum
@@ -272,7 +284,78 @@ class StimmenEingang:
                 "text": f"Ich prüfe Stück {stueck} für die Stimme {name} auf abgeschnittene "
                         "Sätze, das dauert drei bis vier Minuten. Das Ergebnis kommt in den Chat."}
 
+    def kurz_anhoeren(self, name: str | None = None) -> dict:
+        if self.antwort is None or not self.kurze_saetze:
+            raise ValueError("Feste Sätze sind hier nicht eingerichtet")
+        name = name_pruefen(name) if name else self.lager.standard
+        if not self.lager.hat(name):
+            raise ValueError(f"Stimme {name!r} gibt es nicht")
+        self._starten(name, lambda: self._kurz(name))
+        return {"ok": True, "name": name,
+                "text": f"Ich rechne {', '.join(self.kurze_saetze)} in der Stimme {name}; "
+                        "die Fassungen kommen gleich als Sprachnachrichten in den Chat."}
+
+    def kurz_waehlen(self, satz: str, fassung: int, name: str | None = None) -> dict:
+        if self.antwort is None:
+            raise ValueError("Feste Sätze sind hier nicht eingerichtet")
+        if name:
+            name = name_pruefen(name)
+        else:
+            name = self._letzter_kurz()
+        try:
+            with open(os.path.join(self._dir(name), "kurz", "kurz.json"), encoding="utf-8") as f:
+                kurz = json.load(f)
+        except (OSError, ValueError):
+            raise ValueError(f"Für {name!r} gibt es keine Fassungen — erst anhören") from None
+        gesucht = woerter(satz)
+        treffer = [t for t in kurz if woerter(t) == gesucht]
+        if not treffer:
+            raise ValueError(f"Satz {satz!r} steht nicht zur Wahl ({', '.join(kurz)})")
+        t = treffer[0]
+        pfade = kurz[t]
+        if not 1 <= int(fassung) <= len(pfade):
+            raise ValueError(f"Fassung {fassung} gibt es bei „{t}“ nicht (1–{len(pfade)})")
+        self.antwort.fest_uebernehmen(t, name, pfade[int(fassung) - 1], quelle="telegram")
+        return {"ok": True, "name": name,
+                "text": f"„{t}“ spricht {name} ab jetzt in Fassung {fassung}."}
+
     # --- intern ---
+
+    def _letzter_kurz(self) -> str:
+        try:
+            da = [n for n in os.listdir(self.ordner)
+                  if os.path.isfile(os.path.join(self.ordner, n, "kurz", "kurz.json"))]
+        except OSError:
+            da = []
+        if not da:
+            raise ValueError("Keine Fassungen offen — erst anhören")
+        return max(da, key=lambda n: os.path.getmtime(os.path.join(self.ordner, n, "kurz", "kurz.json")))
+
+    def _kurz(self, name: str) -> None:
+        d = os.path.join(self._dir(name), "kurz")
+        if os.path.isdir(d):
+            shutil.rmtree(d)
+        os.makedirs(d)
+        kurz: dict[str, list[str]] = {}
+        for i, satz in enumerate(self.kurze_saetze):
+            fassungen = self.antwort.fest_kandidaten(satz, name, FASSUNGEN, KURZ_VERSUCHE)
+            if not fassungen:
+                self.melden(f"⚠️ „{satz}“ in {name}: keine Fassung hörte sich nach dem Satz an.")
+                continue
+            kurz[satz] = []
+            for j, (pcm, rate) in enumerate(fassungen, 1):
+                pfad = os.path.join(d, f"s{i}_f{j}.wav")
+                with open(pfad, "wb") as f:
+                    f.write(_wav(pcm, rate))
+                kurz[satz].append(pfad)
+                self.melden_audio(ogg_opus(_wav(pcm, rate)),
+                                  f"„{satz}“ Fassung {j} ({len(pcm) / rate:.1f} s)")
+        with open(os.path.join(d, "kurz.json"), "w", encoding="utf-8") as f:
+            json.dump(kurz, f, ensure_ascii=False, indent=1)
+        if kurz:
+            beispiel = ", ".join(f"{woerter(t)[0].capitalize()} 1" for t in kurz)
+            self.melden(f"Welche Fassungen soll {name} sprechen? Antworte z. B. „{beispiel}“. "
+                        "Ohne Antwort bleibt die automatisch gewählte.")
 
     def _starten(self, name: str, arbeit: Callable[[], None]) -> None:
         if not self._lock.acquire(blocking=False):
@@ -436,3 +519,5 @@ class StimmenEingang:
             self.vorbereiten(name)
         self.melden(f"✅ Stimme {name} ist angelegt (0 von {n} Sätzen abgebrochen). "
                     f"Umschalten mit „nimm die Stimme {name}“.")
+        if self.antwort is not None and self.kurze_saetze:
+            self._kurz(name)

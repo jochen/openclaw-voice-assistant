@@ -180,7 +180,9 @@ export default definePluginEntry({
         "Wechselt die Stimme, mit der der Voice-Assistant spricht (z.B. wenn der Nutzer eine andere/weibliche/lustige Stimme will). " +
         "voice ist der Stimmenname aus voice_list_voices; model optional für exakte Wahl. " +
         "speed optional (1.0 normal, >1 schneller). " +
-        "for_speaker: wenn gesetzt, wird diese Stimme dauerhaft für diesen Sprecher gemerkt und künftig automatisch verwendet — nutze dafür den erkannten Sprechernamen.",
+        "for_speaker: wenn gesetzt, wird diese Stimme dauerhaft für diesen Sprecher gemerkt und künftig automatisch verwendet — nutze dafür den erkannten Sprechernamen. " +
+        "fuer_alle: true, wenn die Stimme die Standard-Stimme für alle werden soll („für alle“, „als normale Stimme“); bleibt auch nach einem Neustart. " +
+        "Ohne for_speaker und fuer_alle gilt die Wahl nur vorübergehend für den, der gerade spricht — sag dann nicht, sie gelte für alle oder dauerhaft.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -190,6 +192,7 @@ export default definePluginEntry({
           model: { type: "string", description: "Optional: exakte Modell-ID, falls eine Stimme in mehreren Modellen existiert." },
           speed: { type: "number", description: "Optional: Sprechtempo (1.0 normal, >1 schneller, <1 langsamer)." },
           for_speaker: { type: "string", description: "Optional: erkannter Sprechername, für den diese Stimme dauerhaft gemerkt werden soll." },
+          fuer_alle: { type: "boolean", description: "Optional: true = dauerhafte Standard-Stimme für alle." },
         },
       },
       async execute(_toolCallId, params) {
@@ -201,6 +204,7 @@ export default definePluginEntry({
         if (params?.model) payload.model = String(params.model).trim();
         if (params?.speed != null) payload.speed = Number(params.speed);
         if (params?.for_speaker) payload.for_speaker = String(params.for_speaker).trim();
+        if (params?.fuer_alle === true) payload.fuer_alle = true;
 
         let data;
         try {
@@ -223,11 +227,14 @@ export default definePluginEntry({
           return textResult(`Voice-Dienst nicht erreichbar: ${err.message}`, { ok: false });
         }
 
+        if (payload.fuer_alle && data?.text) {
+          return textResult(data.text, { ok: true, details: data });
+        }
         const active = data?.active ?? {};
         const speedTxt = active.speed != null && active.speed !== 1.0 ? ` mit Tempo ${active.speed}` : "";
         const remembered = payload.for_speaker
           ? ` Ich merke mir das für ${payload.for_speaker}.`
-          : "";
+          : " Das gilt vorübergehend für dich, nicht für alle.";
         return textResult(
           `Alles klar, ich spreche jetzt mit der Stimme ${active.voice ?? voice}${speedTxt}.${remembered}`,
           { ok: true, details: data }
@@ -503,13 +510,60 @@ export default definePluginEntry({
     });
 
     api.registerTool({
+      name: "voice_stimme_kurz_anhoeren",
+      label: "Ja/Okay einer Stimme anhören",
+      description:
+        "Rechnet die kurzen festen Sätze („Ja?“, „Okay.“) in einer Stimme je in bis zu drei Fassungen " +
+        "und schickt sie als nummerierte Sprachnachrichten in den Hauskanal. Nach dem Anlegen einer " +
+        "neuen Stimme passiert das von selbst; dieses Werkzeug nur, wenn der Nutzer die Fassungen einer " +
+        "vorhandenen Stimme hören oder neu wählen will. name optional (Default: die Standard-Stimme). " +
+        "Die Sprachnachrichten nicht selbst schicken.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string", description: "Optional: Name der Stimme aus voice_list_voices." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const payload = {};
+        if (params?.name) payload.name = String(params.name).trim();
+        return stimmenAuftrag("/stimmen/kurz_anhoeren", payload);
+      },
+    });
+
+    api.registerTool({
+      name: "voice_stimme_kurz_waehlen",
+      label: "Fassung von Ja/Okay wählen",
+      description:
+        "Der Nutzer hat die Fassungen von „Ja?“/„Okay.“ gehört und nennt eine Nummer („Ja 2, Okay 1“). " +
+        "Je Satz ein Aufruf: satz ist der Satz („Ja?“ oder „Okay.“), fassung die Nummer. " +
+        "Wirkt sofort. name nur, wenn mehrere Stimmen offen sind.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["satz", "fassung"],
+        properties: {
+          satz: { type: "string", description: "Der feste Satz, z. B. „Ja?“ oder „Okay.“." },
+          fassung: { type: "number", description: "Nummer der Fassung aus den Sprachnachrichten." },
+          name: { type: "string", description: "Optional: Name der Stimme (Default: zuletzt angehört)." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const payload = { satz: String(params?.satz ?? "").trim(), fassung: Number(params?.fassung) };
+        if (params?.name) payload.name = String(params.name).trim();
+        return stimmenAuftrag("/stimmen/kurz_waehlen", payload);
+      },
+    });
+
+    api.registerTool({
       name: "voice_stimme_waehlen",
       label: "Stück für neue Stimme wählen",
       description:
         "Nach voice_stimme_einreichen: der Nutzer hat die Hörproben gehört und nennt eine Nummer " +
         "(„nimm Stück 2“). Das Stück wird auf abgeschnittene Sätze geprüft (drei bis vier Minuten); " +
         "besteht es, ist die Stimme angelegt, das Ergebnis kommt in den Hauskanal. Umschalten ist " +
-        "danach ein eigener Schritt (voice_set_voice). name nur angeben, wenn mehrere Stimmen offen sind. " +
+        "danach ein eigener Schritt (voice_set_voice). Danach kommen von selbst Fassungen von „Ja?“/„Okay.“ zur Wahl (voice_stimme_kurz_waehlen). name nur angeben, wenn mehrere Stimmen offen sind. " +
         "text nur, wenn der Nutzer sagt, dass der Text unter dem Stück falsch ist: dann der richtige Wortlaut.",
       parameters: {
         type: "object",

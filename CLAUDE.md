@@ -1013,7 +1013,15 @@ Hörproben als Sprachnachricht in den Hauskanal, Wahl per Nummer, Abbruch-Test
 Eingangs-Ablage (`OPENCLAW_MEDIA_DIRS`). Jeder darf (Jochen: per Telegram
 sind nur Berechtigte); Mikro-Aufnahmen als Quelle sind offen. Die
 Qwen-Prüfung ist bei Einzelwörtern blind (ein „hh oh“ hörte sie als „okay“),
-Ja/Okay bleiben Sache des Ohrs. Tests: `tests/test_stimmen_eingang.py`.
+Ja/Okay bleiben Sache des Ohrs: nach dem Anlegen kommen je 3 Fassungen als
+Sprachnachricht, Wahl per `voice_stimme_kurz_waehlen` (auch im Fablab ohne
+Hörseite; `voice_stimme_kurz_anhoeren` für vorhandene Stimmen). Erster echter
+Durchlauf 2026-11-09: `edgar_3` aus einem Hörbuchausschnitt. **Standard für
+alle** (`voice_set_voice` mit `fuer_alle`, seit 2026-11-09): steht in
+`<lager>/_standard.json` und gewinnt gegen `antwort_tts_voice`; Anlass: der
+Brain sollte „für alle“ umstellen, hatte kein Werkzeug dafür und meldete
+trotzdem Vollzug. Ohne `for_speaker`/`fuer_alle` gilt eine Wahl nur
+vorübergehend für den Sprecher. Tests: `tests/test_stimmen_eingang.py`.
 
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 

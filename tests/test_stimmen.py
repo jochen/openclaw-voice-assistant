@@ -184,6 +184,31 @@ class VoiceControllerTest(_Basis):
     def test_wirksam_meldet_die_sprechende_stimme(self):
         self.assertEqual(self._vc().wirksam()[:2], ("cosyvoice3", "gaston2"))
 
+    def test_standard_fuer_alle_dauerhaft(self):
+        vc = self._vc()
+        vc._save_map = lambda: None                    # echte speaker_voices.json bleibt
+        vc._speaker_map = {"jochen": {"model": "cosyvoice3", "voice": "gaston2"},
+                           "anna": {"model": "cosyvoice3", "voice": "gaston2"}}
+        eigene = vc.set_standard("thorsten", "Jochen")
+        self.assertEqual(eigene, ["anna"])             # wer „für alle“ sagt, meint sich mit
+        self.assertNotIn("jochen", vc._speaker_map)
+        self.assertEqual(voice_state.get()[:2], ("cosyvoice3", "thorsten"))
+        # nach einem Neustart: Lager liest die Wahl, das Profil sagt weiter gaston2
+        neu = StimmenLager(self.ordner, "haus", self.lager.dienst_url, "cosyvoice3", "gaston2")
+        self.assertEqual(neu.standard, "thorsten")
+        self.assertEqual(neu.wirksam("speaches-ai/piper-de_DE-thorsten-medium", "x"), "thorsten")
+        self.assertEqual(neu.namen(), ["gaston2", "thorsten"])   # Datei ist keine Stimme
+
+    def test_standard_unbekannte_stimme(self):
+        with self.assertRaises(ValueError):
+            self._vc().set_standard("gibtsnicht")
+        shutil.rmtree(os.path.join(self.ordner, "thorsten"))
+        self.lager.standard_setzen("gaston2")
+        with open(os.path.join(self.ordner, "_standard.json"), "w") as f:
+            f.write('{"stimme": "thorsten"}')        # Stimme inzwischen weg
+        neu = StimmenLager(self.ordner, "haus", self.lager.dienst_url, "cosyvoice3", "gaston2")
+        self.assertEqual(neu.standard, "gaston2")
+
 
 class FesteSaetzeTest(_Basis):
     def setUp(self):
@@ -210,6 +235,17 @@ class FesteSaetzeTest(_Basis):
         n = len(_Cosy.anfragen)
         self.assertEqual(self.t.feste_datei("Ja?"), pfad)
         self.assertEqual(len(_Cosy.anfragen), n, "zweites Mal aus dem Cache")
+
+    def test_kandidaten_und_uebernehmen(self):
+        fass = self.t.fest_kandidaten("Ja?", "gaston2", 3, 8)
+        self.assertEqual(len(fass), 3)
+        p = os.path.join(self.cache, "f.wav")
+        with open(p, "wb") as f:
+            f.write(AntwortTts._wav_bytes(*fass[1]))
+        ziel = self.t.fest_uebernehmen("Ja?", "gaston2", p, quelle="telegram")
+        self.assertEqual(self.t.feste_datei("Ja?", name="gaston2"), ziel)
+        with open(os.path.join(self.cache, "auswahl.jsonl"), encoding="utf-8") as f:
+            self.assertEqual(json.loads(f.readline())["quelle"], "telegram")
 
     def test_andere_stimme_eigener_eintrag(self):
         a = self.t.feste_datei("Ja?")

@@ -62,6 +62,21 @@ class FakeTts:
         return np.full(int(d * 24000), 1000, dtype="<i2"), 24000
 
 
+class FakeAntwort:
+    """AntwortTts für feste Sätze: n Fassungen, Übernahme wird notiert."""
+
+    def __init__(self, n=3):
+        self.n, self.uebernommen = n, []
+
+    def fest_kandidaten(self, text, name, n, versuche):
+        return [(np.full(int((0.4 + 0.1 * i) * 24000), 500, dtype="<i2"), 24000)
+                for i in range(min(n, self.n))]
+
+    def fest_uebernehmen(self, text, name, pfad, quelle=""):
+        self.uebernommen.append((text, name, os.path.basename(pfad), quelle))
+        return pfad
+
+
 class Grundlagen(unittest.TestCase):
     def test_name(self):
         self.assertEqual(se.name_pruefen("Opa Günter"), "opa_guenter")
@@ -129,12 +144,13 @@ class Ablauf(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _eingang(self, asr=None, wdh=2):
+    def _eingang(self, asr=None, wdh=2, antwort=None):
         return se.StimmenEingang(
             self.lager, asr or FakeAsr(), self.texte.append,
             lambda ogg, cap: self.audios.append((ogg, cap)),
             os.path.join(self.tmp.name, "eingang"), [self.media],
-            vorbereiten=self.vorbereitet.append, tts_bauen=lambda _d: self.tts, abbruch_wdh=wdh)
+            vorbereiten=self.vorbereitet.append, tts_bauen=lambda _d: self.tts, abbruch_wdh=wdh,
+            antwort=antwort, kurze_saetze=["Ja?", "Okay."] if antwort else ())
 
     def _datei(self, saetze=(5.0, 6.0)):
         p = os.path.join(self.media, "probe.wav")
@@ -180,6 +196,44 @@ class Ablauf(unittest.TestCase):
         self.assertEqual(self.vorbereitet, ["opa"])
         self.assertIn("✅", self.texte[-1])
         self.assertEqual(len(self.tts.aufrufe), 2 * len(se.ABBRUCH_SAETZE))
+
+    def test_nach_dem_anlegen_kommen_ja_und_okay(self):
+        antwort = FakeAntwort()
+        e = self._eingang(antwort=antwort)
+        e._zerlegen(self._datei(), "opa", "")
+        n = len(self.audios)
+        e._pruefen("opa", e._auftrag("opa")["hoerproben"][0], None)
+        caps = [c for _, c in self.audios[n:]]
+        self.assertEqual(len(caps), 6)
+        self.assertIn("„Ja?“ Fassung 1", caps[0])
+        self.assertIn("„Okay.“ Fassung 3", caps[-1])
+        self.assertIn("Ja 1, Okay 1", self.texte[-1])
+        # Wahl: Satz ohne Satzzeichen, Groß/klein egal
+        erg = e.kurz_waehlen("ja", 2)
+        self.assertEqual(antwort.uebernommen, [("Ja?", "opa", "s0_f2.wav", "telegram")])
+        self.assertIn("Fassung 2", erg["text"])
+        for falsch in (("Ja?", 4), ("Hallo", 1)):
+            with self.assertRaises(ValueError):
+                e.kurz_waehlen(*falsch)
+
+    def test_kurz_anhoeren_fuer_vorhandene_stimme(self):
+        e = self._eingang(antwort=FakeAntwort(n=2))
+        with self.assertRaises(ValueError):
+            e.kurz_anhoeren("gibtsnicht")
+        with self.assertRaises(ValueError):
+            e.kurz_waehlen("Ja?", 1)                      # noch nichts angehört
+        os.makedirs(os.path.join(self.lager.ordner, "gaston"))
+        for d, inhalt in (("probe.wav", b"x"), ("probe.txt", "Hallo.")):
+            with open(os.path.join(self.lager.ordner, "gaston", d), "wb" if isinstance(inhalt, bytes) else "w") as f:
+                f.write(inhalt)
+        e._kurz("gaston")                                  # was kurz_anhoeren im Thread tut
+        self.assertEqual(len(self.audios), 4)
+        e.kurz_waehlen("Okay", 2)
+        self.assertEqual(e.antwort.uebernommen[0][:3], ("Okay.", "gaston", "s1_f2.wav"))
+
+    def test_ohne_feste_saetze_nicht_eingerichtet(self):
+        with self.assertRaises(ValueError):
+            self._eingang().kurz_anhoeren()
 
     def test_waehlen_mit_abbruch_legt_nicht_an(self):
         e = self._eingang()

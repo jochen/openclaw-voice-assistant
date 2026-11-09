@@ -1350,6 +1350,9 @@ def run() -> None:
             melden_audio=lambda ogg, unterschrift: telegram.send_voice(*_tg, ogg, unterschrift),
             ordner=STIMMEN_EINGANG_DIR, erlaubt=OPENCLAW_MEDIA_DIRS,
             vorbereiten=lambda name: antwort_tts.vorbereiten(_feste_saetze(), name=name),
+            # Kurze feste Sätze wählt das Ohr (Denk-Phrasen: nur Nuancen, Jochen)
+            antwort=antwort_tts,
+            kurze_saetze=[t for t in _feste_saetze() if t not in set(profile.locale.thinking_phrases)],
         )
     start_speak_server(voice_controller=voice_controller, kuechentimer=kuechentimer,
                        mikro=mikro, stimmen_eingang=stimmen_eingang)

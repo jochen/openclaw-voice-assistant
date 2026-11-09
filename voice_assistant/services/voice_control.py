@@ -321,6 +321,26 @@ class VoiceController:
             log.info("VoiceController: '%s' → %s gespeichert", speaker, entry)
         return ok
 
+    def set_standard(self, voice: str, speaker: str | None = None) -> list[str]:
+        """Standard-Stimme für alle, dauerhaft (nur mit eigenem Stimmen-Lager).
+
+        Wer „für alle“ sagt, meint sich mit: eine eigene gespeicherte Wahl des
+        Sprechers fällt weg. Gibt die Sprecher zurück, die eine andere eigene
+        Stimme behalten (der Brain soll das sagen, nicht „für alle“ behaupten)."""
+        if self.stimmen is None:
+            raise ValueError("Eine Standard-Stimme für alle gibt es nur mit eigenen Stimmen")
+        self.stimmen.standard_setzen(voice, von=speaker)
+        key = self._norm(speaker)
+        if key and key in self._speaker_map:
+            del self._speaker_map[key]
+            self._save_map()
+        self._apply(self.stimmen.modell, voice, 1.0)
+        _state.voice_state.set_voice_owner(None)
+        _state.voice_state.set_last_apply_ts(time.monotonic())
+        log.info("VoiceController: Standard für alle = %s (von %s)", voice, speaker)
+        return sorted(k for k, v in self._speaker_map.items()
+                      if self.stimmen.wirksam(v.get("model"), v.get("voice")) != voice)
+
     def apply_speaker_default(self, speaker: str | None) -> None:
         """Wählt die passende Stimme für den aktuell erkannten Sprecher.
 

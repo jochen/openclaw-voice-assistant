@@ -29,10 +29,8 @@ import html
 import http.server
 import json
 import os
-import shutil
 import sys
 import threading
-import time
 import urllib.parse
 
 from voice_assistant.config import STIMMEN_CACHE_DIR, STIMMEN_DIR, load_profile
@@ -88,16 +86,7 @@ class Werkstatt:
         return p if p and os.path.exists(p) else None
 
     def nehmen(self, stimme: str, satz: str, pfad: str) -> str:
-        ziel = self.tts._cache_pfad(satz, stimme)
-        os.makedirs(os.path.dirname(ziel), exist_ok=True)
-        tmp = ziel + ".tmp"
-        shutil.copyfile(pfad, tmp)
-        os.replace(tmp, ziel)
-        with open(os.path.join(self.tts.cache, "auswahl.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps({"zeit": time.strftime("%Y-%m-%dT%H:%M:%S"), "stimme": stimme,
-                                "satz": satz, "dienst_id": self.tts.lager.dienst_id(stimme),
-                                "dauer_s": round(wav_dauer(ziel), 2)}, ensure_ascii=False) + "\n")
-        return ziel
+        return self.tts.fest_uebernehmen(satz, stimme, pfad, quelle="hoerseite")
 
     # --- Seite ------------------------------------------------------------
 

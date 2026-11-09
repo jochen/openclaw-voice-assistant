@@ -380,8 +380,14 @@ Ende oder einer Länge weit weg von den anderen, also Stille, Atmen oder
 Zischen); dann kommen bis zu fünf Stücke als Sprachnachrichten in den Chat,
 je das Stück und danach ein Testsatz damit. Mit einer Nummer antworten; das
 Stück geht durch den Abbruch-Test (60 Sätze, etwa vier Minuten) und nur mit 0
-Abbrüchen ins Lager, mit vorgerechneten festen Sätzen. Umschalten bleibt ein
-eigener Schritt. Ein Auftrag zur Zeit
+Abbrüchen ins Lager, mit vorgerechneten festen Sätzen. Gleich danach kommen
+die kurzen festen Sätze („Ja?“, „Okay.“) in bis zu drei Fassungen; antworten
+z. B. mit „Ja 2, Okay 1“ (`voice_stimme_kurz_waehlen`;
+`voice_stimme_kurz_anhoeren` holt das für eine vorhandene Stimme nach). Die
+STT-Prüfung ist bei Einzelwörtern blind, also entscheidet das Ohr, ohne
+Hörseite. Umschalten bleibt ein eigener Schritt: für eine Person mit
+`for_speaker`, für alle mit `fuer_alle` (neben dem Lager gespeichert, gewinnt
+gegen die Standard-Stimme des Profils). Ein Auftrag zur Zeit
 (`voice_assistant/services/stimmen_eingang.py`).
 
 ## Ein Handy als Satellit (`satelliten:`, optional)
@@ -1491,8 +1497,9 @@ Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert die Tools, die 
 | `voice_speak_text(text)` | kurzen Text laut vorlesen (fire-and-forget) |
 | `voice_enroll_speaker(name)` | letzte Aufnahme als Referenz dieses Sprechers speichern |
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | bekannte Sprecher verwalten |
-| `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (auch pro Sprecher via `for_speaker`) |
+| `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (pro Sprecher via `for_speaker`, für alle via `fuer_alle`) |
 | `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | neue Stimme aus einer Audiodatei im Chat: Stücke anhören, eins wählen, Abbruch-Test |
+| `voice_stimme_kurz_anhoeren(name?)` / `voice_stimme_kurz_waehlen(satz, fassung)` | Fassungen von „Ja?“/„Okay.“ als Sprachnachricht, per Gehör wählen |
 | `voice_analyze_last_output(…)` | die eigene zuletzt gesprochene Antwort erneut analysieren (Texttreue, Timing, Prosodie) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | Aussprache eines Worts sofort korrigieren („Sauce spricht man *Sohße*"); siehe *Aussprache-Liste* |
 
