@@ -326,6 +326,26 @@ Listened to at home: no clicks, no gaps between sentences, barge-in in the
 middle of a stream stops it at once. Only the main device streams; phone
 satellites, confirmations and outside announcements keep using files.
 
+**A separate service for replies, with your own voices (`antwort_tts_*`,
+optional, needs `tts_strom`).** Replies can come from a voice-cloning TTS
+(here CosyVoice3 behind a small Speaches-compatible service) while
+confirmations and acks stay on Speaches/Piper. Order per sentence: reply
+service → Speaches → local Piper — if the service is gone you hear the other
+voice, which is how you notice. The voices are managed **by the assistant**,
+not by the service: `<workspace>/voice/stimmen/<name>/` holds `probe.wav`
+(the reference clip), `probe.txt` (what is said in it) and an optional
+`meta.json` (`beschreibung`, `freigegeben`). When the service answers 404 for
+a voice, the assistant uploads it (`POST /v1/voices`) and asks again; the id
+carries a namespace per assistant and a hash of the clip, so two homes never
+see each other's voices and a replaced clip is picked up by itself. With such
+a store, the brain's voice tools (`voice_list_voices`, `voice_set_voice`)
+offer these voices instead of the Piper list
+(`voice_assistant/services/stimmen.py`). Learned while choosing clips by ear:
+the cloned voice copies **loudness, pace and mood of the clip**. An acted
+scene sounded too emotional, and a clip at −31 LUFS came out 14 dB quieter
+than the others — normalise clips (e.g. ffmpeg `loudnorm` to −18 LUFS) and
+prefer calm speech of 5–12 s; longer clips also make the service slower.
+
 ## A phone as a satellite (`satelliten:`, optional)
 
 One microphone doesn't cover the whole home. For rooms you rarely talk in

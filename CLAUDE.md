@@ -972,6 +972,23 @@ Hörprobe daheim 2026-11-08 (Jochen: „sehr sehr gut, kein Knacksen“), Ende
 jedes Stroms konstant +0,81 s über der gesendeten Länge, Abbruch mitten im
 Strom sofort. Tests: `tests/test_tts_strom.py`.
 
+**Antwort-Dienst und eigene Stimmen (`antwort_tts_*`, seit 2026-11-08/09).**
+Brain-Antworten spricht CosyVoice3 auf dem Fablab-Rechner (GPU1, User-Unit
+`cosyvoice`, Port 8010; Dienst-Code liegt dort in `~/cosyvoice-dienst/`, nicht
+in diesem Repo). Rückfall je Satz: Speaches, dann Piper (Jochen: daran merkt
+man, dass der Dienst weg ist). Die Stimmen verwaltet der Assistent
+(`services/stimmen.py`, Lager `voice/stimmen/` → privates Daten-Repo): der
+Dienst bekommt sie per `POST /v1/voices`, wenn er 404 sagt, Kennung
+`<namensraum>/<name>-<prüfwert>`. Mit Lager zeigen `voice_list_voices`/
+`voice_set_voice` nur noch diese Stimmen; eine alte Piper-Vorliebe in
+`speaker_voices.json` gilt dort als „keine Wahl“ → Standard-Stimme. Falle vom
+2026-11-08: die gespeicherte Wahl „thorsten“ gegen „de_DE-thorsten-medium“ im
+Profil galt als eigene Wahl und übersprang CosyVoice still — jetzt steht je
+Satz `↳ modell/stimme` im Journal. Speicher des Dienstes am 2026-11-09 von
+9,5 auf 5,5 GB (TensorRT-Engine mit Obergrenze 2000 statt 3000 Frames, vLLM
+0,07 mit `max_model_len` 4096; Messung im MemPalace). Bestätigung, „Ja?“ und
+Quittungen sprechen noch Piper (Schritt 2). Tests: `tests/test_stimmen.py`.
+
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 
 `RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die

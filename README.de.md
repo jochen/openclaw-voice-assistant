@@ -333,6 +333,27 @@ Daheim angehört: kein Knacken, keine Pausen zwischen den Sätzen, ein Barge-in
 mitten im Strom beendet ihn sofort. Gestreamt wird nur zum Haupt-Gerät;
 Handy-Satelliten, Bestätigungen und Ansagen von außen bleiben bei Dateien.
 
+**Ein eigener Dienst für Antworten, mit eigenen Stimmen (`antwort_tts_*`,
+optional, braucht `tts_strom`).** Antworten können von einem TTS mit
+Stimmklonen kommen (hier CosyVoice3 hinter einem kleinen Speaches-kompatiblen
+Dienst), während Bestätigungen und Quittungen bei Speaches/Piper bleiben.
+Reihenfolge je Satz: Antwort-Dienst → Speaches → Piper lokal — ist der Dienst
+weg, hört man die andere Stimme und merkt es so. Die Stimmen verwaltet **der
+Assistent**, nicht der Dienst: `<workspace>/voice/stimmen/<name>/` enthält
+`probe.wav` (die Referenz), `probe.txt` (was darin gesagt wird) und optional
+`meta.json` (`beschreibung`, `freigegeben`). Antwortet der Dienst bei einer
+Stimme mit 404, lädt der Assistent sie hoch (`POST /v1/voices`) und fragt
+noch einmal; die Kennung trägt einen Namensraum je Assistent und einen
+Prüfwert der Probe, so sehen sich zwei Häuser nie gegenseitig, und eine
+ersetzte Probe wird von selbst übernommen. Mit so einem Lager bieten die
+Stimm-Werkzeuge des Brains (`voice_list_voices`, `voice_set_voice`) diese
+Stimmen an statt der Piper-Liste (`voice_assistant/services/stimmen.py`).
+Gelernt beim Auswählen nach Gehör: die geklonte Stimme übernimmt
+**Lautstärke, Tempo und Stimmung der Probe**. Eine gespielte Szene klang zu
+emotional, eine Probe mit −31 LUFS kam 14 dB leiser heraus als die anderen —
+Proben normalisieren (z. B. ffmpeg `loudnorm` auf −18 LUFS) und ruhige
+Sprache von 5–12 s nehmen; längere Proben machen den Dienst auch langsamer.
+
 ## Ein Handy als Satellit (`satelliten:`, optional)
 
 Ein Mikrofon deckt nicht die ganze Wohnung ab. Für Räume, in denen man selten
