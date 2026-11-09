@@ -173,6 +173,30 @@ def _sprache_schneiden(pcm: np.ndarray, rate: int) -> np.ndarray:
     return pcm[max(0, laut[0] * f - rand):min(len(pcm), (laut[-1] + 1) * f + rand)]
 
 
+def text_gehoert(mitschrift: str, ziel: str) -> bool:
+    """Steht jedes Wort des (kurzen) Ziels unscharf in der Mitschrift?"""
+    import difflib
+    def w(t: str) -> list[str]:
+        return re.findall(r"[a-zäöüß0-9]+", t.lower())
+    hoert = w(mitschrift)
+    return bool(hoert) and all(
+        any(z == h or difflib.SequenceMatcher(None, z, h).ratio() >= 0.7 for h in hoert)
+        for z in w(ziel))
+
+
+def stt_pruefer(asr):
+    """Prüfer für AntwortTts aus einem STT mit ``_anfrage(wav16k, kontext)``."""
+    def pruefen(pcm: np.ndarray, rate: int, ziel: str) -> bool:
+        from scipy.signal import resample_poly
+        x = resample_poly(pcm.astype(np.float32), 16000, rate) if rate != 16000 else pcm
+        mitschrift = asr._anfrage(AntwortTts._wav_bytes(np.clip(x, -32768, 32767), 16000), None) or ""
+        ok = text_gehoert(mitschrift, ziel)
+        if not ok:
+            print(f"🗣️  Kandidat für {ziel!r} verworfen, gehört: {mitschrift!r}")
+        return ok
+    return pruefen
+
+
 def wav_dauer(pfad: str) -> float:
     with wave.open(pfad, "rb") as w:
         return w.getnframes() / float(w.getframerate())
@@ -187,12 +211,16 @@ class AntwortTts(SpeachesTts):
     ruft dafür ``_modell_laden``)."""
 
     def __init__(self, lager: StimmenLager, state, timeout: float = 8.0,
-                 cache: str | None = None) -> None:
+                 cache: str | None = None, pruefen=None) -> None:
+        """pruefen: Callable[[np.ndarray, int, str], bool] | None — hört ein
+        Kandidat für einen festen Satz wirklich diesen Satz? (STT-Rückprobe;
+        Anlass: ein „Okay.“-Kandidat war nur „äm“, Jochen 2026-11-09)."""
         self._name: str | None = None
         super().__init__(state, lager.dienst_url, lager.modell, lager.standard,
                          fest=True, timeout=timeout)
         self.lager = lager
         self.cache = cache
+        self.pruefen = pruefen
         self._in_arbeit: set[str] = set()
         self._cache_lock = threading.Lock()
         FREMDE_MODELLE.add(lager.modell)
@@ -267,8 +295,15 @@ class AntwortTts(SpeachesTts):
         for _ in range(_FEST_VERSUCHE):
             pcm, rate = self._roh(text, name)
             kern = _sprache_schneiden(pcm, rate)
-            if len(kern) > 0.15 * rate:
-                kandidaten.append((abs(len(kern) / rate - _erwartet_s(text)), kern, rate))
+            if len(kern) <= 0.15 * rate:
+                continue
+            if self.pruefen is not None:
+                try:
+                    if not self.pruefen(kern, rate, text):
+                        continue
+                except Exception as e:  # noqa: BLE001 — Prüfer weg: ohne ihn weiter
+                    log.warning("STT-Rückprobe fester Satz ausgefallen: %s", e)
+            kandidaten.append((abs(len(kern) / rate - _erwartet_s(text)), kern, rate))
         if not kandidaten:
             return None
         _, kern, rate = min(kandidaten, key=lambda k: k[0])

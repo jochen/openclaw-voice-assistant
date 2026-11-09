@@ -232,6 +232,30 @@ class FesteSaetzeTest(_Basis):
         self.assertNotIn("sample_rate", _Cosy.anfragen[-1])
 
 
+class PruefenTest(_Basis):
+    def test_text_gehoert(self):
+        from voice_assistant.services.stimmen import text_gehoert
+        self.assertTrue(text_gehoert("Okay.", "Okay."))
+        self.assertTrue(text_gehoert("Okey!", "Okay."))
+        self.assertFalse(text_gehoert("Äm.", "Okay."))
+        self.assertFalse(text_gehoert("", "Ja?"))
+        self.assertTrue(text_gehoert("Ja, ja?", "Ja?"))
+
+    def test_verworfene_kandidaten_zaehlen_nicht(self):
+        cache = tempfile.mkdtemp()
+        try:
+            gesehen = []
+            t = AntwortTts(self.lager, SpeachesState(), cache=cache,
+                           pruefen=lambda pcm, rate, ziel: gesehen.append(ziel) or False)
+            self.assertIsNone(t.feste_datei("Okay."))
+            self.assertEqual(len(gesehen), 5)
+            ok = AntwortTts(self.lager, SpeachesState(), cache=cache,
+                            pruefen=lambda pcm, rate, ziel: True)
+            self.assertIsNotNone(ok.feste_datei("Okay."))
+        finally:
+            shutil.rmtree(cache)
+
+
 class SprechenUeberStromTest(_Basis):
     def test_speak_geht_ueber_den_strom_zum_antwort_dienst(self):
         from voice_assistant.state import tts_lock

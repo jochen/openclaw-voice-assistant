@@ -7,8 +7,14 @@ nicht gehört. Hier entscheidet das Ohr: je Stimme und Satz die aktuelle
 Fassung und neue Kandidaten, „nehmen“ schreibt den Kandidaten in den Cache
 des Assistenten, ab dem nächsten Mal spielt er ihn (kein Neustart nötig).
 
+Erste Runde 2026-11-09 (Jochen): bei den Denk-Phrasen sind die Unterschiede
+nur Nuancen, das Anhören lohnt nicht — sie sind nur mit ``--alle`` dabei. Bei
+„Ja?“ und „Okay.“ dagegen große Unterschiede in der Betonung (fragend,
+fordernd), und ein „Okay.“-Kandidat war nur „äm“. Deshalb geht jeder Kandidat
+durch Qwen-ASR (``stt_pruefer``), wer nicht als der Satz gehört wird, fällt raus.
+
     ow-venv/bin/python -m tools.feste_saetze_hoeren [--kandidaten 6] [--port 8766]
-                                                    [--stimme gaston2 ...] [--satz "Ja?" ...]
+                                                    [--stimme gaston2 ...] [--satz "Ja?" ...] [--alle]
 
 Läuft dort, wo der Assistent läuft (Profil, Lager, Cache von dort). Die Seite
 ist nur im eigenen Netz erreichbar und gehört nicht als Artifact ins Netz:
@@ -32,8 +38,9 @@ import urllib.parse
 from voice_assistant.config import STIMMEN_CACHE_DIR, STIMMEN_DIR, load_profile
 from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stimmen import (
-    AntwortTts, StimmenLager, _sprache_schneiden, feste_saetze, wav_dauer,
+    AntwortTts, StimmenLager, _sprache_schneiden, feste_saetze, stt_pruefer, wav_dauer,
 )
+from voice_assistant.services.stt import LlamaCppAsrStt
 
 
 class Werkstatt:
@@ -56,6 +63,8 @@ class Werkstatt:
             pcm, rate = self.tts._roh(satz, stimme)
             kern = _sprache_schneiden(pcm, rate)
             if len(kern) < 0.1 * rate:
+                continue
+            if self.tts.pruefen is not None and not self.tts.pruefen(kern, rate, satz):
                 continue
             with self.lock:
                 liste = self.kandidaten.setdefault((stimme, satz), [])
@@ -194,6 +203,7 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--stimme", action="append", help="nur diese Stimme(n)")
     ap.add_argument("--satz", action="append", help="nur diese(n) Satz/Sätze")
+    ap.add_argument("--alle", action="store_true", help="auch die Denk-Phrasen")
     ap.add_argument("--ordner", default=os.path.join(STIMMEN_CACHE_DIR, "_kandidaten"))
     a = ap.parse_args()
 
@@ -203,9 +213,12 @@ def main() -> int:
         return 1
     lager = StimmenLager(p.antwort_tts_stimmen or STIMMEN_DIR, p.antwort_tts_namensraum or p.name,
                          p.antwort_tts_url, p.antwort_tts_model, p.antwort_tts_voice, timeout=30)
-    tts = AntwortTts(lager, SpeachesState(), timeout=30, cache=STIMMEN_CACHE_DIR)
+    pruefen = (stt_pruefer(LlamaCppAsrStt(p.stt_llamacpp_url, timeout=30, sprache="German"))
+               if p.stt_llamacpp_url else None)
+    tts = AntwortTts(lager, SpeachesState(), timeout=30, cache=STIMMEN_CACHE_DIR, pruefen=pruefen)
     stimmen = a.stimme or lager.namen()
-    saetze = a.satz or feste_saetze(p)
+    denk = set(p.locale.thinking_phrases)
+    saetze = a.satz or [t for t in feste_saetze(p) if a.alle or t not in denk]
     w = Werkstatt(tts, stimmen, saetze, a.ordner, a.kandidaten)
     threading.Thread(target=w.alle, daemon=True).start()
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", a.port), _handler(w))

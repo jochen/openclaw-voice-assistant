@@ -87,7 +87,9 @@ from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import (
     LlamaCppAsrStt, LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
 )
-from voice_assistant.services.stimmen import AntwortTts, StimmenLager, feste_saetze, wav_dauer
+from voice_assistant.services.stimmen import (
+    AntwortTts, StimmenLager, feste_saetze, stt_pruefer, wav_dauer,
+)
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -1250,8 +1252,12 @@ def run() -> None:
     antwort_tts = None
     if profile.tts_strom and profile.antwort_tts_url:
         if stimmen_lager is not None:
-            antwort_tts = AntwortTts(stimmen_lager, SpeachesState(), timeout=8,
-                                     cache=STIMMEN_CACHE_DIR)
+            antwort_tts = AntwortTts(
+                stimmen_lager, SpeachesState(), timeout=8, cache=STIMMEN_CACHE_DIR,
+                # feste Sätze nur, wenn Qwen-ASR sie als diesen Text hört
+                pruefen=stt_pruefer(LlamaCppAsrStt(profile.stt_llamacpp_url, timeout=15,
+                                                   sprache="German"))
+                if profile.stt_llamacpp_url else None)
             _antwort["tts"] = antwort_tts
             # Hochladen und die festen Sätze rechnen, beides im Hintergrund
             # (vorbereiten lädt beim ersten 404 selbst hoch).
