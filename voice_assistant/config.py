@@ -792,6 +792,13 @@ class Profile:
     antwort_tts_url: str = ""
     antwort_tts_model: str = ""
     antwort_tts_voice: str = ""
+    # Eigene Stimmen dazu, lokal verwaltet (services/stimmen.py, seit
+    # 2026-11-09). Liegt antwort_tts_voice dort, wird die Auswahl des Brains zu
+    # diesen Stimmen, und der Dienst bekommt sie bei Bedarf hochgeladen.
+    # Leer = <workspace>/voice/stimmen. Namensraum trennt die Häuser beim
+    # Dienst; leer = Profilname.
+    antwort_tts_stimmen: str = ""
+    antwort_tts_namensraum: str = ""
 
     # Telegram
     telegram_bot_token: str = ""
@@ -1325,6 +1332,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         antwort_tts_url=str(raw.get("antwort_tts_url", "")),
         antwort_tts_model=str(raw.get("antwort_tts_model", "")),
         antwort_tts_voice=str(raw.get("antwort_tts_voice", "")),
+        antwort_tts_stimmen=str(raw.get("antwort_tts_stimmen", "")),
+        antwort_tts_namensraum=str(raw.get("antwort_tts_namensraum", "")),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),
@@ -1481,6 +1490,8 @@ WAKE_REVIEW_PATH = os.path.join(WORKSPACE, "wake_review.jsonl")
 SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
 SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
+# Eigene Stimmen des Antwort-Dienstes (services/stimmen.py), privat.
+STIMMEN_DIR = os.path.join(VOICE_DIR, "stimmen")
 
 # Wer zuletzt per Stimme gesprochen hat — geschrieben nach JEDEM Voice-Turn,
 # gelesen von Werkzeugen AUSSERHALB dieses Repos (siehe SPEAKER_STATE.md), die

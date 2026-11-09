@@ -297,6 +297,13 @@ def _wav_kopf_lesen(resp) -> tuple[int, int]:
                 raise ValueError(f"WAV-Format {fmt}/{bits} bit nicht unterstuetzt")
 
 
+# Modelle anderer Dienste (CosyVoice, services/stimmen.py). Steht so eines in
+# voice_state, hat jemand eine Stimme des Antwort-Dienstes gewählt; Speaches
+# kennt es nicht und spricht dann mit seiner Profil-Stimme (Rückfall,
+# Bestätigung), statt mit einem fremden Modellnamen zu scheitern.
+FREMDE_MODELLE: set[str] = set()
+
+
 class SpeachesTts:
     def __init__(self, state: SpeachesState, base: str, model: str, voice: str,
                  fest: bool = False, timeout: float = SPEACHES_TIMEOUT) -> None:
@@ -314,8 +321,9 @@ class SpeachesTts:
     def _parameter(self, text: str) -> tuple[str, str, float, str]:
         from voice_assistant.state import voice_state
         vm, vv, vsp = voice_state.get()
-        model = self.model if self.fest else (vm or self.model)
-        voice = self.voice if self.fest else (vv or self.voice)
+        eigen = not self.fest and vm not in FREMDE_MODELLE
+        model = (vm or self.model) if eigen else self.model
+        voice = (vv or self.voice) if eigen else self.voice
         speed = vsp if vsp else 1.0
         # Problemwoerter als [[Phoneme]] (services/aussprache.py). Erst HIER,
         # nach clean_for_tts — das entfernt eckige Klammern.
@@ -703,12 +711,17 @@ class ReplySpeaker:
         vom Profil ab), gilt die: dann nur speaches. Ein Piper-Modell hat genau
         eine Stimme, dort zählt nur das Modell: die gespeicherte Wahl „thorsten“
         und der Profil-Default „de_DE-thorsten-medium“ sind dieselbe Stimme
-        (2026-11-08 hat genau das CosyVoice still übersprungen)."""
+        (2026-11-08 hat genau das CosyVoice still übersprungen). Eine Stimme
+        des Antwort-Dienstes selbst (Modell = antwort_tts.model) ist keine
+        Abweichung: welche, entscheidet AntwortTts (services/stimmen.py)."""
         from voice_assistant.state import voice_state
         vm, vv, _ = voice_state.get()
         vm = vm or self.speaches.model
-        eigene_wahl = vm != self.speaches.model or (
-            "piper" not in vm.lower() and (vv or self.speaches.voice) != self.speaches.voice)
+        if self.antwort_tts is not None and vm == self.antwort_tts.model:
+            eigene_wahl = False  # eine Stimme des Antwort-Dienstes gewählt
+        else:
+            eigene_wahl = vm != self.speaches.model or (
+                "piper" not in vm.lower() and (vv or self.speaches.voice) != self.speaches.voice)
         kandidaten = []
         if self.antwort_tts is not None and not eigene_wahl:
             kandidaten.append(self.antwort_tts)

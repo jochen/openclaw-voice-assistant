@@ -129,7 +129,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _active_state(self) -> dict:
         from voice_assistant.state import voice_state
 
-        model, voice, speed = voice_state.get()
+        if _voice_controller is not None and hasattr(_voice_controller, "wirksam"):
+            model, voice, speed = _voice_controller.wirksam()
+        else:
+            model, voice, speed = voice_state.get()
         return {"model": model, "voice": voice, "speed": speed}
 
     def _read_json_body(self) -> dict:

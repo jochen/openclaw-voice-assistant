@@ -36,6 +36,7 @@ from voice_assistant.config import (
     MIN_SPEECH_CHUNKS,
     OPENCLAW_OVERALL_TIMEOUT,
     PIPER_OUT,
+    STIMMEN_DIR,
     RATE_OW,
     RECORDING_MAX_SEC,
     SILENCE_CHUNKS_LIMIT,
@@ -85,6 +86,7 @@ from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import (
     LlamaCppAsrStt, LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
 )
+from voice_assistant.services.stimmen import AntwortTts, StimmenLager
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -1050,11 +1052,24 @@ def run() -> None:
     def _rerender_ack() -> None:
         rerender_ja_speaches(speaches_tts, profile.locale.wakeword_ack)
 
+    # Eigene Stimmen des Antwort-Dienstes (services/stimmen.py): nur, wenn die
+    # Standard-Stimme des Profils dort liegt — sonst alter Weg (Stimme beim Dienst).
+    stimmen_lager = None
+    if profile.tts_strom and profile.antwort_tts_url:
+        _lager = StimmenLager(
+            profile.antwort_tts_stimmen or STIMMEN_DIR,
+            profile.antwort_tts_namensraum or profile.name,
+            profile.antwort_tts_url, profile.antwort_tts_model, profile.antwort_tts_voice,
+        )
+        if _lager.hat(profile.antwort_tts_voice):
+            stimmen_lager = _lager
+            print(f"🗣️  Eigene Stimmen ({_lager.ordner}): {', '.join(_lager.namen())}")
     voice_controller = VoiceController(
         base=profile.speaches_base,
         default_model=profile.speaches_tts_model,
         default_voice=profile.speaches_tts_voice,
         on_voice_changed=_rerender_ack,
+        stimmen=stimmen_lager,
     )
     voice_state.set(
         model=profile.speaches_tts_model,
@@ -1220,11 +1235,16 @@ def run() -> None:
     stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt, llamacpp_stt)
     antwort_tts = None
     if profile.tts_strom and profile.antwort_tts_url:
-        antwort_tts = SpeachesTts(
-            SpeachesState(), profile.antwort_tts_url,
-            profile.antwort_tts_model, profile.antwort_tts_voice,
-            fest=True, timeout=8,
-        )
+        if stimmen_lager is not None:
+            antwort_tts = AntwortTts(stimmen_lager, SpeachesState(), timeout=8)
+            stimmen_lager.vorab_hochladen(profile.antwort_tts_voice)
+        else:
+            # Stimme liegt nur beim Dienst (alter Weg, vor dem Lager)
+            antwort_tts = SpeachesTts(
+                SpeachesState(), profile.antwort_tts_url,
+                profile.antwort_tts_model, profile.antwort_tts_voice,
+                fest=True, timeout=8,
+            )
     speaker = ReplySpeaker(
         speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix,
         strom_oeffnen=getattr(audio_sink, "strom_oeffnen", None) if profile.tts_strom else None,
