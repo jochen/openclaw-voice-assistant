@@ -998,6 +998,22 @@ Texten unzuverlässig („Ja?“ roh 0,8–1,6 s, teils 1 s Stille davor; Piper
 und er wird im Hintergrund gerechnet. Das Echo-Fenster des „Ja?“ wächst mit
 dessen Länge (`_ACK_ECHO_NACH_SEC`, mindestens die alte 1 s). Rückfall überall
 Piper thorsten. Tests: `tests/test_stimmen.py`.
+**Satzabbrüche liegen an der Probe** (`tools/tts_abbruch_test.py`): die
+zweisätzige 12-s-Probe gaston2 brach 9/60 heikle Sätze ab, jeder ihrer Sätze
+allein 0/60. Daher ein Satz je Probe, nach Gehör gewählt
+(`tools/stimmprobe_zerlegen.py`; SER und Tonhöhe sagten das Ohr-Urteil nicht
+voraus). Seit 2026-11-09 abends spricht daheim `gaston` (erster Satz).
+**Neue Stimmen per Telegram (`services/stimmen_eingang.py`, Plugin
+`voice_stimme_einreichen`/`voice_stimme_waehlen`, Sprech-Server
+`/stimmen/*`):** derselbe Weg automatisch — zerlegen, Vorsortieren nach dem
+Messbaren (Ende mitten im Wort, Testsatz zweimal mitgeschrieben: fremdes Wort
+am Anfang, fehlendes Ende, Länge außerhalb 0,75–1,35 des Medians), bis zu 5
+Hörproben als Sprachnachricht in den Hauskanal, Wahl per Nummer, Abbruch-Test
+4×15, nur 0 Abbrüche kommt ins Lager. Nur Dateien aus OpenClaws
+Eingangs-Ablage (`OPENCLAW_MEDIA_DIRS`). Jeder darf (Jochen: per Telegram
+sind nur Berechtigte); Mikro-Aufnahmen als Quelle sind offen. Die
+Qwen-Prüfung ist bei Einzelwörtern blind (ein „hh oh“ hörte sie als „okay“),
+Ja/Okay bleiben Sache des Ohrs. Tests: `tests/test_stimmen_eingang.py`.
 
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 

@@ -38,6 +38,8 @@ from voice_assistant.config import (
     PIPER_OUT,
     STIMMEN_DIR,
     STIMMEN_CACHE_DIR,
+    STIMMEN_EINGANG_DIR,
+    OPENCLAW_MEDIA_DIRS,
     RATE_OW,
     RECORDING_MAX_SEC,
     SILENCE_CHUNKS_LIMIT,
@@ -90,6 +92,7 @@ from voice_assistant.services.stt import (
 from voice_assistant.services.stimmen import (
     AntwortTts, StimmenLager, feste_saetze, stt_pruefer, wav_dauer,
 )
+from voice_assistant.services.stimmen_eingang import StimmenEingang
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -1336,8 +1339,20 @@ def run() -> None:
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
     start_enroll_server()
+    # Neue Stimmen per Telegram (Schritt 3): braucht Lager, Qwen und den Chat
+    stimmen_eingang = None
+    if isinstance(antwort_tts, AntwortTts) and profile.stt_llamacpp_url:
+        _tg = (profile.telegram_bot_token, profile.telegram_chat_id)
+        stimmen_eingang = StimmenEingang(
+            stimmen_lager,
+            LlamaCppAsrStt(profile.stt_llamacpp_url, timeout=30, sprache="German"),
+            melden=lambda text: telegram.send(*_tg, text),
+            melden_audio=lambda ogg, unterschrift: telegram.send_voice(*_tg, ogg, unterschrift),
+            ordner=STIMMEN_EINGANG_DIR, erlaubt=OPENCLAW_MEDIA_DIRS,
+            vorbereiten=lambda name: antwort_tts.vorbereiten(_feste_saetze(), name=name),
+        )
     start_speak_server(voice_controller=voice_controller, kuechentimer=kuechentimer,
-                       mikro=mikro)
+                       mikro=mikro, stimmen_eingang=stimmen_eingang)
 
     def _ansage_daempfen():
         # Geht die Ansage ans Handy (audio/satellit.py, ziel), bleibt die Musik

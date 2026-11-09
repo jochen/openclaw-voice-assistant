@@ -50,41 +50,19 @@ Messreihe
 from __future__ import annotations
 
 import argparse
-import difflib
-import io
 import json
 import os
-import re
 import statistics
 import sys
 import time
-import wave
-
-import numpy as np
-from scipy.signal import resample_poly
 
 from voice_assistant.config import load_profile
 from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stimmen import AntwortTts, StimmenLager
+from voice_assistant.services.stimmen_eingang import aehnlich, ende_da, wav16k, woerter  # noqa: F401
 from voice_assistant.services.stt import LlamaCppAsrStt
 
 SET = os.path.join(os.path.dirname(__file__), "..", "testsets", "tts_abbruch")
-
-
-def woerter(text: str) -> list[str]:
-    return [w for w in re.findall(r"[a-zäöüß0-9]+", text.lower()) if w]
-
-
-def aehnlich(a: str, b: str) -> bool:
-    return a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.7
-
-
-def ende_da(satz: str, mitschrift: str) -> bool:
-    ziel, hört = woerter(satz), woerter(mitschrift)
-    if not ziel:
-        return True
-    schluss = hört[-4:]
-    return any(aehnlich(z, h) for z in ziel[-2:] for h in schluss)
 
 
 def variante(satz: str, art: str) -> str:
@@ -96,17 +74,6 @@ def variante(satz: str, art: str) -> str:
             return s + "."
         return s
     return satz
-
-
-def wav16k(pcm: np.ndarray, rate: int) -> bytes:
-    x = resample_poly(pcm.astype(np.float32), 16000, rate) if rate != 16000 else pcm.astype(np.float32)
-    b = io.BytesIO()
-    with wave.open(b, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(16000)
-        w.writeframes(np.clip(x, -32768, 32767).astype("<i2").tobytes())
-    return b.getvalue()
 
 
 def main() -> int:

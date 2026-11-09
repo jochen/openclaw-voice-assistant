@@ -351,8 +351,29 @@ expected length is kept — listen to the result once. The echo window after
 the ack grows with its length. Learned while choosing clips by ear:
 the cloned voice copies **loudness, pace and mood of the clip**. An acted
 scene sounded too emotional, and a clip at −31 LUFS came out 14 dB quieter
-than the others — normalise clips (e.g. ffmpeg `loudnorm` to −18 LUFS) and
-prefer calm speech of 5–12 s; longer clips also make the service slower.
+than the others — normalise clips (e.g. ffmpeg `loudnorm` to −18 LUFS).
+And use **one sentence**: a two-sentence 12 s clip made the service cut 9 of
+60 tricky replies short, each of its sentences on its own 0 of 60
+(`tools/tts_abbruch_test.py`, a speech-to-text round trip). Every excerpt of
+the same clip sounds different, and neither speech-emotion scores nor pitch
+predicted which one a listener prefers, so choose by ear:
+`tools/stimmprobe_zerlegen.py` cuts a clip at its pauses and serves a local
+page with each piece and test sentences spoken with it.
+
+**New voices from the chat (`voice_stimme_einreichen`,
+`voice_stimme_waehlen`).** Send the assistant's chat an audio file or voice
+message and say it should become a voice. The brain passes the received file
+(only files from OpenClaw's inbound media folder are accepted) to the
+assistant, which does the same in the background: cut at pauses, normalise,
+transcribe; drop what can be measured as bad (a piece that ends mid-word —
+the clone continues it, "Abbrauchst du…" — a test sentence with a foreign
+word at the start, a missing end, or a length far off the others, which
+means silence, breathing or hiss); then up to five pieces arrive in the chat
+as voice messages, each the piece followed by a test sentence. Answer with a
+number; that piece runs through the truncation test (60 sentences, about
+four minutes) and only with 0 cut-offs it lands in the store, with its fixed
+phrases rendered. Switching to it stays a separate step. One job at a time
+(`voice_assistant/services/stimmen_eingang.py`).
 
 ## A phone as a satellite (`satelliten:`, optional)
 
@@ -1424,6 +1445,7 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 | `voice_enroll_speaker(name)` | store the last recording as this speaker's reference |
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | manage known speakers |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (also per speaker via `for_speaker`) |
+| `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | new voice from an audio file sent in the chat: listen to pieces, pick one, truncation test |
 | `voice_analyze_last_output(…)` | re-analyse the assistant's own last spoken reply (text fidelity, timing, prosody) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | fix how a word is pronounced, at once ("Sauce is said *Sohße*"); see *Pronunciation list* |
 

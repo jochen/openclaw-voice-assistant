@@ -359,8 +359,30 @@ nach dem „Ja?“ wächst mit dessen Länge.
 Gelernt beim Auswählen nach Gehör: die geklonte Stimme übernimmt
 **Lautstärke, Tempo und Stimmung der Probe**. Eine gespielte Szene klang zu
 emotional, eine Probe mit −31 LUFS kam 14 dB leiser heraus als die anderen —
-Proben normalisieren (z. B. ffmpeg `loudnorm` auf −18 LUFS) und ruhige
-Sprache von 5–12 s nehmen; längere Proben machen den Dienst auch langsamer.
+Proben normalisieren (z. B. ffmpeg `loudnorm` auf −18 LUFS). Und **einen
+Satz** nehmen: mit einer zweisätzigen 12-s-Probe brach der Dienst 9 von 60
+heiklen Antworten vorzeitig ab, mit jedem ihrer Sätze allein 0 von 60
+(`tools/tts_abbruch_test.py`, STT-Rückprobe). Jeder Ausschnitt derselben
+Probe klingt anders, und weder Stimmungswerte (SER) noch Tonhöhe sagten
+voraus, welcher gefällt — also nach Gehör wählen:
+`tools/stimmprobe_zerlegen.py` schneidet eine Probe an ihren Pausen und zeigt
+auf einer lokalen Seite jedes Stück samt Testsätzen damit.
+
+**Neue Stimmen aus dem Chat (`voice_stimme_einreichen`,
+`voice_stimme_waehlen`).** Eine Audiodatei oder Sprachnachricht in den Chat
+des Assistenten schicken und sagen, daraus solle eine Stimme werden. Der
+Brain gibt die empfangene Datei weiter (nur Dateien aus OpenClaws
+Eingangs-Ablage werden angenommen), der Assistent macht im Hintergrund
+dasselbe: an Pausen schneiden, normalisieren, mitschreiben; was messbar
+schlecht ist, fliegt raus (ein Stück endet mitten im Wort — der Klon setzt es
+fort, „Abbrauchst du…“ —, ein Testsatz mit fremdem Wort am Anfang, fehlendem
+Ende oder einer Länge weit weg von den anderen, also Stille, Atmen oder
+Zischen); dann kommen bis zu fünf Stücke als Sprachnachrichten in den Chat,
+je das Stück und danach ein Testsatz damit. Mit einer Nummer antworten; das
+Stück geht durch den Abbruch-Test (60 Sätze, etwa vier Minuten) und nur mit 0
+Abbrüchen ins Lager, mit vorgerechneten festen Sätzen. Umschalten bleibt ein
+eigener Schritt. Ein Auftrag zur Zeit
+(`voice_assistant/services/stimmen_eingang.py`).
 
 ## Ein Handy als Satellit (`satelliten:`, optional)
 
@@ -1470,6 +1492,7 @@ Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert die Tools, die 
 | `voice_enroll_speaker(name)` | letzte Aufnahme als Referenz dieses Sprechers speichern |
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | bekannte Sprecher verwalten |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (auch pro Sprecher via `for_speaker`) |
+| `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | neue Stimme aus einer Audiodatei im Chat: Stücke anhören, eins wählen, Abbruch-Test |
 | `voice_analyze_last_output(…)` | die eigene zuletzt gesprochene Antwort erneut analysieren (Texttreue, Timing, Prosodie) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | Aussprache eines Worts sofort korrigieren („Sauce spricht man *Sohße*"); siehe *Aussprache-Liste* |
 

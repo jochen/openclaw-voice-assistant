@@ -447,6 +447,88 @@ export default definePluginEntry({
       },
     });
 
+    /** POST an den Sprech-Server, Antwort als Werkzeug-Ergebnis. */
+    async function stimmenAuftrag(pfad, payload) {
+      try {
+        const res = await fetch(`${SPEAK_BASE}${pfad}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          data = { raw: text };
+        }
+        if (!res.ok) {
+          return textResult(`Geht nicht: ${data?.error ?? `HTTP ${res.status}`}`, { ok: false });
+        }
+        return textResult(data?.text ?? "Läuft.", { ok: true, details: data });
+      } catch (err) {
+        return textResult(`Voice-Dienst nicht erreichbar: ${err.message}`, { ok: false });
+      }
+    }
+
+    api.registerTool({
+      name: "voice_stimme_einreichen",
+      label: "Neue Stimme aus Audiodatei",
+      description:
+        "Legt aus einer Audiodatei (Sprachnachricht, mp3, ogg, wav), die der Nutzer im Chat geschickt hat, " +
+        "eine neue Stimme an, mit der Gaston sprechen kann. Aufrufen, wenn jemand eine Datei schickt und sagt, " +
+        "daraus solle eine Stimme werden; fehlt der Name, kurz nachfragen. datei ist der lokale Pfad der " +
+        "empfangenen Datei (unter .openclaw/…/media/inbound/). Die Aufbereitung läuft im Hintergrund: " +
+        "die Probe wird zerlegt, schlechte Stücke fliegen raus, die besten (höchstens fünf) kommen als " +
+        "Sprachnachrichten mit Nummer in den Hauskanal. Danach wählt der Nutzer eine Nummer — dann " +
+        "voice_stimme_waehlen. Du musst die Hörproben nicht selbst schicken. " +
+        "Am besten taugen ruhige, ganze Sätze von einem Sprecher ohne Musik, 5–8 Sekunden je Satz.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["datei", "name"],
+        properties: {
+          datei: { type: "string", description: "Lokaler Pfad der empfangenen Audiodatei." },
+          name: { type: "string", description: "Name der neuen Stimme (ein Wort, z. B. 'opa' oder 'erzaehler')." },
+          beschreibung: { type: "string", description: "Optional: kurze Beschreibung für voice_list_voices (z. B. 'tiefe, ruhige Männerstimme')." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        return stimmenAuftrag("/stimmen/einreichen", {
+          datei: String(params?.datei ?? "").trim(),
+          name: String(params?.name ?? "").trim(),
+          beschreibung: String(params?.beschreibung ?? "").trim(),
+        });
+      },
+    });
+
+    api.registerTool({
+      name: "voice_stimme_waehlen",
+      label: "Stück für neue Stimme wählen",
+      description:
+        "Nach voice_stimme_einreichen: der Nutzer hat die Hörproben gehört und nennt eine Nummer " +
+        "(„nimm Stück 2“). Das Stück wird auf abgeschnittene Sätze geprüft (drei bis vier Minuten); " +
+        "besteht es, ist die Stimme angelegt, das Ergebnis kommt in den Hauskanal. Umschalten ist " +
+        "danach ein eigener Schritt (voice_set_voice). name nur angeben, wenn mehrere Stimmen offen sind. " +
+        "text nur, wenn der Nutzer sagt, dass der Text unter dem Stück falsch ist: dann der richtige Wortlaut.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["stueck"],
+        properties: {
+          stueck: { type: "number", description: "Nummer des Stücks aus den Hörproben." },
+          name: { type: "string", description: "Optional: Name der Stimme (Default: zuletzt eingereicht)." },
+          text: { type: "string", description: "Optional: korrigierter Wortlaut des Stücks." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const payload = { stueck: Number(params?.stueck) };
+        if (params?.name) payload.name = String(params.name).trim();
+        if (params?.text) payload.text = String(params.text).trim();
+        return stimmenAuftrag("/stimmen/waehlen", payload);
+      },
+    });
+
     api.registerTool({
       name: "voice_enroll_speaker",
       label: "Stimme anlernen",

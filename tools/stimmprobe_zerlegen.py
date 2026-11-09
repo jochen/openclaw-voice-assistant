@@ -47,76 +47,21 @@ import html
 import http.server
 import json
 import os
-import subprocess
 import sys
-import tempfile
 import threading
 import urllib.parse
-import wave
-
-import numpy as np
 
 from voice_assistant.config import STIMMEN_CACHE_DIR, load_profile
 from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stimmen import AntwortTts, StimmenLager
 from voice_assistant.services.stt import LlamaCppAsrStt
-from tools.tts_abbruch_test import wav16k
+from voice_assistant.services.stimmen_eingang import RATE, laden, normalisieren, stuecke, wav16k
 
-RATE = 24000
 TESTSAETZE = [
     "Im Kellerraum sind es gerade siebzehn Komma neun Grad, draußen sieben Komma fünf.",
     "Brauchst du daraus eine Einkaufsliste für die Zutaten?",
     "Der Akku vom Staubsauger steht bei dreiundsechzig Prozent.",
 ]
-
-
-def laden(pfad: str) -> np.ndarray:
-    roh = subprocess.run(["ffmpeg", "-v", "error", "-i", pfad, "-ac", "1", "-ar", str(RATE),
-                          "-f", "s16le", "-"], capture_output=True, check=True).stdout
-    return np.frombuffer(roh, dtype="<i2")
-
-
-def normalisieren(pcm: np.ndarray, ziel: str) -> None:
-    with tempfile.NamedTemporaryFile(suffix=".wav") as f:
-        with wave.open(f.name, "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(RATE)
-            w.writeframes(pcm.tobytes())
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", f.name, "-af",
-                        "loudnorm=I=-18:TP=-1.5:LRA=11", "-ar", str(RATE), "-ac", "1", ziel], check=True)
-
-
-def stuecke(pcm: np.ndarray, pause: float, mn: float, mx: float) -> list[tuple[int, int]]:
-    """Kandidaten als (anfang, ende) in Samples: zusammenhängende Folgen von
-    Sprachabschnitten zwischen Pausen, Gesamtlänge mn..mx Sekunden."""
-    f = RATE // 50
-    n = len(pcm) // f
-    x = pcm[:n * f].astype(np.float64).reshape(n, f)
-    db = 20 * np.log10(np.sqrt(np.mean(x ** 2, axis=1)) / 32768 + 1e-9)
-    # Schwelle über dem Grundpegel, nicht absolut: Hörspiel-Proben haben
-    # Hintergrund (gastone2: −30 bis −35 dB unter der Spitze, nie „still“).
-    laut = db > np.percentile(db, 10) + 6
-    abschnitte, i = [], 0
-    while i < n:
-        if not laut[i]:
-            i += 1
-            continue
-        j = i
-        stille = 0
-        while j < n and stille * 0.02 < pause:
-            stille = 0 if laut[j] else stille + 1
-            j += 1
-        abschnitte.append((i * f, (j - stille) * f))
-        i = j
-    rand = int(0.08 * RATE)
-    kandidaten = []
-    for a in range(len(abschnitte)):
-        for b in range(a, len(abschnitte)):
-            s, e = max(0, abschnitte[a][0] - rand), min(len(pcm), abschnitte[b][1] + rand)
-            if mn <= (e - s) / RATE <= mx:
-                kandidaten.append((s, e))
-    return kandidaten
 
 
 def zerlegen(a, p, lager_dir: str, kand_pfad: str) -> list[dict]:

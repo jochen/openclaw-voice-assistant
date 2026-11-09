@@ -22,6 +22,10 @@ Endpoints:
   POST /mikro         → {stumm: true|false|"umschalten", minuten?, unbegrenzt?,
                         ansage?, quelle?} → {ok, text, stumm, bis}; gesprochen
                         wird nur mit ansage true (der Brain spricht selbst)
+  POST /stimmen/einreichen → {datei, name, beschreibung?} neue Stimme aus einer
+                        Telegram-Datei aufbereiten; Hörproben kommen per Telegram
+  POST /stimmen/waehlen    → {stueck, name?, text?} Stück prüfen und anlegen
+                        (services/stimmen_eingang.py)
 """
 
 from __future__ import annotations
@@ -58,6 +62,7 @@ from voice_assistant.services.tts import ReplySpeaker
 # (gleiches Muster wie der modul-globale announce_queue-Zustand).
 _voice_controller = None
 _kuechentimer = None
+_stimmen_eingang = None
 _mikro = None
 
 
@@ -134,6 +139,25 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             model, voice, speed = voice_state.get()
         return {"model": model, "voice": voice, "speed": speed}
+
+    def _handle_stimmen(self, was: str) -> None:
+        body = self._read_json_body()
+        if _stimmen_eingang is None:
+            self._send_json(503, {"error": "Eigene Stimmen sind hier nicht eingerichtet "
+                                           "(kein Stimmen-Lager oder keine Qwen-STT)"})
+            return
+        try:
+            if was == "einreichen":
+                erg = _stimmen_eingang.einreichen(str(body.get("datei", "")), str(body.get("name", "")),
+                                                  str(body.get("beschreibung", "") or ""))
+            else:
+                erg = _stimmen_eingang.waehlen(int(body.get("stueck", 0)), body.get("name") or None,
+                                               body.get("text") or None)
+        except (ValueError, RuntimeError, TypeError) as e:
+            self._send_json(409, {"ok": False, "error": str(e)})
+            return
+        print(f"[speak-server] Stimmen {was}: {erg.get('text', '')}")
+        self._send_json(202, erg)
 
     def _read_json_body(self) -> dict:
         try:
@@ -376,6 +400,9 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, {"klingelte": _kuechentimer.klingeln_aus()})
             return
+        if self.path in ("/stimmen/einreichen", "/stimmen/waehlen"):
+            self._handle_stimmen(self.path.rsplit("/", 1)[1])
+            return
         if self.path == "/mikro":
             body = self._read_json_body()
             if _mikro is None:
@@ -421,9 +448,11 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(202, {"queued": True, "length": len(text)})
 
 
-def start_speak_server(voice_controller=None, kuechentimer=None, mikro=None) -> threading.Thread:
-    global _voice_controller, _kuechentimer, _mikro
+def start_speak_server(voice_controller=None, kuechentimer=None, mikro=None,
+                       stimmen_eingang=None) -> threading.Thread:
+    global _voice_controller, _kuechentimer, _mikro, _stimmen_eingang
     _voice_controller = voice_controller
+    _stimmen_eingang = stimmen_eingang
     _kuechentimer = kuechentimer
     _mikro = mikro
     server = HTTPServer((SPEAK_SERVER_HOST, SPEAK_SERVER_PORT), _Handler)

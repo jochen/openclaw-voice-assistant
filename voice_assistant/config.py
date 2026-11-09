@@ -1494,6 +1494,11 @@ SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
 STIMMEN_DIR = os.path.join(VOICE_DIR, "stimmen")
 # Gerechnete feste Sätze je Stimme („Ja?“, Denk-Phrasen), abgeleitet, nicht privat.
 STIMMEN_CACHE_DIR = os.path.join(VOICE_DIR, "stimmen_cache")
+# Eingereichte Proben in Arbeit (services/stimmen_eingang.py), privat.
+STIMMEN_EINGANG_DIR = os.path.join(VOICE_DIR, "stimmen_eingang")
+# Wo OpenClaw Telegram-Dateien ablegt; nur von dort nimmt der Eingang Proben.
+OPENCLAW_MEDIA_DIRS = [os.path.join(_HOME, ".openclaw", "media"),
+                       os.path.join(WORKSPACE, "media")]
 
 # Wer zuletzt per Stimme gesprochen hat — geschrieben nach JEDEM Voice-Turn,
 # gelesen von Werkzeugen AUSSERHALB dieses Repos (siehe SPEAKER_STATE.md), die
