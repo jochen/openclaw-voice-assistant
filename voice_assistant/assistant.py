@@ -87,7 +87,7 @@ from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import (
     LlamaCppAsrStt, LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
 )
-from voice_assistant.services.stimmen import AntwortTts, StimmenLager, wav_dauer
+from voice_assistant.services.stimmen import AntwortTts, StimmenLager, feste_saetze, wav_dauer
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -1059,10 +1059,7 @@ def run() -> None:
     _antwort = {"tts": None}
 
     def _feste_saetze() -> list[str]:
-        saetze = [w.ack for w in profile.wakewords] + list(profile.locale.thinking_phrases)
-        if profile.barge_in.enabled and profile.barge_in.ack:
-            saetze.append(profile.barge_in.ack)
-        return [t for t in dict.fromkeys(saetze) if t]
+        return feste_saetze(profile)
 
     def _rerender_ack() -> None:
         rerender_ja_speaches(speaches_tts, profile.locale.wakeword_ack)

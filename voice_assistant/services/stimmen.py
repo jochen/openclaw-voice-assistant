@@ -146,6 +146,15 @@ _RAND_S = 0.04          # bleibt vor und hinter der Sprache stehen
 _CACHE_MAX = 400        # Dateien je Lager-Cache; älteste fliegen
 
 
+def feste_saetze(profile) -> list[str]:
+    """Die festen Sätze eines Profils: Wakewort-Quittungen, Denk-Phrasen und
+    die Abbruch-Quittung. Geteilt von assistant.py und tools/feste_saetze_hoeren.py."""
+    saetze = [w.ack for w in profile.wakewords] + list(profile.locale.thinking_phrases)
+    if profile.barge_in.enabled and profile.barge_in.ack:
+        saetze.append(profile.barge_in.ack)
+    return [t for t in dict.fromkeys(saetze) if t]
+
+
 def _erwartet_s(text: str) -> float:
     return 0.25 + 0.06 * len(text.strip())
 
