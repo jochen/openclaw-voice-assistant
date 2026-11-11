@@ -67,6 +67,12 @@ def write_current_speaker(
         "status": verdict.status,
         "name": verdict.name,
         "label": verdict.label,
+        # Seit 2026-11-11: bekannt UND über der strengeren Grenze — das liest
+        # die Sprecher-Schranke. Dazu die Werte, damit eine Ablehnung sagen
+        # kann, warum (SPEAKER_STATE.md).
+        "sicher": verdict.ist_sicher,
+        "aehnlichkeit": verdict.aehnlichkeit,
+        "abstand": verdict.abstand,
         "wakeword": wakeword,
         "turn_epoch": round(turn_epoch, 3),
     }

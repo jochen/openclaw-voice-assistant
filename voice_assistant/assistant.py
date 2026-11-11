@@ -1297,11 +1297,17 @@ def run() -> None:
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
     if profile.sprecher_verifikation:
         try:
-            diarizer = SprecherVerifikation(profile.sprecher_schwelle, profile.sprecher_abstand,
-                                            url=profile.sprecher_verifikation_url)
+            _sicher = profile.sprecher_schwelle_sicher
+            diarizer = SprecherVerifikation(
+                profile.sprecher_schwelle, profile.sprecher_abstand,
+                url=profile.sprecher_verifikation_url,
+                schwelle_sicher=_sicher,
+                grenzfall_dir=os.path.join(VOICE_DIR, "sprecher_grenzfaelle") if _sicher > 0 else "",
+            )
             wo = profile.sprecher_verifikation_url or "CPU"
             print(f"✅ Sprecher-Verifikation ({wo}): Schwelle {profile.sprecher_schwelle:.2f}, "
-                  f"Abstand {profile.sprecher_abstand:.2f}")
+                  f"Abstand {profile.sprecher_abstand:.2f}"
+                  + (f", sicher ab {_sicher:.2f}" if _sicher > 0 else ""))
         except Exception as e:
             # Ohne Modell bleibt die Diarization — kein Grund, nicht zu starten.
             print(f"⚠️  Sprecher-Verifikation nicht ladbar ({e}) → Diarization über Speaches")

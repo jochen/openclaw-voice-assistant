@@ -52,6 +52,22 @@ class SpeakerVerdict:
 
     name: str | None = None
     status: str = STATUS_UNBEKANNT
+    # Nur von der Sprecher-Verifikation gesetzt (seit 2026-11-11): beste
+    # Ähnlichkeit, Abstand zur zweitbesten Referenz, und ob das Urteil auch
+    # die strengere Grenze für Folgenreiches hält. None = nicht gemessen.
+    aehnlichkeit: float | None = None
+    abstand: float | None = None
+    sicher: bool | None = None
+
+    @property
+    def ist_sicher(self) -> bool:
+        """Bekannt UND fest genug für Folgenreiches (Sprecher-Schranke).
+
+        Ohne eigene Angabe (Diarization, alte Aufrufer) gilt bekannt als
+        sicher — wie vor 2026-11-11."""
+        if self.status != STATUS_BEKANNT or not self.name:
+            return False
+        return self.sicher is not False
 
     @property
     def available(self) -> bool:
@@ -280,7 +296,8 @@ def run_diarization(
         # Neutral beschriftet: dasselbe Urteil kommt von der Diarization ODER
         # der Sprecher-Verifikation (die ihre Werte vorher selbst druckt).
         # "Sprecher: " bleibt — Journal-Auswertungen suchen danach.
-        print(f"🎙  Sprecher: {verdict.label}")
+        zusatz = " (nicht sicher)" if verdict.status == STATUS_BEKANNT and not verdict.ist_sicher else ""
+        print(f"🎙  Sprecher: {verdict.label}{zusatz}")
         out.put(verdict)
     except Exception as e:
         # Auch ein Absturz des Workers ist ein Ausfall der Erkennung, kein

@@ -697,6 +697,7 @@ geänderte Referenz wird ohne Neustart neu berechnet. **Schwelle nur gegen
 Vektor rechnen; dessen `_fbank` ist eine wörtliche Kopie — **wer die Rechnung
 hier ändert, ändert sie dort mit**. Gemessen bitgleich (`--url` am Werkzeug).
 Tests: `tests/test_sprecher_verifikation.py`.
+**Zwei Stufen (`sprecher_schwelle_sicher`, seit 2026-11-11, Fablab 0,55):** Rosty, nicht angelernt, kam im Fablab zweimal als jochen durch (0,47/0,40, Abstand zu den übrigen Referenzen ≥ 0,15) — der Abstand misst nur gegen Angelernte. `bekannt` bleibt bei 0,40, `current_speaker.json` hat `sicher`, `aehnlichkeit`, `abstand`, und claw-power liest `sicher`. Grenzfälle mit Audio in `voice/sprecher_grenzfaelle/` (+ `grenzfaelle.jsonl`, max 300) — Rohstoff für ein gehörtes Fablab-Set. 0,55 ist gegen 9 Jochen-Aufnahmen dort (0,43–0,90) und Rostys Höchstwert 0,47 gewählt, nicht gegen ein Ohr-Set.
 
 **Aenderungen hier nur gegen `tests/test_speaker_verdict.py`** (14 Tests, ohne
 Netz). Der Test haelt genau die Bruchlinie fest, an der es schiefging: jeder

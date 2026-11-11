@@ -48,6 +48,9 @@ Daraus folgen die zwei Eigenschaften, die diese Datei haben muss:
   "status": "bekannt",
   "name": "jochen",
   "label": "jochen",
+  "sicher": true,
+  "aehnlichkeit": 0.66,
+  "abstand": 0.25,
   "wakeword": "hey_jarvis",
   "turn_epoch": 1789760322.418
 }
@@ -60,6 +63,8 @@ Daraus folgen die zwei Eigenschaften, die diese Datei haben muss:
 | `status` | `bekannt` · `unbekannt` · `ausgefallen` · `nicht_eingerichtet` |
 | `name` | Sprechername, **nur** bei `bekannt` gesetzt, sonst `null` |
 | `label` | Anzeigeform, identisch mit dem `[Sprecher: …]` im Prompt |
+| `sicher` | `bekannt` **und** fest genug für Folgenreiches (seit 2026-11-11). Ohne eigene Grenze im Profil gleich „bekannt". **Das liest eine Schranke**, nicht `status` |
+| `aehnlichkeit`, `abstand` | nur bei der Sprecher-Verifikation: beste Ähnlichkeit und Abstand zur zweitbesten Referenz, sonst `null` — damit eine Ablehnung sagen kann, warum |
 | `wakeword` | welches Wakeword den Turn ausgelöst hat (oder `null`) |
 | `turn_epoch` | Zeitpunkt des Turns, zu dem das Urteil gehört (Unix, ms-genau). `ts`/`epoch` sind der **Schreibzeitpunkt** — beim Schalten über den Aktuator bis ~2 s später, weil der Sprecher dort erst nach dem Schalten ermittelt wird. Ein älterer Turn überschreibt nie einen neueren (geprüft an `turn_epoch`). Leser rechnen das Alter weiter an `epoch` |
 
@@ -97,6 +102,16 @@ oder schlimmer als „egal" behandeln.
   und Urteil bleiben beim Assistenten, und ein Ausfall der Gegenstelle ist
   `ausgefallen` wie jeder andere Fehler.
 
+**Zwei Stufen (`sprecher_schwelle_sicher`, seit 2026-11-11).** Der Abstand
+misst nur gegen die angelernten Stimmen. Im Fablab kam ein nicht angelerntes
+Mitglied zweimal als jochen durch (0,47 und 0,40; die anderen Referenzen bei
+0,26 und 0,23), echte Jochen-Aufnahmen lagen dort bei 0,43–0,90. Eine höhere
+Schwelle für alles hätte Anrede und Stimme oft verloren. Deshalb bleibt
+`bekannt` bei 0,40, und `sicher` gilt erst ab der zweiten Grenze. Grenzfälle
+(bekannt, aber nicht sicher, oder nur am Abstand gescheitert) hebt die
+Verifikation in `voice/sprecher_grenzfaelle/` auf, Audio und Werte, zum
+Labeln per Ohr.
+
 Für beide gilt derselbe Vertrag: jeder Fehlerweg ist `ausgefallen` — bei der
 Verifikation auch der Fall „Referenz-Dateien da, aber keine berechenbar“, der
 sonst wie `nicht_eingerichtet` aussähe. Beide lesen dieselben Referenzen
@@ -110,7 +125,7 @@ angelernten Stimme zugeordnet, die es nicht war) muss 0 bleiben.
 Die Regel, die aus dem Vorfall folgt:
 
 > Eine folgenreiche Aktion nur ausführen, wenn der **letzte frische** Sprach-Turn
-> den Status `bekannt` hatte.
+> `sicher` war (ältere Dateien ohne das Feld: Status `bekannt`).
 
 „Frisch" heißt: `now - epoch <= FENSTER`. Ist der letzte Sprach-Turn älter (oder
 fehlt die Datei), kommt die Anfrage nicht vom Mikrofon — dann greift die Regel
@@ -141,8 +156,11 @@ def sprecher_freigabe(pfad):
     alter = time.time() - float(d.get("epoch", 0))
     if alter > FENSTER:
         return True, "kein frischer Sprach-Turn"
-    if d.get("status") == "bekannt":
+    if d.get("status") == "bekannt" and d.get("sicher", True):
         return True, f"erkannt: {d.get('name')}"
+    if d.get("status") == "bekannt":
+        return False, (f"die Stimme klang nur ungefähr nach {d.get('name')} "
+                       f"(Ähnlichkeit {d.get('aehnlichkeit')})")
     return False, {
         "unbekannt": "der Sprecher wurde nicht erkannt",
         "ausgefallen": "die Sprechererkennung war ausgefallen",
