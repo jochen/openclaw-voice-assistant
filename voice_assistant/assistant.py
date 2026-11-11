@@ -1344,7 +1344,10 @@ def run() -> None:
     mikro = _start_mikro(profile)
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
-    start_enroll_server()
+    # Anlernen/Löschen meldet der Dienst selbst in den Kanal (seit 2026-11-11)
+    start_enroll_server(
+        melden=(lambda text: telegram.send(profile.telegram_bot_token, profile.telegram_chat_id, text))
+        if profile.telegram_bot_token and profile.telegram_chat_id else None)
     # Neue Stimmen per Telegram (Schritt 3): braucht Lager, Qwen und den Chat
     stimmen_eingang = None
     if isinstance(antwort_tts, AntwortTts) and profile.stt_llamacpp_url:

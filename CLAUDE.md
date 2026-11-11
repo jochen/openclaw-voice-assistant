@@ -1445,6 +1445,9 @@ Beschreibung nie und nannte den Trainingssatz nicht. Gemessen, siehe Werkzeug.
 Ein unbekannter Sprecher darf einen neuen Namen anlernen, eine bestehende
 Referenz überschreibt nur ein erkannter (`enroll_server.ueberschreiben_verweigert`,
 Jochen 2026-10-24; Regel auch in AGENTS.md und in der Werkzeugbeschreibung).
+Seit 2026-11-11 meldet der Anlern-Dienst jedes Anlernen, Erneuern und Löschen
+selbst in den Telegram-Kanal des Profils, mit dem dabei erkannten Sprecher:
+ein freier Name („felix“) ist sonst eine Identität, die jeder anlegen kann.
 
 Vorher hing die Direktive am Transkript: bei jeder Sprachnachricht im
 Sitzungsverlauf, im Gedächtnis-Index und im Dreaming, das ihre Beispiele für

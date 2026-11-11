@@ -1450,7 +1450,7 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 | Tool | Purpose |
 |---|---|
 | `voice_speak_text(text)` | speak a short text out loud (fire-and-forget) |
-| `voice_enroll_speaker(name)` | store the last recording as this speaker's reference |
+| `voice_enroll_speaker(name)` | store the last recording as this speaker's reference; every enrolment, renewal and removal is announced in the profile's Telegram chat together with the speaker recognised at that moment, because anyone can claim a free name |
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | manage known speakers |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (per speaker via `for_speaker`, default for everyone via `fuer_alle`) |
 | `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | new voice from an audio file sent in the chat: listen to pieces, pick one, truncation test |

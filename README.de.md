@@ -1497,7 +1497,7 @@ Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert die Tools, die 
 | Tool | Zweck |
 |---|---|
 | `voice_speak_text(text)` | kurzen Text laut vorlesen (fire-and-forget) |
-| `voice_enroll_speaker(name)` | letzte Aufnahme als Referenz dieses Sprechers speichern |
+| `voice_enroll_speaker(name)` | letzte Aufnahme als Referenz dieses Sprechers speichern; jedes Anlernen, Erneuern und Löschen meldet der Assistent im Telegram-Kanal des Profils, mit dem dabei erkannten Sprecher, weil sich jeder einen freien Namen nehmen kann |
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | bekannte Sprecher verwalten |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (pro Sprecher via `for_speaker`, für alle via `fuer_alle`) |
 | `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | neue Stimme aus einer Audiodatei im Chat: Stücke anhören, eins wählen, Abbruch-Test |
