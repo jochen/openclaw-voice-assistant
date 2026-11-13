@@ -669,6 +669,37 @@ tied to your microphone gain than `wake_rms_min`.
 > daily use the TV practically stopped triggering; with music you have to call
 > a bit louder. Example, not a preset: check the near-misses in your own log.
 
+**Ending the recording in machine noise (`vad_silero`, optional, needs
+`umgebung:`).** A recording ends after a pause in speech, and "speech" is
+decided per chunk by WebRTC-VAD (plus `vad_voice_rms_min`). Steady broadband
+noise at a high level — fans, a laser cutter, a workshop — fools it even on
+its strictest setting: in our maker space 80–100 % of the chunks counted as
+speech, the pause never came, and recordings ran to the 30 s ceiling. With
+`vad_silero: true` WebRTC still decides, but Silero-VAD (small ONNX model,
+`models/silero_vad/`, MIT) may object — **only** for chunks quieter than
+`vad_silero_faktor` × the room level before the call (`umgebung`). Loud, close
+speech is never overruled; Silero alone was too strict (it cut off a quiet
+"stop, stop" and the end of a command at home). Without a room level the old
+rule applies.
+
+```yaml
+    vad_silero: true
+    vad_silero_schwelle: 0.3   # Silero probability below which it objects
+    vad_silero_faktor: 2.0     # ... but only below this × room level
+    followup_archivieren: true # also archive follow-up recordings (for replays)
+```
+
+`endpoint.log` then carries `vad_raum`, `silero_ueberstimmt_s` and
+`vad_alt_ende_s` (when the old rule would have ended — `null` if not yet);
+on a ReSpeaker with our firmware also `dsp_sprachenergie` (the XVF3800's own
+speech energy, 2 s maxima, log only). Measured against the archive (dialog
+endpointing, words compared via STT up to each cut): at home 12 of 483
+recordings ended earlier, no word lost; in the maker space the two
+laser-cutter recordings ended after 10.2 s and 3.8 s instead of 30 s, losing
+only the room conversation after the question. Cost on a Raspberry Pi 4:
+about 5 % of one core while recording. Example, not a preset — replay your own
+archive (`tools/endpoint_replay.py --dialog --silero`).
+
 **Checking after the trigger (`wake_pruefung:`, experimental, log only)**
 Retraining alone did not get the model reliably under our false-trigger
 budget: two training runs on the same data differed by a factor of 2.5. The
@@ -1627,6 +1658,7 @@ archived wake/record/near-miss WAVs).
   Needs trigger archive + `wake_events.log` + STT.
   ```bash
   ow-venv/bin/python -m tools.endpoint_replay --stt
+  ow-venv/bin/python -m tools.endpoint_replay --dialog --silero   # Silero objection (vad_silero)
   ```
 - `wake_rms_replay` (full) — measures the level gate against the archive:
   real calls lost (the price) vs. false triggers blocked (the gain), with a

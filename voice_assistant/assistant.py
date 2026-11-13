@@ -134,6 +134,7 @@ from voice_assistant.rewind import RewindBuffer
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
 from voice_assistant import umgebung as _umgebung
+from voice_assistant import sprache_vad as _sprache_vad
 from voice_assistant.workers import Workers
 
 
@@ -1134,6 +1135,22 @@ def run() -> None:
     print("🔧 Initialising WebRTC VAD...")
     vad = webrtcvad.Vad(profile.vad_aggressiveness)
     _vad_rms_min = profile.vad_voice_rms_min
+    # Silero als Einspruch im Raumpegel (sprache_vad.py). Ohne Modell oder
+    # ohne Umgebungspegel bleibt es bei WebRTC allein — still, aber geloggt.
+    _silero = None
+    if profile.vad_silero:
+        try:
+            _silero = _sprache_vad.SileroVad()
+            print(f"✅ Silero-VAD als Einspruch: unter {profile.vad_silero_faktor:g}× Raumpegel "
+                  f"zählt WebRTC-Sprache nur ab Silero {profile.vad_silero_schwelle:g}"
+                  f"{'' if profile.umgebung.enabled else ' — UNWIRKSAM: Umgebungspegel aus'}")
+        except Exception as e:
+            print(f"⚠️  Silero-VAD nicht geladen, WebRTC allein: {e}")
+    sprach_vad = _sprache_vad.SprachEntscheider(
+        _chunk_speech_stats, vad, _vad_rms_min, _silero,
+        schwelle=profile.vad_silero_schwelle, faktor=profile.vad_silero_faktor)
+    _vad_turn = None        # (state, state_start) der Aufnahme, die sprach_vad gerade misst
+    _umg_zeit = 0.0         # letzter Leerlauf-Chunk, den der Umgebungspegel gesehen hat
     # Pegel-Gate fürs Wakeword (0 = aus). Eigener Parameter, nicht
     # _vad_rms_min wiederverwendet — siehe config.Profile.wake_rms_min.
     _wake_rms_min = profile.wake_rms_min
@@ -1180,6 +1197,19 @@ def run() -> None:
               f"laut ab {_um_cfg.laut_faktor:g}× Ruhe → ≥{_um_cfg.streng_min_hits} Frames, "
               f"außer Wakewort ≥{_um_cfg.nah_faktor:g}× Raum "
               f"(Ruhe bisher: {umgebung_pegel.ruhe() or 'noch nicht gelernt'})")
+
+    def _vad_raum() -> float | None:
+        """Raumpegel vor dem Ruf (bzw. vor dem letzten Leerlauf) für sprach_vad."""
+        if umgebung_pegel is None or not _umg_zeit:
+            return None
+        return umgebung_pegel.gleitend(_umg_zeit)
+
+    def _dsp_sprachenergie(seit: float) -> dict:
+        """Sprachenergie des XVF3800 (2-s-Maxima, dB) während der Aufnahme —
+        nur Log, entscheidet nichts. Fehlt bei Satelliten und alter Firmware."""
+        fn = getattr(audio_source, "sprachenergie_seit", None)
+        werte = fn(seit) if fn else []
+        return {"dsp_sprachenergie": werte} if werte else {}
 
     def _umgebung_urteil(hits: int, wake_rms: float, now: float):
         if umgebung_pegel is None:
@@ -1837,6 +1867,7 @@ def run() -> None:
                         umgebung_pegel.luecke()
                     else:
                         umgebung_pegel.feed(now, audio_16)
+                        _umg_zeit = now
                 if len(audio_16) > 0:
                     wake_ring.append(audio_16.copy())
                     wake_ring_samples += len(audio_16)
@@ -2252,9 +2283,10 @@ def run() -> None:
             # --- RECORDING ---
             elif state == STATE_RECORDING:
                 recorded_chunks.append(audio_16.copy())
-                _is_speech, _rms, _sf, _tf = _chunk_speech_stats(
-                    vad, audio_16, _vad_rms_min
-                )
+                if _vad_turn != (state, state_start):
+                    _vad_turn = (state, state_start)
+                    sprach_vad.neuer_turn(_vad_raum(), aktiv=not _satelliten_turn())
+                _is_speech, _rms, _sf, _tf = sprach_vad.chunk(audio_16, turn_silence_limit)
                 # Echo des eigenen "Ja?" ist keine Sprache (_ACK_ECHO_SEC).
                 if ack_gespielt and (len(recorded_chunks) - ack_idx) * _chunk_sec <= ack_echo_s:
                     _is_speech = False
@@ -2467,6 +2499,8 @@ def run() -> None:
                         "wake_rms": round(turn_wake_rms, 1),
                         "laute_sprache_s": round(turn_loud_chunks * _chunk_sec, 2),
                         **_signal_stats(turn_rms, turn_frames_speech, turn_frames_total),
+                        **sprach_vad.als_log(_chunk_sec),
+                        **_dsp_sprachenergie(state_start),
                     }
                     if trigger_audio_id is not None:
                         _save_trigger_audio(recorded_chunks, trigger_audio_bundle, "rec", trigger_audio_id)
@@ -3756,9 +3790,10 @@ def run() -> None:
                 rms = float(np.sqrt(np.mean((audio_16.astype(np.float32) / 32768.0) ** 2)))
                 followup_rms_sum += rms
                 followup_rms_count += 1
-                _is_speech, _rms_abs, _sf, _tf = _chunk_speech_stats(
-                    vad, audio_16, _vad_rms_min
-                )
+                if _vad_turn != (state, state_start):
+                    _vad_turn = (state, state_start)
+                    sprach_vad.neuer_turn(_vad_raum(), aktiv=not _satelliten_turn())
+                _is_speech, _rms_abs, _sf, _tf = sprach_vad.chunk(audio_16, turn_silence_limit)
                 turn_rms.append(_rms_abs)
                 turn_frames_speech += _sf
                 turn_frames_total += _tf
@@ -3830,7 +3865,17 @@ def run() -> None:
                         "followup_round": followup_round,
                         **({"nach_nur_wakewort": True} if nur_wakewort_runde and followup_round == 0 else {}),
                         **_signal_stats(turn_rms, turn_frames_speech, turn_frames_total),
+                        **sprach_vad.als_log(_chunk_sec),
+                        **_dsp_sprachenergie(state_start),
                     }
+                    if profile.followup_archivieren and recorded_chunks:
+                        # Follow-ups hatten kein Archiv: die meisten Deckel-
+                        # Aufnahmen im Lärm (Fablab 2026-11-04) waren nicht
+                        # nachrechenbar. Ohne Pre-Roll, daher nicht *_rec.wav.
+                        _fu_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        _fu_art = f"followup{followup_round}"
+                        _save_trigger_audio(recorded_chunks, current_wakeword.bundle, _fu_art, _fu_id)
+                        endpoint_meta["audio"] = f"{_fu_id}_{current_wakeword.bundle}_{_fu_art}.wav"
                     # VAD-Anteil-Gate: echte Äußerungen liegen bei >= 50 %
                     # Sprachanteil, Halluzinations-Aufnahmen (Hintergrund-
                     # geräusche) bei ~14 % — unter 20 % gar nicht erst zu STT

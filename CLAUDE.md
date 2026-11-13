@@ -1353,6 +1353,24 @@ nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.
 
+### Aufnahme-Ende im Maschinenlärm (`vad_silero`, seit 2026-11-13)
+
+Fablab 2026-11-04..07: mit Lasercutter-Lüftern (Grundpegel 700–1000, über
+`vad_voice_rms_min` 900) hielt WebRTC-VAD 80–100 % der Chunks für Sprache,
+Aufnahmen liefen bis zum 30-s-Deckel. `sprache_vad.py`: WebRTC entscheidet,
+Silero (ONNX in `models/silero_vad/`) darf nur widersprechen, wenn der Chunk
+leiser als `vad_silero_faktor` (2) × Raumpegel vor dem Ruf ist
+(`umgebung.gleitend` zum letzten Leerlauf-Chunk, `_umg_zeit`); ohne
+Raumpegel und bei Handy-Satelliten alte Regel. Silero allein war zu streng
+(daheim 58 frühere Schnitte, ein „Stopp, Stopp“ weg). Gemessen (Dialog,
+Qwen-Wortvergleich): daheim 12/483 früher, 0 Wörter verloren; Fablab
+Lasercutter 30 s → 10,2/3,8 s. Log: `vad_raum`, `silero_ueberstimmt_s`,
+`vad_alt_ende_s`, `dsp_sprachenergie` (XVF3800-Sensor „Sprachenergie“, nur
+Log). `followup_archivieren` legt Follow-ups als `*_followup<n>.wav` ab
+(ohne Pre-Roll, darum nicht `_rec.wav`). **Änderungen nur gegen
+`tools/endpoint_replay.py --dialog --silero`.** Tests:
+`tests/test_sprache_vad.py`.
+
 ### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, Schranke seit 2026-11-08)
 
 **Seit 2026-11-08 verwirft das Anfangs-Maß wirklich** (`schranke: true`,

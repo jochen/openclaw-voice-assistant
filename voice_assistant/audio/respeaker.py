@@ -118,6 +118,8 @@ class RespeakerClient:
         # Die Firmware liest ihn jede Sekunde, auch nach einem Druck auf den
         # Knopf am Geraet.
         self._mute_key: int | None = None
+        self._energie_key: int | None = None
+        self._energie: collections.deque = collections.deque(maxlen=200)
         self.mute: bool | None = None
         # Mitschnitt des zweiten Kanals (data2): None = aus, sonst Liste der
         # Chunks seit mitschnitt_start(). Gefuellt im asyncio-Thread, gelesen
@@ -184,6 +186,9 @@ class RespeakerClient:
         self._kanal2_key = None
         self._mute_key = None
         self.mute = None
+        # Sensor "Sprachenergie" der Firmware (XVF3800, 2-s-Maximum in dB):
+        # nur fürs endpoint.log, siehe assistant._dsp_sprachenergie.
+        self._energie_key = None
         self._data2_gemeldet = False
         self.led_phase_key = None
         self.boot_step_key = None
@@ -272,6 +277,8 @@ class RespeakerClient:
             if hasattr(e, "name") and "Voice Direction" in e.name:
                 self._beam_key = e.key
                 log.info("Beam sensor key=%d", e.key)
+            if getattr(e, "name", None) == "Sprachenergie":
+                self._energie_key = e.key
             if hasattr(e, "name") and e.name == "Microphone Mute":
                 self._mute_key = e.key
                 log.info("Mute switch key=%d", e.key)
@@ -360,6 +367,10 @@ class RespeakerClient:
                 log.debug("Media-Player: state=%s", self._player_state)
             elif self._mute_key is not None and key == self._mute_key:
                 self.mute = bool(getattr(state, "state", False))
+            elif self._energie_key is not None and key == self._energie_key:
+                wert = getattr(state, "state", None)
+                if isinstance(wert, (int, float)) and not math.isnan(wert):
+                    self._energie.append((time.time(), float(wert)))
             elif key in self._diag_keys:
                 self._diagnose(self._diag_keys[key], getattr(state, "state", None))
 
@@ -760,6 +771,10 @@ class RespeakerSource:
 
     def kanal2_letzte(self, n: int) -> list[np.ndarray]:
         return self._client.kanal2_letzte(n)
+
+    def sprachenergie_seit(self, t0: float) -> list[float]:
+        """DSP-Sprachenergie (dB, 2-s-Maxima) seit t0; leer ohne Sensor."""
+        return [round(w, 1) for t, w in list(self._client._energie) if t >= t0]
 
     def close(self) -> None:
         pass
