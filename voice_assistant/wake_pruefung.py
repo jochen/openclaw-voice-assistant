@@ -46,6 +46,22 @@ Gemessen an den R6-Val-Clips (Original-3-s-Wake-Clips aus dem Korpus,
 taugen als Maßstab nicht: darunter sind Barge-in-Clips mit einem echten
 "Stopp, Gaston" (Selbst-Label "abgebrochen" auf dem falschen Clip). Die
 Grenze −4 ist am Korpus abgelesen, nicht an neuem Material geprüft.
+
+Schranke (``schranke: true``, seit 2026-11-08)
+---------------------------------------------
+Erste Live-Woche mit Ohr-Labels (R7 voll l2, 2026-10-31 bis 11-07, 74
+geprüfte Trigger): echte Rufe lagen alle bei ≥ −5,05, per Ohr gelabelte
+Fehlauslöser alle bei ≤ −8,2. Mit −4 hätte das Maß alle 13 Fehlauslöser der
+Woche verworfen, aber auch 2 von 48 echten Rufen ("Kasten." −5,05, "Das
+doch." −4,49). Die Grenze steht deshalb in der Lücke (Profil, hier −6,5).
+
+Mit der Schranke entscheidet nur das Anfangs-Maß, die alte Regel (Fläche,
+Wort) bleibt reines Log. Der Turn wartet nicht: die Aufnahme läuft, während
+Qwen rechnet (Median 0,43 s, p90 0,72 s), nur "Ja?" und das Ende der
+Aufnahme warten auf das Urteil (``entscheid``). Ein Ausfall von Qwen oder
+eine überschrittene Frist lässt durch, die Schranke darf keine Rufe kosten,
+nur weil ein Dienst fehlt. Verworfene Trigger stehen in wake_events.log als
+Near-Miss mit ``failed_on: "anfang"``.
 """
 
 from __future__ import annotations
@@ -60,6 +76,13 @@ from voice_assistant.anrede import anrede_im_text
 from voice_assistant.services.stt import chunks_to_wav_bytes
 
 STATUS = "schatten"
+STATUS_SCHRANKE = "schranke"
+# So lange wartet die Aufnahme höchstens auf das Urteil, danach durch.
+# Gemessen max 1,27 s über 74 Trigger.
+SCHRANKE_FRIST_SEC = 2.0
+
+# Ergebnisse von entscheid()
+WARTEN, DURCH, VERWORFEN, FRIST, AUSFALL = "warten", "durch", "verworfen", "frist", "ausfall"
 # Der Clip ist 3 s lang, Qwen braucht ~0,1 s. Mehr Geduld hätte eine echte
 # Schranke später ohnehin nicht.
 TIMEOUT_SEC = 3.0
@@ -88,24 +111,57 @@ def anfang_mass(stt, wav: bytes, text: str, anfang: str) -> tuple[float, int]:
     return round(werte[beste], 3), beste
 
 
+class Urteil:
+    """Handle auf eine laufende Prüfung; ``job`` füllt der Worker."""
+
+    def __init__(self, job: dict) -> None:
+        self.job = job
+        self.fertig = threading.Event()
+
+
+def entscheid(urteil: Urteil, frist_um: bool) -> str:
+    """WARTEN, DURCH, VERWORFEN, oder FRIST/AUSFALL (beide lassen durch)."""
+    if not urteil.fertig.is_set():
+        return FRIST if frist_um else WARTEN
+    v = urteil.job.get("haette_verworfen_anfang")
+    if v is None:
+        return AUSFALL
+    return VERWORFEN if v else DURCH
+
+
+def woerter_nach_wakewort(job: dict) -> int | None:
+    """Wörter in Qwens Text des Wake-Clips hinter dem Wort mit dem Anfang.
+
+    None ohne Anfangs-Maß. Gebraucht für das verspätete "Ja?": stehen hier
+    schon Wörter, war der Befehl gesagt, bevor der Trigger feuerte.
+    """
+    if "anfang_nach" not in job:
+        return None
+    woerter = (job.get("text") or "").split()
+    return max(0, len(woerter) - job["anfang_nach"] - 1)
+
+
 class WakePruefung:
     """Ein Thread, eine Warteschlange; jeder Trigger wird eine Zeile."""
 
     def __init__(self, stt, log_path: str, flaeche_grenze: float,
-                 anfang: str = "", anfang_grenze: float = -4.0) -> None:
+                 anfang: str = "", anfang_grenze: float = -4.0,
+                 schranke: bool = False) -> None:
         self._stt = stt               # LlamaCppAsrStt oder None (dann nur Fläche)
         self._log_path = log_path
         self._grenze = flaeche_grenze
         self._anfang = anfang         # leer: Anfangs-Maß aus
         self._anfang_grenze = anfang_grenze
+        # Nur ein Vermerk im Log: entscheiden tut assistant.py über entscheid().
+        self.schranke = schranke and bool(anfang)
         self._queue: queue.Queue = queue.Queue(maxsize=20)
         threading.Thread(target=self._worker, name="wake-pruefung", daemon=True).start()
 
-    def start(self, event: dict, chunks: list) -> None:
+    def start(self, event: dict, chunks: list) -> Urteil:
         """event: die Trigger-Zeile aus wake_events.log; chunks: der wake_ring."""
         job = {
             "ts": datetime.now().isoformat(timespec="seconds"),
-            "status": STATUS,
+            "status": STATUS_SCHRANKE if self.schranke else STATUS,
             "audio": event.get("audio"),
             "bundle": event.get("bundle"),
             "hits": event.get("hits"),
@@ -113,19 +169,24 @@ class WakePruefung:
             "flaeche": flaeche(event.get("scores") or [], float(event.get("threshold") or 0.0)),
             "flaeche_grenze": self._grenze,
         }
+        urteil = Urteil(job)
         try:
-            self._queue.put_nowait((job, [c.copy() for c in chunks]))
+            self._queue.put_nowait((urteil, [c.copy() for c in chunks]))
         except queue.Full:
             job["fehler"] = "Warteschlange voll, nicht geprüft"
             self._schreiben(job)
+            urteil.fertig.set()
+        return urteil
 
     def _worker(self) -> None:
         while True:
-            job, chunks = self._queue.get()
+            urteil, chunks = self._queue.get()
+            job = urteil.job
             try:
                 self._pruefen(job, chunks)
             except Exception as e:  # nie den Thread verlieren
                 job["fehler"] = f"{type(e).__name__}: {e}"
+            urteil.fertig.set()     # vor dem Schreiben: die Aufnahme wartet darauf
             self._schreiben(job)
 
     def _pruefen(self, job: dict, chunks: list) -> None:

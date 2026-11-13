@@ -72,6 +72,80 @@ class UrteilTest(unittest.TestCase):
         self.assertEqual(self.v.urteil({}).status, STATUS_NICHT_EINGERICHTET)
 
 
+class ZweiStufenTest(unittest.TestCase):
+    """Fablab 2026-11-11: Rosty, nicht angelernt, kam mit 0,47 als jochen durch."""
+
+    def setUp(self):
+        self.v = _pruefer("/nicht/da")
+        self.v.schwelle_sicher = 0.55
+
+    def test_knapp_bekannt_ist_nicht_sicher(self):
+        u = self.v.urteil({"jochen": 0.47, "stesie": 0.26, "christoph": 0.12})
+        self.assertEqual((u.name, u.status, u.sicher, u.ist_sicher),
+                         ("jochen", STATUS_BEKANNT, False, False))
+        self.assertEqual((u.aehnlichkeit, u.abstand), (0.47, 0.21))
+
+    def test_deutlich_bekannt_ist_sicher(self):
+        u = self.v.urteil({"jochen": 0.66, "rosti": 0.41})
+        self.assertTrue(u.ist_sicher)
+
+    def test_ohne_zweite_grenze_ist_bekannt_sicher(self):
+        v = _pruefer("/nicht/da")
+        self.assertTrue(v.urteil({"jochen": 0.41, "petra": 0.1}).ist_sicher)
+
+    def test_unbekannt_ist_nie_sicher(self):
+        self.assertFalse(self.v.urteil({"jochen": 0.30}).ist_sicher)
+
+
+class GrenzfallTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.refs = os.path.join(self.tmp.name, "refs")
+        self.ablage = os.path.join(self.tmp.name, "grenz")
+        os.makedirs(self.refs)
+        self.v = _pruefer(self.refs)
+        self.v.schwelle_sicher, self.v.grenzfall_dir, self.v.grenzfall_max = 0.55, self.ablage, 300
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _mit(self, werte):
+        self.v._referenzen = lambda: ({n: None for n in werte}, len(werte))
+        # Ähnlichkeiten direkt vorgeben statt zu rechnen
+        werte_iter = iter(werte.values())
+
+        class E:
+            def __matmul__(self, r):
+                return next(werte_iter)
+        self.v.fingerabdruck = lambda a: E()
+        return self.v.diarize(_wav(0.1))
+
+    def _zeilen(self):
+        p = os.path.join(self.ablage, "grenzfaelle.jsonl")
+        return open(p, encoding="utf-8").read().splitlines() if os.path.exists(p) else []
+
+    def test_bekannt_nicht_sicher_wird_aufgehoben(self):
+        u = self._mit({"jochen": 0.47, "stesie": 0.26})
+        self.assertEqual(u.status, STATUS_BEKANNT)
+        self.assertEqual(len(self._zeilen()), 1)
+        self.assertEqual(len([n for n in os.listdir(self.ablage) if n.endswith(".wav")]), 1)
+
+    def test_nur_am_abstand_gescheitert_wird_aufgehoben(self):
+        u = self._mit({"jochen": 0.49, "rosti": 0.41})
+        self.assertEqual(u.status, STATUS_UNBEKANNT)
+        self.assertEqual(len(self._zeilen()), 1)
+
+    def test_sicher_und_klar_fremd_nicht(self):
+        self._mit({"jochen": 0.70, "stesie": 0.20})
+        self._mit({"jochen": 0.25, "stesie": 0.20})
+        self.assertEqual(self._zeilen(), [])
+
+    def test_ohne_ablage_nichts(self):
+        self.v.grenzfall_dir = ""
+        self._mit({"jochen": 0.47, "stesie": 0.26})
+        self.assertFalse(os.path.exists(self.ablage))
+
+
 class DiarizeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -1,0 +1,346 @@
+"""Eigene Stimmen des Antwort-Dienstes (services/stimmen.py)."""
+import base64
+import http.server
+import json
+import os
+import shutil
+import sys
+import tempfile
+import threading
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from tests.test_tts_strom import FakeLeds, FakeSenke, FakeTts, _ton, _wav_strom  # noqa: E402
+from voice_assistant.audio.strom import zu_48k_stereo  # noqa: E402
+from voice_assistant.services import tts  # noqa: E402
+from voice_assistant.services.speaches import SpeachesState  # noqa: E402
+from voice_assistant.services.stimmen import (  # noqa: E402
+    AntwortTts, StimmenLager, _sprache_schneiden, wav_dauer,
+)
+from voice_assistant.services.voice_control import VoiceController  # noqa: E402
+from voice_assistant.state import voice_state  # noqa: E402
+
+
+class _Cosy(http.server.BaseHTTPRequestHandler):
+    """Wie cosy_dienst.py: unbekannte Stimme 404, POST /v1/voices legt an."""
+    stimmen: set = set()
+    anfragen: list = []
+    uploads: list = []
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/v1/voices":
+            _Cosy.uploads.append(body)
+            _Cosy.stimmen.add(body["id"])
+            return self._antwort(200, b'{"ok": true}', "application/json")
+        _Cosy.anfragen.append(body)
+        if body["voice"] not in _Cosy.stimmen:
+            return self._antwort(404, b'{"error": "unbekannt"}', "application/json")
+        if body.get("sample_rate") == 48000:
+            return self._antwort(200, _wav_strom(_ton(0.1), 48000), "audio/wav")
+        # am Stueck, 24 kHz: Stille, Ton, Stille (wie CosyVoice bei "Ja?")
+        n = len(_Cosy.anfragen)
+        ton = _ton(0.3 + 0.1 * (n % 3), 24000)
+        pcm = bytes(24000) + ton + bytes(12000)
+        self._antwort(200, _wav_strom(pcm, 24000), "audio/wav")
+
+    def _antwort(self, code, daten, typ):
+        self.send_response(code)
+        self.send_header("Content-Type", typ)
+        self.send_header("Content-Length", str(len(daten)))
+        self.end_headers()
+        self.wfile.write(daten)
+
+    def log_message(self, *a):
+        pass
+
+
+def _stimme(ordner, name, text="Hallo.", meta=None, wav=b"RIFF....WAVEfmt "):
+    os.makedirs(os.path.join(ordner, name))
+    with open(os.path.join(ordner, name, "probe.wav"), "wb") as f:
+        f.write(wav)
+    with open(os.path.join(ordner, name, "probe.txt"), "w") as f:
+        f.write(text)
+    if meta is not None:
+        with open(os.path.join(ordner, name, "meta.json"), "w") as f:
+            json.dump(meta, f)
+
+
+class _Basis(unittest.TestCase):
+    def setUp(self):
+        self.ordner = tempfile.mkdtemp()
+        _stimme(self.ordner, "gaston2", meta={"beschreibung": "ruhiger Erzähler"})
+        _stimme(self.ordner, "thorsten")
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Cosy)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        _Cosy.stimmen, _Cosy.anfragen, _Cosy.uploads = set(), [], []
+        self.lager = StimmenLager(self.ordner, "haus", f"http://127.0.0.1:{self.srv.server_port}",
+                                  "cosyvoice3", "gaston2")
+        self.alt = voice_state.get()
+        voice_state.set(model="speaches-ai/piper-de_DE-thorsten-medium",
+                        voice="de_DE-thorsten-medium", speed=1.0)
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        shutil.rmtree(self.ordner)
+        m, v, sp = self.alt
+        voice_state.set(model=m, voice=v, speed=sp)
+
+
+class LagerTest(_Basis):
+    def test_namen_nur_vollstaendige_und_freigegebene(self):
+        _stimme(self.ordner, "gesperrt", meta={"freigegeben": False})
+        os.makedirs(os.path.join(self.ordner, "halb"))
+        open(os.path.join(self.ordner, "halb", "probe.wav"), "wb").close()
+        self.assertEqual(self.lager.namen(), ["gaston2", "thorsten"])
+        self.assertEqual(self.lager.eintraege()[0], {"name": "gaston2", "beschreibung": "ruhiger Erzähler"})
+
+    def test_keine_pfade_als_name(self):
+        self.assertFalse(self.lager.hat("../gaston2"))
+        self.assertFalse(self.lager.hat(None))
+
+    def test_kennung_wechselt_mit_der_probe(self):
+        alt = self.lager.dienst_id("gaston2")
+        self.assertTrue(alt.startswith("haus/gaston2-"))
+        with open(os.path.join(self.ordner, "gaston2", "probe.txt"), "w") as f:
+            f.write("Anderer Text.")
+        self.assertNotEqual(self.lager.dienst_id("gaston2"), alt)
+
+    def test_wirksam(self):
+        self.assertEqual(self.lager.wirksam("cosyvoice3", "thorsten"), "thorsten")
+        self.assertEqual(self.lager.wirksam("cosyvoice3", "gibtsnicht"), "gaston2")
+        # Piper-Vorliebe (alte speaker_voices.json) ist keine Wahl im Lager
+        self.assertEqual(self.lager.wirksam("speaches-ai/piper-de_DE-thorsten-medium", "thorsten"), "gaston2")
+
+    def test_hochladen(self):
+        kennung = self.lager.hochladen("gaston2")
+        up = _Cosy.uploads[0]
+        self.assertEqual((up["id"], up["text"]), (kennung, "Hallo."))
+        self.assertEqual(base64.b64decode(up["wav_b64"]), b"RIFF....WAVEfmt ")
+
+
+class AntwortTtsTest(_Basis):
+    def test_unbekannt_beim_dienst_wird_hochgeladen_und_gesprochen(self):
+        t = AntwortTts(self.lager, SpeachesState())
+        bloecke = list(t.synth_strom("Hallo."))
+        self.assertEqual(b"".join(bloecke), zu_48k_stereo(_ton(0.1), 48000, 1))
+        self.assertEqual(len(_Cosy.uploads), 1)
+        self.assertEqual([a["voice"] for a in _Cosy.anfragen], [self.lager.dienst_id("gaston2")] * 2)
+        # zweiter Satz: kein Upload mehr
+        list(t.synth_strom("Noch einer."))
+        self.assertEqual(len(_Cosy.uploads), 1)
+
+    def test_gewaehlte_stimme_aus_voice_state(self):
+        voice_state.set(model="cosyvoice3", voice="thorsten", speed=1.0)
+        t = AntwortTts(self.lager, SpeachesState())
+        list(t.synth_strom("Hallo."))
+        self.assertTrue(_Cosy.anfragen[-1]["voice"].startswith("haus/thorsten-"))
+        self.assertEqual(t.voice, "thorsten")
+
+    def test_speaches_spricht_bei_cosy_wahl_mit_profilstimme(self):
+        AntwortTts(self.lager, SpeachesState())   # meldet cosyvoice3 als fremd an
+        voice_state.set(model="cosyvoice3", voice="thorsten", speed=1.0)
+        s = tts.SpeachesTts(SpeachesState(), "http://x", "speaches-ai/piper-de_DE-thorsten-medium",
+                            "de_DE-thorsten-medium")
+        self.assertEqual(s._parameter("Hallo.")[:2],
+                         ("speaches-ai/piper-de_DE-thorsten-medium", "de_DE-thorsten-medium"))
+
+    def test_cosy_wahl_bleibt_im_strom_beim_antwort_dienst(self):
+        voice_state.set(model="cosyvoice3", voice="thorsten", speed=1.0)
+        cosy = FakeTts(model="cosyvoice3")
+        lokal = FakeTts(model="speaches-ai/piper-de_DE-thorsten-medium", voice="de_DE-thorsten-medium")
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(),
+                              strom_oeffnen=senke.strom_oeffnen, antwort_tts=cosy)
+        self.assertEqual(sp.strom_kandidaten(), [cosy, lokal])
+
+
+class VoiceControllerTest(_Basis):
+    def _vc(self):
+        return VoiceController("http://127.0.0.1:1", "speaches-ai/piper-de_DE-thorsten-medium",
+                               "de_DE-thorsten-medium", stimmen=self.lager)
+
+    def test_liste_sind_die_eigenen_stimmen(self):
+        liste = self._vc().list_available()
+        self.assertEqual([(e["model"], e["voice"]) for e in liste],
+                         [("cosyvoice3", "gaston2"), ("cosyvoice3", "thorsten")])
+        self.assertEqual(liste[0]["beschreibung"], "ruhiger Erzähler")
+
+    def test_wahl_setzt_voice_state_und_laedt_hoch(self):
+        vc = self._vc()
+        self.assertTrue(vc.set_active("cosyvoice3", "thorsten"))
+        self.assertEqual(voice_state.get()[:2], ("cosyvoice3", "thorsten"))
+        for _ in range(50):           # Upload laeuft im Hintergrund
+            if _Cosy.uploads:
+                break
+            threading.Event().wait(0.02)
+        self.assertTrue(_Cosy.uploads[0]["id"].startswith("haus/thorsten-"))
+
+    def test_unbekannte_stimme_abgelehnt(self):
+        self.assertFalse(self._vc().set_active("cosyvoice3", "gibtsnicht"))
+
+    def test_wirksam_meldet_die_sprechende_stimme(self):
+        self.assertEqual(self._vc().wirksam()[:2], ("cosyvoice3", "gaston2"))
+
+    def test_standard_fuer_alle_dauerhaft(self):
+        vc = self._vc()
+        vc._save_map = lambda: None                    # echte speaker_voices.json bleibt
+        vc._speaker_map = {"jochen": {"model": "cosyvoice3", "voice": "gaston2"},
+                           "anna": {"model": "cosyvoice3", "voice": "gaston2"}}
+        eigene = vc.set_standard("thorsten", "Jochen")
+        self.assertEqual(eigene, ["anna"])             # wer „für alle“ sagt, meint sich mit
+        self.assertNotIn("jochen", vc._speaker_map)
+        self.assertEqual(voice_state.get()[:2], ("cosyvoice3", "thorsten"))
+        # nach einem Neustart: Lager liest die Wahl, das Profil sagt weiter gaston2
+        neu = StimmenLager(self.ordner, "haus", self.lager.dienst_url, "cosyvoice3", "gaston2")
+        self.assertEqual(neu.standard, "thorsten")
+        self.assertEqual(neu.wirksam("speaches-ai/piper-de_DE-thorsten-medium", "x"), "thorsten")
+        self.assertEqual(neu.namen(), ["gaston2", "thorsten"])   # Datei ist keine Stimme
+
+    def test_standard_unbekannte_stimme(self):
+        with self.assertRaises(ValueError):
+            self._vc().set_standard("gibtsnicht")
+        shutil.rmtree(os.path.join(self.ordner, "thorsten"))
+        self.lager.standard_setzen("gaston2")
+        with open(os.path.join(self.ordner, "_standard.json"), "w") as f:
+            f.write('{"stimme": "thorsten"}')        # Stimme inzwischen weg
+        neu = StimmenLager(self.ordner, "haus", self.lager.dienst_url, "cosyvoice3", "gaston2")
+        self.assertEqual(neu.standard, "gaston2")
+
+
+class FesteSaetzeTest(_Basis):
+    def setUp(self):
+        super().setUp()
+        self.cache = tempfile.mkdtemp()
+        self.t = AntwortTts(self.lager, SpeachesState(), cache=self.cache)
+
+    def tearDown(self):
+        shutil.rmtree(self.cache)
+        super().tearDown()
+
+    def test_stille_wird_abgeschnitten(self):
+        import numpy as np
+        pcm = np.concatenate([np.zeros(24000, np.int16),
+                              np.frombuffer(_ton(0.4, 24000), np.int16), np.zeros(12000, np.int16)])
+        kern = _sprache_schneiden(pcm, 24000)
+        self.assertAlmostEqual(len(kern) / 24000, 0.4 + 2 * 0.04, delta=0.03)
+
+    def test_fester_satz_aus_mehreren_versuchen_geschnitten_und_gespeichert(self):
+        pfad = self.t.feste_datei("Ja?")
+        self.assertTrue(pfad.startswith(self.cache))
+        self.assertLess(wav_dauer(pfad), 0.7)          # Stille ist weg
+        self.assertEqual(len(_Cosy.anfragen), 5 + 1)   # 404 + Upload + 5 Versuche
+        n = len(_Cosy.anfragen)
+        self.assertEqual(self.t.feste_datei("Ja?"), pfad)
+        self.assertEqual(len(_Cosy.anfragen), n, "zweites Mal aus dem Cache")
+
+    def test_kandidaten_und_uebernehmen(self):
+        fass = self.t.fest_kandidaten("Ja?", "gaston2", 3, 8)
+        self.assertEqual(len(fass), 3)
+        p = os.path.join(self.cache, "f.wav")
+        with open(p, "wb") as f:
+            f.write(AntwortTts._wav_bytes(*fass[1]))
+        ziel = self.t.fest_uebernehmen("Ja?", "gaston2", p, quelle="telegram")
+        self.assertEqual(self.t.feste_datei("Ja?", name="gaston2"), ziel)
+        with open(os.path.join(self.cache, "auswahl.jsonl"), encoding="utf-8") as f:
+            self.assertEqual(json.loads(f.readline())["quelle"], "telegram")
+
+    def test_andere_stimme_eigener_eintrag(self):
+        a = self.t.feste_datei("Ja?")
+        voice_state.set(model="cosyvoice3", voice="thorsten", speed=1.0)
+        b = self.t.feste_datei("Ja?")
+        self.assertNotEqual(os.path.dirname(a), os.path.dirname(b))
+
+    def test_nur_vorhanden_rechnet_im_hintergrund(self):
+        self.assertIsNone(self.t.feste_datei("Okay.", nur_vorhanden=True))
+        for _ in range(100):
+            if self.t.feste_datei("Okay.", nur_vorhanden=True):
+                break
+            threading.Event().wait(0.05)
+        self.assertIsNotNone(self.t.feste_datei("Okay.", nur_vorhanden=True))
+
+    def test_synth_am_stueck_fuer_den_datei_weg(self):
+        daten = self.t.synth("Ein ganzer Satz.")
+        self.assertEqual(daten[:4], b"RIFF")
+        self.assertTrue(_Cosy.anfragen[-1]["voice"].startswith("haus/gaston2-"))
+        self.assertNotIn("sample_rate", _Cosy.anfragen[-1])
+
+
+class PruefenTest(_Basis):
+    def test_text_gehoert(self):
+        from voice_assistant.services.stimmen import text_gehoert
+        self.assertTrue(text_gehoert("Okay.", "Okay."))
+        self.assertTrue(text_gehoert("Okey!", "Okay."))
+        self.assertFalse(text_gehoert("Äm.", "Okay."))
+        self.assertFalse(text_gehoert("", "Ja?"))
+        self.assertTrue(text_gehoert("Ja, ja?", "Ja?"))
+
+    def test_verworfene_kandidaten_zaehlen_nicht(self):
+        cache = tempfile.mkdtemp()
+        try:
+            gesehen = []
+            t = AntwortTts(self.lager, SpeachesState(), cache=cache,
+                           pruefen=lambda pcm, rate, ziel: gesehen.append(ziel) or False)
+            self.assertIsNone(t.feste_datei("Okay."))
+            self.assertEqual(len(gesehen), 5)
+            ok = AntwortTts(self.lager, SpeachesState(), cache=cache,
+                            pruefen=lambda pcm, rate, ziel: True)
+            self.assertIsNotNone(ok.feste_datei("Okay."))
+        finally:
+            shutil.rmtree(cache)
+
+
+class SprechenUeberStromTest(_Basis):
+    def test_speak_geht_ueber_den_strom_zum_antwort_dienst(self):
+        from voice_assistant.state import tts_lock
+        cosy = FakeTts(model="cosyvoice3")
+        lokal = FakeTts(model="speaches-ai/piper-de_DE-thorsten-medium", voice="de_DE-thorsten-medium")
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(), tts_prefix="hm ",
+                              strom_oeffnen=senke.strom_oeffnen, antwort_tts=cosy)
+        sp.speak("Ich habe verstanden: Licht an. Gleich.", restore_leds=False)
+        self.assertEqual(cosy.saetze, ["hm Ich habe verstanden: Licht an.", "Gleich."])
+        self.assertEqual((len(senke.stroeme), senke.dateien, lokal.saetze), (1, [], []))
+        self.assertFalse(tts_lock.locked())
+
+    def test_ohne_antwort_dienst_bleibt_speak_beim_datei_weg(self):
+        lokal = FakeTts()
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(), strom_oeffnen=senke.strom_oeffnen)
+        lokal.state.mark_tts_failed()   # Speaches weg -> Piper (Datei)
+        orig = tts.piper_synth
+        tts.piper_synth = lambda text, *a, **k: None
+        try:
+            sp.speak("Hallo.")
+        finally:
+            tts.piper_synth = orig
+        self.assertEqual(senke.stroeme, [])
+
+    def test_datei_weg_nimmt_erst_den_antwort_dienst(self):
+        class Dienst(FakeTts):
+            def synth(self, text):
+                self.saetze.append(text)
+                return b"RIFF" + bytes(200)
+        cosy, lokal = Dienst(model="cosyvoice3"), Dienst(
+            model="speaches-ai/piper-de_DE-thorsten-medium", voice="de_DE-thorsten-medium")
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(lokal, senke.play_wav, FakeLeds(), antwort_tts=cosy)
+        self.assertTrue(sp._play_speaches_sentence("Satz."))
+        self.assertEqual((cosy.saetze, lokal.saetze), (["Satz."], []))
+
+    def test_denk_phrase_aus_dem_cache(self):
+        quelle = os.path.join(self.ordner, "fest.wav")
+        with open(quelle, "wb") as f:
+            f.write(b"RIFF-fest")
+        w = tts.ThinkingWorker(lambda p: None, ["Moment."], fest=lambda t: quelle)
+        pfad = w._render("Moment.")
+        self.assertNotEqual(pfad, quelle, "Kopie, das Original im Cache bleibt")
+        with open(pfad, "rb") as f:
+            self.assertEqual(f.read(), b"RIFF-fest")
+        os.unlink(pfad)
+
+
+if __name__ == "__main__":
+    unittest.main()

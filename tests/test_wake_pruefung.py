@@ -9,7 +9,10 @@ import unittest
 import numpy as np
 
 from voice_assistant.anrede import anrede_im_text
-from voice_assistant.wake_pruefung import ANFANG_MAX_STELLEN, WakePruefung, anfang_mass, flaeche
+from voice_assistant.wake_pruefung import (
+    ANFANG_MAX_STELLEN, AUSFALL, DURCH, FRIST, VERWORFEN, WARTEN,
+    Urteil, WakePruefung, anfang_mass, entscheid, flaeche,
+)
 
 
 class _Stt:
@@ -32,12 +35,14 @@ class _Stt:
         return self.text
 
 
-def _lauf(stt, scores, grenze=2.7, anfang=""):
+def _lauf(stt, scores, grenze=2.7, anfang="", schranke=False, urteil_ablegen=None):
     with tempfile.TemporaryDirectory() as d:
         log = os.path.join(d, "p.jsonl")
-        p = WakePruefung(stt, log, grenze, anfang=anfang, anfang_grenze=-4.0)
-        p.start({"audio": "x_gaston_wake.wav", "bundle": "gaston", "hits": 3, "peak": 0.9,
+        p = WakePruefung(stt, log, grenze, anfang=anfang, anfang_grenze=-4.0, schranke=schranke)
+        u = p.start({"audio": "x_gaston_wake.wav", "bundle": "gaston", "hits": 3, "peak": 0.9,
                  "threshold": 0.35, "scores": scores}, [np.zeros(1280, np.int16)])
+        if urteil_ablegen is not None:
+            urteil_ablegen.append(u)
         for _ in range(100):
             if os.path.exists(log):
                 break
@@ -123,6 +128,41 @@ class AnfangTest(unittest.TestCase):
         self.assertIn("weg", z["anfang_fehler"])
         self.assertTrue(z["haette_verworfen"])
         self.assertNotIn("fehler", z)
+
+
+class SchrankeTest(unittest.TestCase):
+    """Nur das Anfangs-Maß entscheidet; Ausfall und Frist lassen durch."""
+
+    def _urteil(self, stt, scores=(0.98,) * 6):
+        ab = []
+        z = _lauf(stt, list(scores), anfang="Gast", schranke=True, urteil_ablegen=ab)
+        self.assertTrue(ab[0].fertig.wait(2))
+        return z, ab[0]
+
+    def test_unter_grenze_verworfen_trotz_hoher_flaeche(self):
+        z, u = self._urteil(_Stt("Oh.", sprache="German"))
+        self.assertEqual(z["status"], "schranke")
+        self.assertEqual(entscheid(u, False), VERWORFEN)
+
+    def test_ueber_grenze_durch_trotz_alter_regel(self):
+        z, u = self._urteil(_Stt("Ganz toll.", sprache="German", anfang={"": -2.0}), (0.9, 0.8))
+        self.assertTrue(z["haette_verworfen"])
+        self.assertEqual(entscheid(u, False), DURCH)
+
+    def test_ausfall_laesst_durch(self):
+        _, u = self._urteil(_Stt(fehler=TimeoutError("weg"), sprache="German"))
+        self.assertEqual(entscheid(u, False), AUSFALL)
+        _, u = self._urteil(_Stt("Oh.", sprache="German", anfang={"fehler": TimeoutError("weg")}))
+        self.assertEqual(entscheid(u, False), AUSFALL)
+
+    def test_warten_bis_frist(self):
+        u = Urteil({})
+        self.assertEqual(entscheid(u, False), WARTEN)
+        self.assertEqual(entscheid(u, True), FRIST)
+
+    def test_schranke_ohne_anfang_ist_aus(self):
+        p = WakePruefung(None, os.devnull, 2.7, anfang="", schranke=True)
+        self.assertFalse(p.schranke)
 
 
 if __name__ == "__main__":

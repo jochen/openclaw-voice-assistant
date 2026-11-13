@@ -133,7 +133,12 @@ def _prompt(beispiele: list[tuple[str, str]]) -> str:
 
 def _llm(cfg, system: str, faelle: list[dict]) -> list[dict]:
     nutzer = "\n".join(f"{i + 1}. {f['wort']} — Satz: {f['satz']}" for i, f in enumerate(faelle))
-    body = {"model": cfg.llm_model, "temperature": 0,
+    # Ohne Denken und mit Deckel: Qwen3.5-35B-A3B (current im Fablab seit
+    # 2026-11-08) lief mit json_object und Denken in eine Endlosschleife
+    # (30 000 Token, Timeout nach 600 s, Slot blockiert). Ein Server, der
+    # chat_template_kwargs nicht kennt, ignoriert das Feld.
+    body = {"model": cfg.llm_model, "temperature": 0, "max_tokens": 8000,
+            "chat_template_kwargs": {"enable_thinking": False},
             "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": nutzer}]}

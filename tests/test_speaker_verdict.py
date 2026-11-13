@@ -213,6 +213,23 @@ class SpeakerStateFileTest(unittest.TestCase):
             self.assertEqual(data["wakeword"], "misterhandy")
             self.assertIsInstance(data["epoch"], int)
 
+    def test_sicher_steht_in_der_datei(self):
+        """Seit 2026-11-11 liest die Schranke `sicher`, nicht nur `status`."""
+        from voice_assistant.services.speaker_state import write_current_speaker
+
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "current_speaker.json")
+            write_current_speaker(SpeakerVerdict("jochen", STATUS_BEKANNT, aehnlichkeit=0.47,
+                                                 abstand=0.21, sicher=False), path=p)
+            data = json.load(open(p, encoding="utf-8"))
+            self.assertEqual((data["status"], data["sicher"]), (STATUS_BEKANNT, False))
+            self.assertEqual((data["aehnlichkeit"], data["abstand"]), (0.47, 0.21))
+            # Diarization ohne Werte: bekannt bleibt sicher (wie vorher)
+            write_current_speaker(SpeakerVerdict("jochen", STATUS_BEKANNT), path=p)
+            self.assertTrue(json.load(open(p, encoding="utf-8"))["sicher"])
+            write_current_speaker(SpeakerVerdict(None, STATUS_AUSGEFALLEN), path=p)
+            self.assertFalse(json.load(open(p, encoding="utf-8"))["sicher"])
+
     def test_ausfall_wird_auch_geschrieben(self):
         """Gerade der Ausfall MUSS in der Datei stehen.
 

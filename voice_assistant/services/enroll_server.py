@@ -14,6 +14,13 @@ die Sprecher-Schranke passieren (SPEAKER_STATE.md). Einen neuen Namen darf
 auch ein unbekannter Sprecher anlernen — wer zum ersten Mal angelernt wird,
 ist immer unbekannt. Entschieden wird hier und nicht nur in AGENTS.md: was
 nur im Prompt steht, wird wegargumentiert.
+
+Jedes Anlernen, Erneuern und Löschen meldet der Dienst selbst in den
+Telegram-Kanal des Profils, mit dem Sprecher, der dabei erkannt war (seit
+2026-11-11, Jochen). Eine neue Referenz ist eine Identität: wer sich unter
+einem freien Namen anlernt ("felix"), wird danach als diese Person erkannt.
+Verhindern lässt sich das nicht (der Erste ist immer unbekannt), aber sichtbar
+machen — und zwar vom Code, damit es der Brain nicht vergessen kann.
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ import os
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -72,6 +80,43 @@ def ueberschreiben_verweigert(path: str = CURRENT_SPEAKER_PATH,
     if status != "bekannt":
         return f"letzter Sprach-Turn: Sprecher {st.get('label') or status}"
     return None
+
+
+# Meldung in den Telegram-Kanal; von start_enroll_server gesetzt.
+_melden: Callable[[str], None] | None = None
+
+
+def _sprecher_jetzt(path: str = CURRENT_SPEAKER_PATH, jetzt: float | None = None) -> str:
+    """Wer beim letzten frischen Sprach-Turn erkannt war, für die Meldung."""
+    jetzt = time.time() if jetzt is None else jetzt
+    try:
+        with open(path, encoding="utf-8") as f:
+            st = json.load(f)
+        if jetzt - float(st.get("epoch", 0)) > _FENSTER_S:
+            return "kein frischer Sprach-Turn"
+        label = st.get("label") or st.get("status") or "?"
+        if st.get("status") == "bekannt" and st.get("sicher") is False:
+            label += f" (nicht sicher, {st.get('aehnlichkeit')})"
+        return label
+    except (OSError, ValueError, TypeError, AttributeError):
+        return "unbekannt (kein Sprecher-Zustand)"
+
+
+def meldung(art: str, name: str, sprecher: str) -> str:
+    if art == "neu":
+        return (f"🎙️ Neue Stimme angelernt: „{name}“. Erkannt war dabei: {sprecher}. "
+                f"Wer das nicht war, lässt die Referenz wieder löschen.")
+    if art == "erneuert":
+        return f"🎙️ Stimme „{name}“ neu angelernt. Erkannt war dabei: {sprecher}."
+    return f"🗑️ Stimm-Referenz „{name}“ gelöscht. Letzter Sprecher: {sprecher}."
+
+
+def _melde(art: str, name: str) -> None:
+    """Im eigenen Thread: Telegram darf die Werkzeug-Antwort nicht aufhalten."""
+    if _melden is None:
+        return
+    text = meldung(art, name, _sprecher_jetzt())
+    threading.Thread(target=_melden, args=(text,), name="enroll-meldung", daemon=True).start()
 
 
 def _list_speakers() -> list[str]:
@@ -124,7 +169,8 @@ class _Handler(BaseHTTPRequestHandler):
         os.makedirs(SPEAKER_ORIGINALS_DIR, exist_ok=True)
 
         dst = os.path.join(SPEAKERS_DIR, f"{name}.wav")
-        if os.path.isfile(dst):
+        war_da = os.path.isfile(dst)
+        if war_da:
             grund = ueberschreiben_verweigert()
             if grund:
                 print(f"🚫 Enrolment verweigert: {name} existiert, {grund}")
@@ -140,6 +186,7 @@ class _Handler(BaseHTTPRequestHandler):
         shutil.copy2(LAST_RECORDING_PATH, backup)
 
         print(f"🎙  Speaker enrolled: {name} → {dst}")
+        _melde("erneuert" if war_da else "neu", name)
         self._send_json(200, {"saved": dst, "original": backup, "name": name})
 
     def do_DELETE(self) -> None:
@@ -157,10 +204,13 @@ class _Handler(BaseHTTPRequestHandler):
             return
         os.remove(path)
         print(f"🗑  Speaker removed: {name}")
+        _melde("geloescht", name)
         self._send_json(200, {"removed": name})
 
 
-def start_enroll_server() -> threading.Thread:
+def start_enroll_server(melden: Callable[[str], None] | None = None) -> threading.Thread:
+    global _melden
+    _melden = melden
     os.makedirs(SPEAKERS_DIR, exist_ok=True)
     os.makedirs(SPEAKER_ORIGINALS_DIR, exist_ok=True)
     server = HTTPServer((ENROLL_SERVER_HOST, ENROLL_SERVER_PORT), _Handler)

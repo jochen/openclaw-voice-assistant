@@ -92,7 +92,13 @@ dauerhaft aus haben: `podman stop` (setzt `StoppedByUser`), nicht `kill`.
 Nicht dabei, weil `restart: no`: `paperless-https`, `speaches-warmup`,
 `mood-warmup` — die laufen nach einem Reboot nicht von selbst.
 Geprüft mit einem Wegwerf-Container (erzeugt, nie gestartet → gestartet,
-Port im eigenen Scope); ein echter Reboot steht noch aus.
+Port im eigenen Scope). **Erster echter Reboot 2026-11-08 08:50:** alles kam
+hoch, aber auch die alte `llamacpp-gemma` (3060 Ti, Port 8090): sie stand auf
+`StoppedByUser=false`, war also nie per `podman stop` aus. Sie nahm 2,9 GB,
+Laya fiel per CUDA-OOM auf die CPU und lief in jedem Turn in den Timeout
+(Gemma entschied, still bis auf `Laya fiel aus` im Journal). Jetzt per
+`podman stop` aus (`StoppedByUser=true`). Nach einem Reboot prüfen:
+`/health` von Laya muss `"device":"cuda"` sagen.
 
 Der alte Monolith `voice_assistant.py` wurde in ein Package refaktoriert und
 liegt übergangsweise als `voice_assistant_legacy.py` weiter im Repo (zum
@@ -691,6 +697,7 @@ geänderte Referenz wird ohne Neustart neu berechnet. **Schwelle nur gegen
 Vektor rechnen; dessen `_fbank` ist eine wörtliche Kopie — **wer die Rechnung
 hier ändert, ändert sie dort mit**. Gemessen bitgleich (`--url` am Werkzeug).
 Tests: `tests/test_sprecher_verifikation.py`.
+**Zwei Stufen (`sprecher_schwelle_sicher`, seit 2026-11-11, Fablab 0,55):** Rosty, nicht angelernt, kam im Fablab zweimal als jochen durch (0,47/0,40, Abstand zu den übrigen Referenzen ≥ 0,15) — der Abstand misst nur gegen Angelernte. `bekannt` bleibt bei 0,40, `current_speaker.json` hat `sicher`, `aehnlichkeit`, `abstand`, und claw-power liest `sicher`. Grenzfälle mit Audio in `voice/sprecher_grenzfaelle/` (+ `grenzfaelle.jsonl`, max 300) — Rohstoff für ein gehörtes Fablab-Set. 0,55 ist gegen 9 Jochen-Aufnahmen dort (0,43–0,90) und Rostys Höchstwert 0,47 gewählt, nicht gegen ein Ohr-Set.
 
 **Aenderungen hier nur gegen `tests/test_speaker_verdict.py`** (14 Tests, ohne
 Netz). Der Test haelt genau die Bruchlinie fest, an der es schiefging: jeder
@@ -947,6 +954,76 @@ Schwelle lag mitten im Messbereich und erklärte gültige Läufe für ungültig.
 Jetzt entscheidet, ob die Wiedergabe stattgefunden hat (Dauer gegen
 Dateilänge), und der Raum-Grundpegel wird gemessen statt angenommen.
 
+### Antworten als Strom (`tts_strom`, seit 2026-11-08)
+
+Anlass: CosyVoice als Piper-Ersatz. Die Wiedergabe war Satz für Satz als
+Datei — bei CosyVoice käme der erste Ton erst nach dem ganzen ersten Satz
+(Median 1,6 s). Jetzt geht eine Brain-Antwort (`ReplyStreamSession`) als
+**ein Strom** zum ReSpeaker (`audio/strom.py`, `RespeakerSink.strom_oeffnen`,
+Adresse `/strom_*.wav` im jetzt mehrfädigen HTTP-Server). Gemessen am Gerät
+und im Docstring von `strom.py`: wachsende WAV geht, nur 48 kHz Stereo 16 bit,
+Startpuffer 1 s → `buffer_size: 128000` (0,5 s) in beiden Firmware-Dateien.
+Der Strom füllt Lücken mit Stille (gesendete Länge = gespielte, Falle 3 bleibt
+gelöst), schließt nach 1,5 s Leerlauf und hält `tts_lock`, bis der Player
+fertig ist — die Senke ruft dann `bei_ende` aus ihrem Thread, der gibt den
+Lock frei. `SpeachesTts.synth_strom` bestellt 48 kHz beim Dienst. Piper-
+Rückfall schreibt in denselben Strom, nur solange vom Satz noch nichts
+geschrieben ist. Satelliten, Bestätigung, Ansagen: weiter Dateien.
+Hörprobe daheim 2026-11-08 (Jochen: „sehr sehr gut, kein Knacksen“), Ende
+jedes Stroms konstant +0,81 s über der gesendeten Länge, Abbruch mitten im
+Strom sofort. Tests: `tests/test_tts_strom.py`.
+
+**Antwort-Dienst und eigene Stimmen (`antwort_tts_*`, seit 2026-11-08/09).**
+Brain-Antworten spricht CosyVoice3 auf dem Fablab-Rechner (GPU1, User-Unit
+`cosyvoice`, Port 8010; Dienst-Code liegt dort in `~/cosyvoice-dienst/`, nicht
+in diesem Repo). Rückfall je Satz: Speaches, dann Piper (Jochen: daran merkt
+man, dass der Dienst weg ist). Die Stimmen verwaltet der Assistent
+(`services/stimmen.py`, Lager `voice/stimmen/` → privates Daten-Repo): der
+Dienst bekommt sie per `POST /v1/voices`, wenn er 404 sagt, Kennung
+`<namensraum>/<name>-<prüfwert>`. Mit Lager zeigen `voice_list_voices`/
+`voice_set_voice` nur noch diese Stimmen; eine alte Piper-Vorliebe in
+`speaker_voices.json` gilt dort als „keine Wahl“ → Standard-Stimme. Falle vom
+2026-11-08: die gespeicherte Wahl „thorsten“ gegen „de_DE-thorsten-medium“ im
+Profil galt als eigene Wahl und übersprang CosyVoice still — jetzt steht je
+Satz `↳ modell/stimme` im Journal. Speicher des Dienstes am 2026-11-09 von
+9,5 auf 5,5 GB (TensorRT-Engine mit Obergrenze 2000 statt 3000 Frames, vLLM
+0,07 mit `max_model_len` 4096; Messung im MemPalace). **Seit 2026-11-09
+spricht alles über den Antwort-Dienst** (Jochen: „die gewählte Stimme gilt
+für alles“): `speak()` (Bestätigung, Quittungen, Ansagen) geht am
+Haupt-Gerät denselben Strom wie die Antworten, der Datei-Weg (Satelliten)
+fragt erst `AntwortTts.synth`. Feste kurze Sätze („Ja?“, „Okay.“,
+Denk-Phrasen) kommen aus `voice/stimmen_cache/` — CosyVoice ist bei so kurzen
+Texten unzuverlässig („Ja?“ roh 0,8–1,6 s, teils 1 s Stille davor; Piper
+0,3 s), darum 5 Versuche, Stille weg, der zur erwarteten Länge passendste
+(geschätzt, per Hörseite abzunehmen). Fehlt ein Satz im Cache, spielt Piper
+und er wird im Hintergrund gerechnet. Das Echo-Fenster des „Ja?“ wächst mit
+dessen Länge (`_ACK_ECHO_NACH_SEC`, mindestens die alte 1 s). Rückfall überall
+Piper thorsten. Tests: `tests/test_stimmen.py`.
+**Satzabbrüche liegen an der Probe** (`tools/tts_abbruch_test.py`): die
+zweisätzige 12-s-Probe gaston2 brach 9/60 heikle Sätze ab, jeder ihrer Sätze
+allein 0/60. Daher ein Satz je Probe, nach Gehör gewählt
+(`tools/stimmprobe_zerlegen.py`; SER und Tonhöhe sagten das Ohr-Urteil nicht
+voraus). Seit 2026-11-09 abends spricht daheim `gaston` (erster Satz).
+**Neue Stimmen per Telegram (`services/stimmen_eingang.py`, Plugin
+`voice_stimme_einreichen`/`voice_stimme_waehlen`, Sprech-Server
+`/stimmen/*`):** derselbe Weg automatisch — zerlegen, Vorsortieren nach dem
+Messbaren (Ende mitten im Wort, Testsatz zweimal mitgeschrieben: fremdes Wort
+am Anfang, fehlendes Ende, Länge außerhalb 0,75–1,35 des Medians), bis zu 5
+Hörproben als Sprachnachricht in den Hauskanal, Wahl per Nummer, Abbruch-Test
+4×15, nur 0 Abbrüche kommt ins Lager. Nur Dateien aus OpenClaws
+Eingangs-Ablage (`OPENCLAW_MEDIA_DIRS`). Jeder darf (Jochen: per Telegram
+sind nur Berechtigte); Mikro-Aufnahmen als Quelle sind offen. Die
+Qwen-Prüfung ist bei Einzelwörtern blind (ein „hh oh“ hörte sie als „okay“),
+Ja/Okay bleiben Sache des Ohrs: nach dem Anlegen kommen je 3 Fassungen als
+Sprachnachricht, Wahl per `voice_stimme_kurz_waehlen` (auch im Fablab ohne
+Hörseite; `voice_stimme_kurz_anhoeren` für vorhandene Stimmen). Erster echter
+Durchlauf 2026-11-09: `edgar_3` aus einem Hörbuchausschnitt. **Standard für
+alle** (`voice_set_voice` mit `fuer_alle`, seit 2026-11-09): steht in
+`<lager>/_standard.json` und gewinnt gegen `antwort_tts_voice`; Anlass: der
+Brain sollte „für alle“ umstellen, hatte kein Werkzeug dafür und meldete
+trotzdem Vollzug. Ohne `for_speaker`/`fuer_alle` gilt eine Wahl nur
+vorübergehend für den Sprecher. Tests: `tests/test_stimmen_eingang.py`.
+
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 
 `RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die
@@ -1161,6 +1238,24 @@ den Brain zu schicken. Das gilt einmal je Trigger, nicht nach Follow-up,
 Rückfrage oder Barge-in. `endpoint.log`: `ausgang=nur_wakewort`, danach
 `nach_nur_wakewort`, außerdem `wake_rms` und `laute_sprache_s` je Aufnahme.
 
+**Das eigene „Ja?“ ist keine Eingabe (seit 2026-11-08).** Die
+Echo-Unterdrückung lässt das kurze „Ja?“ durch, Qwen liest den Pegelstoß
+0,3–0,9 s nach dem Abspielen als „Ja.“, „So. Da.“ oder „Danke.“ — fünfmal
+ging so etwas an den Brain. Erstes Netz: der VAD zählt die erste Sekunde
+nach dem „Ja?“ nicht als Sprache (`_ACK_ECHO_SEC`); folgt eine
+Nachlauflänge lang nichts, endet die Aufnahme als „keine Sprache“
+(`reason=kein_start_nach_ja`), ohne STT. Zweites Netz (`ack_echo.py`): reine
+„Ja.“-Sätze am Rand des Transkripts fallen weg; bleibt nichts,
+`ausgang=nur_ack_echo`, Änderungen als `result: "ack_echo"`. Verworfen,
+gemessen: das Echo aus dem Audio schneiden (Qwen erfindet Sätze, echte
+Befehle gingen kaputt). Das erste Netz ist nur sicher zusammen mit dem
+folgenden Punkt — ohne ihn gingen Befehle im Pre-Roll verloren (14 im Archiv). Dazu **kein verspätetes „Ja?“**:
+stehen im Wake-Clip-Text der Schranke ≥ 2 Wörter hinter dem Wakewort
+(`_BEFEHL_IM_CLIP_WOERTER`), war der Befehl schon gesagt, bevor der Trigger
+feuerte (langer Streak). Dann kein „Ja?“, der Pre-Roll zählt als Sprache,
+Kommando-Nachlauf; `ack` trägt `befehl_im_wakeclip`. Erfindet Qwen Wörter,
+holt `_ist_nur_wakewort` das „Ja?“ nach. Tests: `tests/test_ack_echo.py`.
+
 **Follow-up ohne Sprache endet nach 10 s** (`_FOLLOWUP_START_SEC`, seit
 2026-10-15), vorher erst am 30-s-Deckel (Jochen: „bleibt sehr lang aktiv“).
 Die Grenze ist geschätzt, nicht gegen ein Archiv gemessen: Follow-up-Aufnahmen
@@ -1258,7 +1353,19 @@ nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.
 
-### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, auf main seit 2026-11-01)
+### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, Schranke seit 2026-11-08)
+
+**Seit 2026-11-08 verwirft das Anfangs-Maß wirklich** (`schranke: true`,
+`anfang_grenze` −6,5): in der ersten Live-Woche mit Ohr-Labels lagen echte
+Rufe alle ≥ −5,05, Fehlauslöser alle ≤ −8,2 (Zahlen in
+`WAKEWORD_PROCESS.md`, „Schranke Anfangs-Maß“). Die Aufnahme läuft während
+der Prüfung weiter; nur „Ja?“ und das Aufnahme-Ende warten (`schranke_wartet`
+in STATE_RECORDING, höchstens `SCHRANKE_FRIST_SEC` 2 s). Ausfall von Qwen
+oder Frist → durch, ein toter Dienst darf keine Rufe kosten. Verworfen →
+Near-Miss mit `failed_on: "anfang"` (Jochen: „auf jeden Fall log, mit
+Grund“), Trigger-Zeile und Wake-Clip entstehen erst nach dem Urteil. Rückweg:
+`schranke: false`. Der Rest des Abschnitts beschreibt die Schatten-Zeit.
+
 
 Jochens Idee: das Modell darf großzügig hören, eine zweite Stufe sortiert
 Fehlauslöser danach aus. `wake_pruefung.py` rechnet bei jedem Trigger die
@@ -1338,6 +1445,9 @@ Beschreibung nie und nannte den Trainingssatz nicht. Gemessen, siehe Werkzeug.
 Ein unbekannter Sprecher darf einen neuen Namen anlernen, eine bestehende
 Referenz überschreibt nur ein erkannter (`enroll_server.ueberschreiben_verweigert`,
 Jochen 2026-10-24; Regel auch in AGENTS.md und in der Werkzeugbeschreibung).
+Seit 2026-11-11 meldet der Anlern-Dienst jedes Anlernen, Erneuern und Löschen
+selbst in den Telegram-Kanal des Profils, mit dem dabei erkannten Sprecher:
+ein freier Name („felix“) ist sonst eine Identität, die jeder anlegen kann.
 
 Vorher hing die Direktive am Transkript: bei jeder Sprachnachricht im
 Sitzungsverlauf, im Gedächtnis-Index und im Dreaming, das ihre Beispiele für

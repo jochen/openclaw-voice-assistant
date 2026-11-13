@@ -51,3 +51,36 @@ class UeberschreibenTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MeldungTest(unittest.TestCase):
+    """Jedes Anlernen geht in den Kanal, mit dem erkannten Sprecher (2026-11-11)."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, "current_speaker.json")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def _zustand(self, **d):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+
+    def test_neu_nennt_namen_und_sprecher(self):
+        from voice_assistant.services.enroll_server import meldung
+        t = meldung("neu", "felix", "unbekannt")
+        self.assertIn("felix", t)
+        self.assertIn("unbekannt", t)
+        self.assertIn("löschen", t)
+
+    def test_sprecher_nicht_sicher_steht_dabei(self):
+        from voice_assistant.services.enroll_server import _sprecher_jetzt
+        self._zustand(status="bekannt", label="jochen", epoch=1000.0, sicher=False, aehnlichkeit=0.47)
+        self.assertEqual(_sprecher_jetzt(self.path, jetzt=1010.0), "jochen (nicht sicher, 0.47)")
+
+    def test_alter_oder_fehlender_zustand(self):
+        from voice_assistant.services.enroll_server import _sprecher_jetzt
+        self._zustand(status="bekannt", label="jochen", epoch=1000.0)
+        self.assertEqual(_sprecher_jetzt(self.path, jetzt=2000.0), "kein frischer Sprach-Turn")
+        self.assertIn("unbekannt", _sprecher_jetzt(os.path.join(self.dir.name, "fehlt"), jetzt=1.0))

@@ -17,7 +17,11 @@
       "voice_analyze_last_output",
       "voice_aussprache_setzen",
       "voice_aussprache_zeigen",
-      "voice_aussprache_loeschen"
+      "voice_aussprache_loeschen",
+      "voice_stimme_einreichen",
+      "voice_stimme_waehlen",
+      "voice_stimme_kurz_anhoeren",
+      "voice_stimme_kurz_waehlen"
     ]
   },
   "configSchema": {

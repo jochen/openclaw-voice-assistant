@@ -551,18 +551,21 @@ class UmgebungConfig:
 @dataclass
 class WakePruefungConfig:
     """Prüfung nach dem Trigger, im Schatten (voice_assistant/wake_pruefung.py).
-    Seit 2026-10-27. Nur Log, verworfen wird nichts.
+    Seit 2026-10-27. Ohne ``schranke`` nur Log, verworfen wird nichts.
 
     flaeche_grenze: Summe der Scores über der Schwelle, ab der ein Trigger
     ohne Text-Prüfung als echt gälte (gemessen an v5, WAKEWORD_PROCESS.md).
     anfang: Wortanfang des Wakeworts (hier "Gast"), dessen Wahrscheinlichkeit
     Qwen zusätzlich schätzt; leer = aus. Braucht stt_llamacpp_sprache.
     anfang_grenze: log P, unter der das Anfangs-Maß verworfen hätte.
+    schranke: das Anfangs-Maß verwirft wirklich (seit 2026-11-08); braucht
+    ``anfang``. Verworfene Trigger werden Near-Miss mit failed_on "anfang".
     """
     enabled: bool = False
     flaeche_grenze: float = 2.7
     anfang: str = ""
     anfang_grenze: float = -4.0
+    schranke: bool = False
 
 
 @dataclass
@@ -758,6 +761,11 @@ class Profile:
     sprecher_verifikation: bool = False
     sprecher_schwelle: float = 0.40
     sprecher_abstand: float = 0.15
+    # Strengere Grenze für die Sprecher-Schranke (current_speaker.json
+    # `sicher`). 0 = aus: bekannt ist sicher. Seit 2026-11-11 (Fablab: ein
+    # nicht angelernter Gast kam bis 0,47 an jochen heran). Grenzfälle werden
+    # dann in voice/sprecher_grenzfaelle/ aufgehoben.
+    sprecher_schwelle_sicher: float = 0.0
     # Fingerabdruck auf einem anderen Rechner rechnen lassen (voice-analysis
     # /fingerabdruck, openclaw-voice-stack) — fuer schwache Hardware wie den
     # Pi 4 (2,8 s statt 50 ms). Leer = lokal.
@@ -779,6 +787,23 @@ class Profile:
     # und der Sprecher nicht bekannt ist (voice_assistant/anrede.py). Der Text
     # steht in locale.anrede_hinweis. Default aus.
     anrede_hinweis: bool = False
+    # Brain-Antworten als Strom zum ReSpeaker statt Satz fuer Satz als Datei
+    # (audio/strom.py): der erste Ton kommt, waehrend der Satz noch entsteht.
+    # Nur Haupt-Geraet im respeaker-Modus, sonst wie bisher. Default aus.
+    tts_strom: bool = False
+    # Eigener TTS-Dienst nur fuer Brain-Antworten im Strom (Speaches-API,
+    # z. B. CosyVoice im Fablab, seit 2026-11-08). Leer = speaches wie bisher.
+    # Wirkt nur mit tts_strom. Rueckfall: speaches, dann Piper.
+    antwort_tts_url: str = ""
+    antwort_tts_model: str = ""
+    antwort_tts_voice: str = ""
+    # Eigene Stimmen dazu, lokal verwaltet (services/stimmen.py, seit
+    # 2026-11-09). Liegt antwort_tts_voice dort, wird die Auswahl des Brains zu
+    # diesen Stimmen, und der Dienst bekommt sie bei Bedarf hochgeladen.
+    # Leer = <workspace>/voice/stimmen. Namensraum trennt die Häuser beim
+    # Dienst; leer = Profilname.
+    antwort_tts_stimmen: str = ""
+    antwort_tts_namensraum: str = ""
 
     # Telegram
     telegram_bot_token: str = ""
@@ -1173,6 +1198,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         flaeche_grenze=float(wp_raw.get("flaeche_grenze", _dwp.flaeche_grenze)),
         anfang=str(wp_raw.get("anfang", _dwp.anfang) or ""),
         anfang_grenze=float(wp_raw.get("anfang_grenze", _dwp.anfang_grenze)),
+        schranke=bool(wp_raw.get("schranke", _dwp.schranke)),
     )
 
     md_raw = raw.get("musik_ducking") or {}
@@ -1299,6 +1325,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         sprecher_verifikation=bool(raw.get("sprecher_verifikation", False)),
         sprecher_schwelle=float(raw.get("sprecher_schwelle", 0.40)),
         sprecher_abstand=float(raw.get("sprecher_abstand", 0.15)),
+        sprecher_schwelle_sicher=float(raw.get("sprecher_schwelle_sicher", 0.0) or 0.0),
         sprecher_verifikation_url=str(raw.get("sprecher_verifikation_url", "") or ""),
         speaches_tts_model=str(raw.get("speaches_tts_model", "")),
         speaches_tts_voice=str(raw.get("speaches_tts_voice", "")),
@@ -1307,6 +1334,12 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         openclaw_stream=bool(raw.get("openclaw_stream", True)),
         openclaw_instructions=bool(raw.get("openclaw_instructions", True)),
         anrede_hinweis=bool(raw.get("anrede_hinweis", False)),
+        tts_strom=bool(raw.get("tts_strom", False)),
+        antwort_tts_url=str(raw.get("antwort_tts_url", "")),
+        antwort_tts_model=str(raw.get("antwort_tts_model", "")),
+        antwort_tts_voice=str(raw.get("antwort_tts_voice", "")),
+        antwort_tts_stimmen=str(raw.get("antwort_tts_stimmen", "")),
+        antwort_tts_namensraum=str(raw.get("antwort_tts_namensraum", "")),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),
@@ -1463,6 +1496,15 @@ WAKE_REVIEW_PATH = os.path.join(WORKSPACE, "wake_review.jsonl")
 SPEAKERS_DIR = os.path.join(VOICE_DIR, "speakers")
 SPEAKER_ORIGINALS_DIR = os.path.join(VOICE_DIR, "originals")
 SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
+# Eigene Stimmen des Antwort-Dienstes (services/stimmen.py), privat.
+STIMMEN_DIR = os.path.join(VOICE_DIR, "stimmen")
+# Gerechnete feste Sätze je Stimme („Ja?“, Denk-Phrasen), abgeleitet, nicht privat.
+STIMMEN_CACHE_DIR = os.path.join(VOICE_DIR, "stimmen_cache")
+# Eingereichte Proben in Arbeit (services/stimmen_eingang.py), privat.
+STIMMEN_EINGANG_DIR = os.path.join(VOICE_DIR, "stimmen_eingang")
+# Wo OpenClaw Telegram-Dateien ablegt; nur von dort nimmt der Eingang Proben.
+OPENCLAW_MEDIA_DIRS = [os.path.join(_HOME, ".openclaw", "media"),
+                       os.path.join(WORKSPACE, "media")]
 
 # Wer zuletzt per Stimme gesprochen hat — geschrieben nach JEDEM Voice-Turn,
 # gelesen von Werkzeugen AUSSERHALB dieses Repos (siehe SPEAKER_STATE.md), die

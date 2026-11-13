@@ -179,6 +179,14 @@ class SatellitSenke:
         mikro = path == FOLLOWUP_BEEP_PATH and self._quelle.aktiv == name
         self._senken[name].play_wav(path, mikro_danach=mikro)
 
+    def strom_oeffnen(self, bei_ende):
+        """Strom nur beim Haupt-Geraet; ein Satellit spielt ueber die
+        Announce-API (Ende-Meldung, Mikro danach) und bekommt Dateien."""
+        if self._quelle.ziel is not None:
+            return None
+        fn = getattr(self._haupt, "strom_oeffnen", None)
+        return fn(bei_ende) if fn is not None else None
+
     def stop(self) -> None:
         for senke in (self._haupt, *self._senken.values()):
             fn = getattr(senke, "stop", None)

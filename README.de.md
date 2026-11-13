@@ -305,6 +305,91 @@ Zwei Dinge, die man wissen muss, wenn man darauf aufbaut:
   länger dauert als das Audio, macht aus der nächsten Regression dieser Art
   etwas zum Lesen statt zum Hören.
 
+**Antworten als Strom (`tts_strom: true`, optional).** Ohne den Schalter wird
+jeder Satz erst komplett synthetisiert, als Datei abgelegt und dann
+abgespielt. Bei einem schnellen TTS (Piper, ~0,1 s je Satz) merkt man das
+nicht; bei einem langsameren, besseren (CosyVoice und Ähnliche) wartet der
+erste Ton auf den ganzen ersten Satz. Mit dem Schalter geht eine Antwort des
+Brains als **eine wachsende WAV über HTTP** zum ReSpeaker, Satz für Satz,
+während sie noch entsteht (`voice_assistant/audio/strom.py`). Am Gerät
+gemessen (ESPHome 2026.9.1), wissenswert für einen Nachbau:
+
+- Der Media-Player spielt eine WAV, die noch wächst: Platzhalter-Längen im
+  Kopf, kein `Content-Length`, das Schließen der Verbindung beendet sie. Lücken
+  von 2 s und 8 s ohne Daten haben nichts abgebrochen; sein Leser gibt nach
+  30 s auf.
+- **Nur 48 kHz Stereo 16 bit.** Ein Strom mit 24 kHz mono brachte „Incompatible
+  stream settings“, der Player hing danach in einer Fehlerschleife bis zum
+  nächsten Befehl.
+- Er beginnt erst, wenn ein Startpuffer voll ist: 1 s Audio, höchstens 3/4 der
+  `buffer_size` des Media-Players (Default 1 MB). `buffer_size: 128000` macht
+  0,5 s daraus (beide Firmware-Dateien hier).
+- Der Strom füllt Lücken selbst mit Stille. So ist die gesendete Länge die
+  gespielte, und das Ende wird genau wie bei einer Datei ausgerechnet (Regel
+  oben). Nach 1,5 s ohne neuen Satz schließt er sich, damit eine lange
+  Werkzeug-Phase des Brains nicht als minutenlange Stille im Lautsprecher hängt.
+
+Daheim angehört: kein Knacken, keine Pausen zwischen den Sätzen, ein Barge-in
+mitten im Strom beendet ihn sofort. Gestreamt wird nur zum Haupt-Gerät;
+Handy-Satelliten, Bestätigungen und Ansagen von außen bleiben bei Dateien.
+
+**Ein eigener Dienst für Antworten, mit eigenen Stimmen (`antwort_tts_*`,
+optional, braucht `tts_strom`).** Antworten können von einem TTS mit
+Stimmklonen kommen (hier CosyVoice3 hinter einem kleinen Speaches-kompatiblen
+Dienst), während Bestätigungen und Quittungen bei Speaches/Piper bleiben.
+Reihenfolge je Satz: Antwort-Dienst → Speaches → Piper lokal — ist der Dienst
+weg, hört man die andere Stimme und merkt es so. Die Stimmen verwaltet **der
+Assistent**, nicht der Dienst: `<workspace>/voice/stimmen/<name>/` enthält
+`probe.wav` (die Referenz), `probe.txt` (was darin gesagt wird) und optional
+`meta.json` (`beschreibung`, `freigegeben`). Antwortet der Dienst bei einer
+Stimme mit 404, lädt der Assistent sie hoch (`POST /v1/voices`) und fragt
+noch einmal; die Kennung trägt einen Namensraum je Assistent und einen
+Prüfwert der Probe, so sehen sich zwei Häuser nie gegenseitig, und eine
+ersetzte Probe wird von selbst übernommen. Mit so einem Lager bieten die
+Stimm-Werkzeuge des Brains (`voice_list_voices`, `voice_set_voice`) diese
+Stimmen an statt der Piper-Liste (`voice_assistant/services/stimmen.py`). Die
+gewählte Stimme gilt für alles: Bestätigungen und Quittungen laufen durch
+denselben Strom, Dateien (Handy-Satelliten) fragen zuerst den Dienst, und
+feste kurze Sätze (das „Ja?“, „Okay.“, Denk-Phrasen) werden je Stimme einmal
+gerechnet und gespeichert. Ein Stimmklon ist bei so kurzen Texten
+unzuverlässig (das „Ja?“ kam mit 0,8–1,6 s heraus, teils mit einer Sekunde
+Stille davor, Piper braucht 0,3 s), deshalb mehrere Versuche, Stille weg, und
+der zur erwarteten Länge passendste bleibt — einmal anhören. Das Echo-Fenster
+nach dem „Ja?“ wächst mit dessen Länge.
+Gelernt beim Auswählen nach Gehör: die geklonte Stimme übernimmt
+**Lautstärke, Tempo und Stimmung der Probe**. Eine gespielte Szene klang zu
+emotional, eine Probe mit −31 LUFS kam 14 dB leiser heraus als die anderen —
+Proben normalisieren (z. B. ffmpeg `loudnorm` auf −18 LUFS). Und **einen
+Satz** nehmen: mit einer zweisätzigen 12-s-Probe brach der Dienst 9 von 60
+heiklen Antworten vorzeitig ab, mit jedem ihrer Sätze allein 0 von 60
+(`tools/tts_abbruch_test.py`, STT-Rückprobe). Jeder Ausschnitt derselben
+Probe klingt anders, und weder Stimmungswerte (SER) noch Tonhöhe sagten
+voraus, welcher gefällt — also nach Gehör wählen:
+`tools/stimmprobe_zerlegen.py` schneidet eine Probe an ihren Pausen und zeigt
+auf einer lokalen Seite jedes Stück samt Testsätzen damit.
+
+**Neue Stimmen aus dem Chat (`voice_stimme_einreichen`,
+`voice_stimme_waehlen`).** Eine Audiodatei oder Sprachnachricht in den Chat
+des Assistenten schicken und sagen, daraus solle eine Stimme werden. Der
+Brain gibt die empfangene Datei weiter (nur Dateien aus OpenClaws
+Eingangs-Ablage werden angenommen), der Assistent macht im Hintergrund
+dasselbe: an Pausen schneiden, normalisieren, mitschreiben; was messbar
+schlecht ist, fliegt raus (ein Stück endet mitten im Wort — der Klon setzt es
+fort, „Abbrauchst du…“ —, ein Testsatz mit fremdem Wort am Anfang, fehlendem
+Ende oder einer Länge weit weg von den anderen, also Stille, Atmen oder
+Zischen); dann kommen bis zu fünf Stücke als Sprachnachrichten in den Chat,
+je das Stück und danach ein Testsatz damit. Mit einer Nummer antworten; das
+Stück geht durch den Abbruch-Test (60 Sätze, etwa vier Minuten) und nur mit 0
+Abbrüchen ins Lager, mit vorgerechneten festen Sätzen. Gleich danach kommen
+die kurzen festen Sätze („Ja?“, „Okay.“) in bis zu drei Fassungen; antworten
+z. B. mit „Ja 2, Okay 1“ (`voice_stimme_kurz_waehlen`;
+`voice_stimme_kurz_anhoeren` holt das für eine vorhandene Stimme nach). Die
+STT-Prüfung ist bei Einzelwörtern blind, also entscheidet das Ohr, ohne
+Hörseite. Umschalten bleibt ein eigener Schritt: für eine Person mit
+`for_speaker`, für alle mit `fuer_alle` (neben dem Lager gespeichert, gewinnt
+gegen die Standard-Stimme des Profils). Ein Auftrag zur Zeit
+(`voice_assistant/services/stimmen_eingang.py`).
+
 ## Ein Handy als Satellit (`satelliten:`, optional)
 
 Ein Mikrofon deckt nicht die ganze Wohnung ab. Für Räume, in denen man selten
@@ -1361,6 +1446,8 @@ Jede Aufnahme läuft parallel zur STT durch die Speaches-Diarization. Der domina
 
 **Schnellere Alternative: Sprecher-Verifikation** (`sprecher_verifikation: true`). Statt einer vollen Diarization je Turn (Segmentierung, Fingerabdruck, Clustering — live rund 2 s, und kurze Sätze brauchen oft einen zweiten Durchlauf) wird ein Stimm-Fingerabdruck der ganzen Aufnahme auf der CPU mit den angelernten Referenzen verglichen (~50 ms, dasselbe WeSpeaker-Modell). Als bekannt gilt nur, wer über `sprecher_schwelle` liegt **und** mindestens `sprecher_abstand` vor der zweitbesten Referenz. Das Anlernen über den Brain funktioniert unverändert; eine geänderte Referenz-Datei wirkt ohne Neustart. Die Standard-Schwelle (0,40) ist gegen blind per Ohr geprüfte Labels gewählt, sodass keine Aufnahme der falschen Person zugeordnet wurde — mit eigenen Stimmen per `tools/sprecher_verifikation_test.py` nachmessen, bevor man ihr traut; die Sprecher-Schranke hängt daran. Auf schwacher Hardware (ein Raspberry Pi 4 braucht rund 0,37 s je Sekunde Audio, länger als der Assistent auf den Sprecher wartet) kann ein anderer Rechner den Fingerabdruck rechnen: `sprecher_verifikation_url: http://<host>:8001` zeigt auf `voice-analysis` aus [openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack) (Endpunkt `/fingerabdruck`). Übertragen werden die Audio-Samples selbst, das Ergebnis ist bitgleich zur lokalen Rechnung; Referenzen und Urteil bleiben auf dem Assistenten, und fällt der Dienst aus, gilt der Sprecher als `ausgefallen`.
 
+**Zwei Stufen für die Sprecher-Schranke** (`sprecher_schwelle_sicher`, Standard 0 = aus). Die Abstandsregel vergleicht nur mit *angelernten* Stimmen. Sie kann eine bekannte Person also nicht von einem nie angelernten Gast unterscheiden, der ein wenig ähnlich klingt. In einer offenen Werkstatt erreichte ein nicht angelerntes Mitglied 0,47 gegen eine Referenz, die anderen Referenzen lagen weit dahinter, und er wurde als diese Person erkannt; deren eigene Aufnahmen lagen dort bei 0,43 bis 0,90. Mit der zweiten Grenze bleibt `bekannt` (Anrede, Stimmwahl) bei `sprecher_schwelle`, aber `current_speaker.json` meldet `sicher: true` erst über der strengeren, und dieses Feld liest die Schranke (siehe `SPEAKER_STATE.md`). Grenzfälle (bekannt, aber nicht `sicher`, oder über der Schwelle und nur am Abstand gescheitert) werden mit allen Werten in `voice/sprecher_grenzfaelle/` aufgehoben, damit man sie per Ohr labeln und eine Grenze messen kann statt sie zu raten. Jede regelmäßige Person anzulernen bleibt für eine einzelne Person die wirksamste Abhilfe.
+
 ### Workspace-Layout
 
 ```
@@ -1410,9 +1497,11 @@ Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert die Tools, die 
 | Tool | Zweck |
 |---|---|
 | `voice_speak_text(text)` | kurzen Text laut vorlesen (fire-and-forget) |
-| `voice_enroll_speaker(name)` | letzte Aufnahme als Referenz dieses Sprechers speichern |
+| `voice_enroll_speaker(name)` | letzte Aufnahme als Referenz dieses Sprechers speichern; jedes Anlernen, Erneuern und Löschen meldet der Assistent im Telegram-Kanal des Profils, mit dem dabei erkannten Sprecher, weil sich jeder einen freien Namen nehmen kann |
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | bekannte Sprecher verwalten |
-| `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (auch pro Sprecher via `for_speaker`) |
+| `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (pro Sprecher via `for_speaker`, für alle via `fuer_alle`) |
+| `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | neue Stimme aus einer Audiodatei im Chat: Stücke anhören, eins wählen, Abbruch-Test |
+| `voice_stimme_kurz_anhoeren(name?)` / `voice_stimme_kurz_waehlen(satz, fassung)` | Fassungen von „Ja?“/„Okay.“ als Sprachnachricht, per Gehör wählen |
 | `voice_analyze_last_output(…)` | die eigene zuletzt gesprochene Antwort erneut analysieren (Texttreue, Timing, Prosodie) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | Aussprache eines Worts sofort korrigieren („Sauce spricht man *Sohße*"); siehe *Aussprache-Liste* |
 

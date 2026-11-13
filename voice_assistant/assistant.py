@@ -36,6 +36,10 @@ from voice_assistant.config import (
     MIN_SPEECH_CHUNKS,
     OPENCLAW_OVERALL_TIMEOUT,
     PIPER_OUT,
+    STIMMEN_DIR,
+    STIMMEN_CACHE_DIR,
+    STIMMEN_EINGANG_DIR,
+    OPENCLAW_MEDIA_DIRS,
     RATE_OW,
     RECORDING_MAX_SEC,
     SILENCE_CHUNKS_LIMIT,
@@ -85,6 +89,10 @@ from voice_assistant.services.speaches import SpeachesState
 from voice_assistant.services.stt import (
     LlamaCppAsrStt, LocalWhisperStt, OnnxAsrStt, SpeachesStt, SttPipeline, chunks_to_wav_bytes,
 )
+from voice_assistant.services.stimmen import (
+    AntwortTts, StimmenLager, feste_saetze, stt_pruefer, wav_dauer,
+)
+from voice_assistant.services.stimmen_eingang import StimmenEingang
 from voice_assistant.services.tts import (
     ReplySpeaker,
     prerender_abort_beep,
@@ -116,7 +124,12 @@ from voice_assistant.wakeword.respeaker import RespeakerWakeword
 from voice_assistant.anrede import anrede_im_text
 from voice_assistant.bargein import BargeInDetector, BargeInHit, BargeInMiss
 from voice_assistant.nearmiss_shadow import NearMissShadow
-from voice_assistant.wake_pruefung import TIMEOUT_SEC as _PRUEF_TIMEOUT, WakePruefung
+from voice_assistant.wake_pruefung import (
+    SCHRANKE_FRIST_SEC as _SCHRANKE_FRIST, TIMEOUT_SEC as _PRUEF_TIMEOUT,
+    VERWORFEN as _SCHRANKE_VERWORFEN, WARTEN as _SCHRANKE_WARTEN,
+    WakePruefung, entscheid as _schranke_entscheid, woerter_nach_wakewort,
+)
+from voice_assistant.ack_echo import ohne_ack_echo
 from voice_assistant.rewind import RewindBuffer
 from voice_assistant.wake_gate import gate_passed as _gate_passed, required_peak as _required_peak
 from voice_assistant.wake_rms import loudest_window_rms
@@ -149,6 +162,31 @@ _FOLLOWUP_MIN_VAD = 0.20
 # nach Hardware-Wechsel neu messen. Satelliten sind ausgenommen (andere Skala).
 _FOLLOWUP_LEISE_SPITZE = 2500
 _ACK_DELAY_SEC = 0.4
+# Verspätetes "Ja?" (2026-11-08): stehen in Qwens Text des Wake-Clips so viele
+# Wörter hinter dem Wakewort, war der Befehl schon gesagt, als der Trigger
+# feuerte — kein "Ja?", sondern Kommando-Nachlauf. Im Archiv 7 von 7 echten
+# Rufen mit gespieltem "Ja?" und ≥ 2 Wörtern ("Gastor, gut Nacht.", "…
+# schaltet das Tischlicht aus."). Braucht die Wake-Schranke (sonst kein Text
+# rechtzeitig). Erfindet Qwen Wörter, fängt _ist_nur_wakewort den Turn.
+_BEFEHL_IM_CLIP_WOERTER = 2
+# Echo des eigenen "Ja?" (2026-11-08): die Echo-Unterdrückung lässt es durch,
+# über 124 archivierte Aufnahmen endet der Pegelstoß im Median 0,76 s, p90
+# 0,88 s nach dem Abspielbefehl. Qwen liest ihn mal "Ja.", mal "So. Da.",
+# "Danke." — am Text nicht zu fassen. Deshalb zählt der VAD in diesem Fenster
+# keine Sprache (das Audio bleibt). Kommt danach eine Dialog-Nachlauflänge
+# lang keine Sprache, endet die Aufnahme als "keine Sprache" (so schnell wie
+# vorher, als das Echo die Aufnahme beendete) und geht nicht an den Brain.
+# Sicher, weil ein "Ja?" nur noch läuft, wenn im Wake-Clip höchstens ein Wort
+# hinter dem Wakewort stand (_BEFEHL_IM_CLIP_WOERTER): ein Befehl im Pre-Roll
+# bekommt kein "Ja?" mehr. Am Archiv: 13 von 14 solcher Befehle hätten kein
+# "Ja?" bekommen, der 14. lag unter der Schranke. Verworfen, weil gemessen:
+# das Echo aus dem Audio schneiden (Qwen erfindet dann Sätze, echte Befehle
+# gingen kaputt) und nur 10 s warten (14 Befehle im Pre-Roll verloren).
+_ACK_ECHO_SEC = 1.0
+# Seit 2026-11-09 kann das "Ja?" aus dem Antwort-Dienst kommen und ist dann
+# länger als Pipers 0,3 s. Das Fenster ist mindestens _ACK_ECHO_SEC und
+# reicht bis Ende des "Ja?" plus diesen Nachhall (0,3 + 0,7 = die alte 1 s).
+_ACK_ECHO_NACH_SEC = 0.7
 # Sprache (Summe, nicht am Stück), die eine Aufnahme enthalten muss, bevor der
 # straffe Kommando-Nachlauf greifen darf. Der Ausklang des Wakewords liefert
 # typisch 1–2 Chunks (~0,16 s) — 0,5 s liegt sicher darüber und ist von jedem
@@ -1021,14 +1059,36 @@ def run() -> None:
     # Callback: bei jedem erfolgreichen Stimmwechsel die "Ja?"-Quittung
     # (PIPER_OUT) in der nun aktiven Stimme neu rendern. Minimale Kopplung —
     # Quittungstext + SpeachesTts stecken hier im Closure, nicht im Controller.
+    # Antwort-Dienst (CosyVoice), weiter unten gesetzt; hier ein Halter, weil
+    # der Stimmwechsel-Hook schon vorher gebaut wird.
+    _antwort = {"tts": None}
+
+    def _feste_saetze() -> list[str]:
+        return feste_saetze(profile)
+
     def _rerender_ack() -> None:
         rerender_ja_speaches(speaches_tts, profile.locale.wakeword_ack)
+        if _antwort["tts"] is not None:
+            _antwort["tts"].vorbereiten(_feste_saetze())
 
+    # Eigene Stimmen des Antwort-Dienstes (services/stimmen.py): nur, wenn die
+    # Standard-Stimme des Profils dort liegt — sonst alter Weg (Stimme beim Dienst).
+    stimmen_lager = None
+    if profile.tts_strom and profile.antwort_tts_url:
+        _lager = StimmenLager(
+            profile.antwort_tts_stimmen or STIMMEN_DIR,
+            profile.antwort_tts_namensraum or profile.name,
+            profile.antwort_tts_url, profile.antwort_tts_model, profile.antwort_tts_voice,
+        )
+        if _lager.hat(profile.antwort_tts_voice):
+            stimmen_lager = _lager
+            print(f"🗣️  Eigene Stimmen ({_lager.ordner}): {', '.join(_lager.namen())}")
     voice_controller = VoiceController(
         base=profile.speaches_base,
         default_model=profile.speaches_tts_model,
         default_voice=profile.speaches_tts_voice,
         on_voice_changed=_rerender_ack,
+        stimmen=stimmen_lager,
     )
     voice_state.set(
         model=profile.speaches_tts_model,
@@ -1192,18 +1252,62 @@ def run() -> None:
               + (f", Sprache fest: {profile.stt_llamacpp_sprache}"
                  if profile.stt_llamacpp_sprache else ""))
     stt_pipeline = SttPipeline(speaches_stt, local_stt, onnx_stt, llamacpp_stt)
-    speaker = ReplySpeaker(speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix)
+    antwort_tts = None
+    if profile.tts_strom and profile.antwort_tts_url:
+        if stimmen_lager is not None:
+            antwort_tts = AntwortTts(
+                stimmen_lager, SpeachesState(), timeout=8, cache=STIMMEN_CACHE_DIR,
+                # feste Sätze nur, wenn Qwen-ASR sie als diesen Text hört
+                pruefen=stt_pruefer(LlamaCppAsrStt(profile.stt_llamacpp_url, timeout=15,
+                                                   sprache="German"))
+                if profile.stt_llamacpp_url else None)
+            _antwort["tts"] = antwort_tts
+            # Hochladen und die festen Sätze rechnen, beides im Hintergrund
+            # (vorbereiten lädt beim ersten 404 selbst hoch).
+            antwort_tts.vorbereiten(_feste_saetze())
+        else:
+            # Stimme liegt nur beim Dienst (alter Weg, vor dem Lager)
+            antwort_tts = SpeachesTts(
+                SpeachesState(), profile.antwort_tts_url,
+                profile.antwort_tts_model, profile.antwort_tts_voice,
+                fest=True, timeout=8,
+            )
+    speaker = ReplySpeaker(
+        speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix,
+        strom_oeffnen=getattr(audio_sink, "strom_oeffnen", None) if profile.tts_strom else None,
+        antwort_tts=antwort_tts,
+    )
+    if profile.tts_strom:
+        print("🔊 TTS als Strom: " + ("an" if speaker.strom_oeffnen else "Senke kann keinen Strom, Dateien wie bisher")
+              + (f", Antworten über {profile.antwort_tts_url} ({profile.antwort_tts_voice})" if antwort_tts else ""))
+    def _fest(text: str) -> str | None:
+        """Gespeicherte Fassung in der Stimme des Antwort-Dienstes, solange der
+        dran ist (sonst None → Piper wie bisher)."""
+        if antwort_tts is not None and antwort_tts in speaker.strom_kandidaten():
+            return antwort_tts.feste_datei(text, nur_vorhanden=True)
+        return None
+
+    def _ack_wahl(ww) -> str:
+        return _fest(ww.ack) or ack_paths.get(ww.bundle, PIPER_OUT)
+
     thinking = ThinkingWorker(
-        audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts
+        audio_sink.play_wav, profile.locale.thinking_phrases, speaches=speaches_tts,
+        fest=_fest,
     )
     diarizer = SpeachesDiarizer(profile.speaches_base) if profile.speaches_base else None
     if profile.sprecher_verifikation:
         try:
-            diarizer = SprecherVerifikation(profile.sprecher_schwelle, profile.sprecher_abstand,
-                                            url=profile.sprecher_verifikation_url)
+            _sicher = profile.sprecher_schwelle_sicher
+            diarizer = SprecherVerifikation(
+                profile.sprecher_schwelle, profile.sprecher_abstand,
+                url=profile.sprecher_verifikation_url,
+                schwelle_sicher=_sicher,
+                grenzfall_dir=os.path.join(VOICE_DIR, "sprecher_grenzfaelle") if _sicher > 0 else "",
+            )
             wo = profile.sprecher_verifikation_url or "CPU"
             print(f"✅ Sprecher-Verifikation ({wo}): Schwelle {profile.sprecher_schwelle:.2f}, "
-                  f"Abstand {profile.sprecher_abstand:.2f}")
+                  f"Abstand {profile.sprecher_abstand:.2f}"
+                  + (f", sicher ab {_sicher:.2f}" if _sicher > 0 else ""))
         except Exception as e:
             # Ohne Modell bleibt die Diarization — kein Grund, nicht zu starten.
             print(f"⚠️  Sprecher-Verifikation nicht ladbar ({e}) → Diarization über Speaches")
@@ -1240,9 +1344,27 @@ def run() -> None:
     mikro = _start_mikro(profile)
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
-    start_enroll_server()
+    # Anlernen/Löschen meldet der Dienst selbst in den Kanal (seit 2026-11-11)
+    start_enroll_server(
+        melden=(lambda text: telegram.send(profile.telegram_bot_token, profile.telegram_chat_id, text))
+        if profile.telegram_bot_token and profile.telegram_chat_id else None)
+    # Neue Stimmen per Telegram (Schritt 3): braucht Lager, Qwen und den Chat
+    stimmen_eingang = None
+    if isinstance(antwort_tts, AntwortTts) and profile.stt_llamacpp_url:
+        _tg = (profile.telegram_bot_token, profile.telegram_chat_id)
+        stimmen_eingang = StimmenEingang(
+            stimmen_lager,
+            LlamaCppAsrStt(profile.stt_llamacpp_url, timeout=30, sprache="German"),
+            melden=lambda text: telegram.send(*_tg, text),
+            melden_audio=lambda ogg, unterschrift: telegram.send_voice(*_tg, ogg, unterschrift),
+            ordner=STIMMEN_EINGANG_DIR, erlaubt=OPENCLAW_MEDIA_DIRS,
+            vorbereiten=lambda name: antwort_tts.vorbereiten(_feste_saetze(), name=name),
+            # Kurze feste Sätze wählt das Ohr (Denk-Phrasen: nur Nuancen, Jochen)
+            antwort=antwort_tts,
+            kurze_saetze=[t for t in _feste_saetze() if t not in set(profile.locale.thinking_phrases)],
+        )
     start_speak_server(voice_controller=voice_controller, kuechentimer=kuechentimer,
-                       mikro=mikro)
+                       mikro=mikro, stimmen_eingang=stimmen_eingang)
 
     def _ansage_daempfen():
         # Geht die Ansage ans Handy (audio/satellit.py, ziel), bleibt die Musik
@@ -1484,11 +1606,17 @@ def run() -> None:
             flaeche_grenze=profile.wake_pruefung.flaeche_grenze,
             anfang=profile.wake_pruefung.anfang,
             anfang_grenze=profile.wake_pruefung.anfang_grenze,
+            schranke=profile.wake_pruefung.schranke,
         )
-        print(f"🔎 Wake-Prüfung im Schatten aktiv (Fläche ≥ {profile.wake_pruefung.flaeche_grenze}"
-              " oder Qwen hört das Wort"
-              + (f"; Anfang „{profile.wake_pruefung.anfang}“ ≥ {profile.wake_pruefung.anfang_grenze}"
-                 if profile.wake_pruefung.anfang else "") + ", nur Log)")
+        if wake_pruefung.schranke:
+            print(f"🚧 Wake-Schranke aktiv: Anfang „{profile.wake_pruefung.anfang}“ "
+                  f"≥ {profile.wake_pruefung.anfang_grenze}, sonst Near-Miss "
+                  f"(Ausfall/Frist {_SCHRANKE_FRIST:.0f} s → durch)")
+        else:
+            print(f"🔎 Wake-Prüfung im Schatten aktiv (Fläche ≥ {profile.wake_pruefung.flaeche_grenze}"
+                  " oder Qwen hört das Wort"
+                  + (f"; Anfang „{profile.wake_pruefung.anfang}“ ≥ {profile.wake_pruefung.anfang_grenze}"
+                     if profile.wake_pruefung.anfang else "") + ", nur Log)")
     # Rückspul-Puffer (profile.rewind): letzte Minuten Mikro + Score-Verlauf im
     # RAM; gesichert nur bei Trigger (Vorlauf) und manuellem Marker.
     _rewind_cfg = profile.rewind
@@ -1508,6 +1636,19 @@ def run() -> None:
               f"Marker: {_rewind_cfg.marker_topic or 'keiner'})")
     _wake_ring_max = int(RATE_OW * 3.0)
     trigger_audio_id: str | None = None    # verbindet wake- und rec-Clip eines Triggers
+    # Wake-Schranke (wake_pruefung.schranke): Urteil der laufenden Prüfung. Bis
+    # es da ist, läuft die Aufnahme, aber Trigger-Zeile und Wake-Clip sind noch
+    # nicht geschrieben — verworfen wird daraus ein Near-Miss.
+    schranke_urteil = None
+    schranke_frist = 0.0
+    schranke_t0 = 0.0
+    schranke_event: dict = {}
+    schranke_chunks: list = []
+    turn_wake_nach: int | None = None   # Wörter hinter dem Wakewort im Wake-Clip
+    ack_gespielt = False                # "Ja?" lief in der laufenden Aufnahme
+    aufnahme_ack_echo = False           # ... in der Aufnahme, deren STT gerade läuft
+    ack_idx = 0                         # Chunk-Index der Aufnahme beim "Ja?"
+    ack_echo_s = _ACK_ECHO_SEC          # Echo-Fenster des laufenden "Ja?" (Länge + Nachhall)
     # Wake-Clip des laufenden Turns — bleibt über das Ende der Aufnahme hinaus
     # stehen (anders als trigger_audio_id), damit der AUSGANG des Turns noch auf
     # den Trigger bezogen protokolliert werden kann. Siehe _log_outcome().
@@ -1869,7 +2010,8 @@ def run() -> None:
                             # FOLLOWUP (ohne neuen Trigger), der Zähler muss sie
                             # also überleben.
                             unklar_round = 0
-                            _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                            if not (wake_pruefung is not None and wake_pruefung.schranke):
+                                _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                             turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                             turn_wake_audio = turn_audio
                             # Die Sekunden VOR dem Trigger sichern: vergebliche Versuche
@@ -1883,6 +2025,7 @@ def run() -> None:
                             # Trigger genauso protokollieren wie den Near-Miss —
                             # ein Sweep braucht beide Klassen im selben Log.
                             trigger_event = {
+                                "ts": datetime.now().isoformat(timespec="seconds"),
                                 "result": "trigger",
                                 **({"umgebung": _um.als_log()} if _um is not None else {}),
                                 "bundle": trigger_audio_bundle,
@@ -1897,9 +2040,16 @@ def run() -> None:
                                 "beam": float(beam) if beam is not None else None,
                                 "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
                             }
-                            _log_wake_event(trigger_event)
-                            if wake_pruefung is not None:
-                                wake_pruefung.start(trigger_event, list(wake_ring))
+                            if wake_pruefung is not None and wake_pruefung.schranke:
+                                schranke_urteil = wake_pruefung.start(trigger_event, list(wake_ring))
+                                schranke_t0 = now
+                                schranke_frist = now + _SCHRANKE_FRIST
+                                schranke_event = trigger_event
+                                schranke_chunks = list(wake_ring)
+                            else:
+                                _log_wake_event(trigger_event)
+                                if wake_pruefung is not None:
+                                    wake_pruefung.start(trigger_event, list(wake_ring))
                             # Ein-Satz-Kommando: LED SOFORT, kein play_wav.
                             # Pre-Roll aus dem Ring VOR dem clear() abgreifen — er
                             # trägt den Anfang eines durchgesprochenen Kommandos
@@ -1934,8 +2084,10 @@ def run() -> None:
                             turn_frames_speech = 0
                             turn_frames_total = 0
                             ack_pending = True
+                            ack_gespielt = False
+                            turn_wake_nach = None
                             ack_deadline = now + _ACK_DELAY_SEC
-                            ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                            ack_path = _ack_wahl(current_wakeword)
                             ack_suppress = False
                     elif wake_hits >= 1:
                         # Wakeword-Name mitloggen: current_wakeword wurde von den
@@ -2019,7 +2171,8 @@ def run() -> None:
                         print(f"[{now:.1f}s] 📊 [{current_wakeword.bundle}] {_format_wake_scores(recent_scores, current_threshold)} (Timeout){beam_str}")
                         trigger_audio_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                         trigger_audio_bundle = current_wakeword.bundle
-                        _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
+                        if not (wake_pruefung is not None and wake_pruefung.schranke):
+                            _save_trigger_audio(list(wake_ring), trigger_audio_bundle, "wake", trigger_audio_id)
                         turn_audio = f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                         turn_wake_audio = turn_audio
                         # Die Sekunden VOR dem Trigger sichern: vergebliche Versuche
@@ -2031,7 +2184,8 @@ def run() -> None:
                                 extra={"wake_audio": turn_audio},
                             )
                         _um = _umgebung_urteil(wake_hits, _wake_level_rms(wake_ring), now)
-                        _log_wake_event({
+                        trigger_event = {
+                            "ts": datetime.now().isoformat(timespec="seconds"),
                             "result": "trigger",
                             "via": "timeout",
                             **({"umgebung": _um.als_log()} if _um is not None else {}),
@@ -2044,7 +2198,18 @@ def run() -> None:
                             "scores": [round(s, 3) for s in recent_scores],
                             "beam": float(beam) if beam is not None else None,
                             "audio": f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav",
-                        })
+                        }
+                        # Prüfung wie in Pfad 1 (bis 2026-11-08 lief sie hier nicht).
+                        if wake_pruefung is not None and wake_pruefung.schranke:
+                            schranke_urteil = wake_pruefung.start(trigger_event, list(wake_ring))
+                            schranke_t0 = now
+                            schranke_frist = now + _SCHRANKE_FRIST
+                            schranke_event = trigger_event
+                            schranke_chunks = list(wake_ring)
+                        else:
+                            _log_wake_event(trigger_event)
+                            if wake_pruefung is not None:
+                                wake_pruefung.start(trigger_event, list(wake_ring))
                         # Ein-Satz-Kommando: identisch zu Trigger-Pfad 1 — LED sofort,
                         # kein play_wav, Pre-Roll statt flush, "Ja?" verzögert.
                         pre_roll = _pre_roll(wake_ring, _PRE_ROLL_SEC)
@@ -2074,8 +2239,10 @@ def run() -> None:
                         turn_frames_speech = 0
                         turn_frames_total = 0
                         ack_pending = True
+                        ack_gespielt = False
+                        turn_wake_nach = None
                         ack_deadline = now + _ACK_DELAY_SEC
-                        ack_path = ack_paths.get(current_wakeword.bundle, PIPER_OUT)
+                        ack_path = _ack_wahl(current_wakeword)
                         ack_suppress = False
                     wake_hits = 0
                     wake_peak = 0.0
@@ -2088,6 +2255,9 @@ def run() -> None:
                 _is_speech, _rms, _sf, _tf = _chunk_speech_stats(
                     vad, audio_16, _vad_rms_min
                 )
+                # Echo des eigenen "Ja?" ist keine Sprache (_ACK_ECHO_SEC).
+                if ack_gespielt and (len(recorded_chunks) - ack_idx) * _chunk_sec <= ack_echo_s:
+                    _is_speech = False
                 turn_rms.append(_rms)
                 turn_frames_speech += _sf
                 turn_frames_total += _tf
@@ -2102,13 +2272,69 @@ def run() -> None:
                 elif speech_detected:
                     silence_counter += 1
 
+                # Wake-Schranke: bis das Urteil da ist, läuft nur die Aufnahme
+                # weiter; "Ja?" und das Aufnahme-Ende warten.
+                schranke_wartet = False
+                if schranke_urteil is not None:
+                    _se = _schranke_entscheid(schranke_urteil, now >= schranke_frist)
+                    if _se == _SCHRANKE_WARTEN:
+                        schranke_wartet = True
+                    else:
+                        _sj = schranke_urteil.job
+                        _sinfo = {
+                            "ergebnis": _se,
+                            "anfang_lp": _sj.get("anfang_lp"),
+                            "anfang_grenze": _sj.get("anfang_grenze"),
+                            "text": _sj.get("text"),
+                            "wartezeit_s": round(now - schranke_t0, 2),
+                        }
+                        schranke_urteil = None
+                        turn_wake_nach = woerter_nach_wakewort(_sj)
+                        _sid, _sb = trigger_audio_id, trigger_audio_bundle
+                        if _se == _SCHRANKE_VERWORFEN:
+                            nm_event = {
+                                **schranke_event,
+                                "result": "nearmiss",
+                                "failed_on": "anfang",
+                                "schranke": _sinfo,
+                                "audio": f"{_sid}_{_sb}_nearmiss.wav",
+                            }
+                            _save_trigger_audio(schranke_chunks, _sb, "nearmiss", _sid)
+                            _log_wake_event(nm_event)
+                            print(f"[{now:.1f}s] ⚡ Near-Miss [{_sb}] (Schranke: Anfang "
+                                  f"{_sinfo['anfang_lp']} < {_sinfo['anfang_grenze']}, "
+                                  f"„{_sinfo['text']}“, nach {_sinfo['wartezeit_s']:.2f} s)")
+                            if nearmiss_shadow is not None:
+                                # Was seit dem Trigger aufgenommen wurde, ist der
+                                # Anfang des Mitschnitts danach.
+                                nearmiss_shadow.start(nm_event, recorded_chunks)
+                            leds.set_phase(LED_NEAR_MISS)
+                            near_miss_until = now + 0.6
+                            if musik_ducker is not None:
+                                musik_ducker.verworfen()
+                            trigger_audio_id = None
+                            turn_audio = None
+                            turn_wake_audio = None
+                            ack_pending = False
+                            schranke_event, schranke_chunks = {}, []
+                            state = STATE_LISTENING
+                            continue
+                        _save_trigger_audio(schranke_chunks, _sb, "wake", _sid)
+                        _log_wake_event({**schranke_event, "schranke": _sinfo})
+                        schranke_event, schranke_chunks = {}, []
+                        if _se != "durch":
+                            print(f"[{now:.1f}s] 🚧 Schranke ohne Urteil ({_se}) → durch")
+
                 # Ein-Satz-Kommando: "Ja?" verzögert spielen. Nach _ACK_DELAY_SEC
                 # entscheiden: Sprache erkannt → User spricht weiter → kein "Ja?"
                 # (LED-Ring reicht). Still → "Ja?" spielen wie bisher.
                 # play_wav blockiert ~0,6s — währenddessen läuft Audio weiter in
                 # den Puffer, der nächste Loop-Durchlauf holt es ab. KEIN flush.
-                if ack_pending and now >= ack_deadline:
+                if ack_pending and now >= ack_deadline and not schranke_wartet:
                     ack_pending = False
+                    befehl_im_clip = (not speech_detected and not ack_suppress
+                                      and turn_wake_nach is not None
+                                      and turn_wake_nach >= _BEFEHL_IM_CLIP_WOERTER)
                     # Diese Entscheidung ist die einzige verlässliche Auskunft
                     # darüber, ob durchgesprochen wurde — aus dem Wake-Clip
                     # allein ist sie NICHT rekonstruierbar (er endet, bevor das
@@ -2119,7 +2345,8 @@ def run() -> None:
                     _log_wake_event({
                         "result": "ack",
                         "bundle": current_wakeword.bundle,
-                        "ein_satz": speech_detected,
+                        "ein_satz": speech_detected or befehl_im_clip,
+                        **({"befehl_im_wakeclip": turn_wake_nach} if befehl_im_clip else {}),
                         "audio": (f"{trigger_audio_id}_{trigger_audio_bundle}_wake.wav"
                                   if trigger_audio_id else None),
                     })
@@ -2134,11 +2361,32 @@ def run() -> None:
                         # so ein Turn endet nach Sekunden statt am Deckel.
                         turn_ein_satz = True
                         print(f"[{now:.1f}s] ⚡ Ein-Satz erkannt — kein Ja?")
+                    elif befehl_im_clip:
+                        # Der Befehl steckt im Pre-Roll, danach kommt nichts
+                        # mehr. Ohne "Ja?" gäbe es keine Sprache für den VAD,
+                        # die Aufnahme liefe bis zum Deckel: deshalb zählt der
+                        # Pre-Roll hier als Sprache, und es gilt der
+                        # Kommando-Nachlauf. Spricht der Nutzer weiter, hält
+                        # der VAD die Aufnahme wie gewohnt offen.
+                        turn_ein_satz = True
+                        speech_detected = True
+                        silence_counter = 0
+                        turn_mode = "kommando"
+                        turn_silence_limit = _command_silence_limit
+                        turn_max_sec = profile.command_max_seconds
+                        print(f"[{now:.1f}s] ⚡ Befehl schon im Wake-Clip "
+                              f"({turn_wake_nach} Wörter nach dem Wakewort) — kein Ja?")
                     elif ack_suppress:
                         print(f"[{now:.1f}s] 🔇 Barge-in — kein Ja?")
                     elif os.path.exists(ack_path):
                         print(f"[{now:.1f}s] 🔊 Playing acknowledgement...")
+                        ack_idx = len(recorded_chunks)
+                        try:
+                            ack_echo_s = max(_ACK_ECHO_SEC, wav_dauer(ack_path) + _ACK_ECHO_NACH_SEC)
+                        except Exception:
+                            ack_echo_s = _ACK_ECHO_SEC
                         audio_sink.play_wav(ack_path)
+                        ack_gespielt = True
 
                 # Kommando-Modus wird NICHT schon von der Ein-Satz-Einstufung
                 # scharf, sondern erst, wenn wirklich gesprochen wurde. Grund:
@@ -2167,6 +2415,12 @@ def run() -> None:
                     )
 
                 timeout = (now - state_start) > turn_max_sec
+                # Nach dem "Ja?" nichts gesagt (das Echo zählt nicht, siehe
+                # _ACK_ECHO_SEC): nach einer Nachlauflänge Schluss.
+                kein_start = (ack_gespielt and not speech_detected
+                              and (len(recorded_chunks) - ack_idx) * _chunk_sec
+                              > ack_echo_s + turn_silence_limit * _chunk_sec)
+                timeout = timeout or kein_start
                 stop = speech_detected and silence_counter >= turn_silence_limit
                 # Reiner Abbruch: nach einem Barge-in kommt eine Nachlauf-Laenge
                 # lang keine Sprache. Das Stopp-Wort steckt dann ganz im
@@ -2187,9 +2441,10 @@ def run() -> None:
                     len(recorded_chunks) - pre_roll_chunks, turn_silence_limit,
                 )
 
-                if stop or timeout or still_abbruch:
+                if (stop or timeout or still_abbruch) and not schranke_wartet:
                     reason = ("silence" if stop
-                              else "bargein_still" if still_abbruch else "timeout")
+                              else "bargein_still" if still_abbruch
+                              else "kein_start_nach_ja" if kein_start else "timeout")
                     pre_roll_sec = pre_roll_chunks * _chunk_sec
                     dur = len(recorded_chunks) * _chunk_sec
                     print(
@@ -2197,6 +2452,7 @@ def run() -> None:
                         f"{dur:.1f}s audio (davon {pre_roll_sec:.1f}s Pre-Roll)"
                     )
                     ack_pending = False  # egal ob gespielt oder nicht — Turn ist vorbei
+                    aufnahme_ack_echo, ack_gespielt = ack_gespielt, False
                     endpoint_meta = {
                         "phase": "recording",
                         "reason": reason,
@@ -2277,6 +2533,19 @@ def run() -> None:
                     bargein_round = 0
                     war_bargein_still = bargein_still
                     bargein_still = False
+                    # Eigenes "Ja?" im Transkript (voice_assistant/ack_echo.py):
+                    # nur Erst-Turn, nur wenn es in dieser Aufnahme lief.
+                    ack_echo_vorher = None
+                    if (aufnahme_ack_echo and followup_round == 0 and not unklar_round
+                            and not war_bargein and pending_confirm is None
+                            and pending_timer is None):
+                        _ohne = ohne_ack_echo(text)
+                        if _ohne != text:
+                            print(f"[{now:.1f}s] 🔁 Eigenes Ja? im Transkript: '{text}' → '{_ohne}'")
+                            _log_wake_event({"result": "ack_echo", "audio": turn_wake_audio,
+                                             "vorher": text, "nachher": _ohne})
+                            ack_echo_vorher, text = text, _ohne
+                    aufnahme_ack_echo = False
                     leise_verdict = None
                     if followup_leise:
                         # Nur bei leiser Aufnahme auf den Sprecher warten (~50 ms),
@@ -2305,6 +2574,23 @@ def run() -> None:
                         followup_round = 0
                         state = STATE_LISTENING
                         print(f"[{now:.1f}s] 🎤 Ready – waiting for wakeword...")
+                    elif ack_echo_vorher is not None and not text:
+                        # Nur das eigene "Ja?" gehört: nichts an den Brain.
+                        # Wer gerufen hat und schweigt, ruft noch einmal.
+                        print(f"[{now:.1f}s] 🔁 Nur das eigene Ja? gehört → nichts an den Brain")
+                        _log_outcome("nur_ack_echo", transcript=ack_echo_vorher)
+                        _flush_endpoint(ack_echo_vorher, ausgang="nur_ack_echo")
+                        try:
+                            turn_spk_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        try:
+                            turn_mood_q.get(timeout=DIARIZATION_JOIN_TIMEOUT)
+                        except queue.Empty:
+                            pass
+                        leds.set_phase(LED_IDLE)
+                        followup_round = 0
+                        state = STATE_LISTENING
                     elif pending_confirm is not None:
                         # Ja/Nein-Antwort auf eine Aktuator-Rückfrage (Handshake).
                         try:
@@ -3380,6 +3666,8 @@ def run() -> None:
                         unklar_round = 0
                         bargein_round = 1
                         ack_pending = True
+                        ack_gespielt = False
+                        turn_wake_nach = None
                         ack_deadline = now + _ACK_DELAY_SEC
                         ack_path = ""
                         ack_suppress = True

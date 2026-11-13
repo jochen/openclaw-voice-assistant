@@ -300,6 +300,87 @@ Two things to know if you build on this:
   next regression of this kind into something you read instead of something you
   hear.
 
+**Replies as a stream (`tts_strom: true`, optional).** By default every
+sentence is synthesised completely, written to a file and then played. With
+a fast TTS (Piper, ~0.1 s per sentence) you do not notice; with a slower,
+better one (CosyVoice and similar) the first sound waits for the whole first
+sentence. With the switch on, a brain reply goes to the ReSpeaker as **one
+growing WAV over HTTP**, sentence after sentence, while it is still being
+synthesised (`voice_assistant/audio/strom.py`). Measured on the device
+(ESPHome 2026.9.1), worth knowing if you build something similar:
+
+- The media player plays a WAV that is still growing: placeholder lengths in
+  the header, no `Content-Length`, closing the connection ends it. Gaps of 2 s
+  and 8 s without data did not break anything; its reader gives up after 30 s.
+- **Only 48 kHz stereo 16 bit.** A 24 kHz mono stream gave "Incompatible stream
+  settings" and left the player in an error loop until the next command.
+- It starts only once a start buffer is full: 1 s of audio, at most 3/4 of the
+  media player's `buffer_size` (default 1 MB). `buffer_size: 128000` makes it
+  0.5 s (both firmware files here).
+- The stream fills its own gaps with silence, so the length sent is the length
+  played and the end is computed exactly as for a file (the rule above). It
+  closes itself after 1.5 s without a new sentence, so a long tool phase of the
+  brain does not sit in the speaker as minutes of silence.
+
+Listened to at home: no clicks, no gaps between sentences, barge-in in the
+middle of a stream stops it at once. Only the main device streams; phone
+satellites, confirmations and outside announcements keep using files.
+
+**A separate service for replies, with your own voices (`antwort_tts_*`,
+optional, needs `tts_strom`).** Replies can come from a voice-cloning TTS
+(here CosyVoice3 behind a small Speaches-compatible service) while
+confirmations and acks stay on Speaches/Piper. Order per sentence: reply
+service → Speaches → local Piper — if the service is gone you hear the other
+voice, which is how you notice. The voices are managed **by the assistant**,
+not by the service: `<workspace>/voice/stimmen/<name>/` holds `probe.wav`
+(the reference clip), `probe.txt` (what is said in it) and an optional
+`meta.json` (`beschreibung`, `freigegeben`). When the service answers 404 for
+a voice, the assistant uploads it (`POST /v1/voices`) and asks again; the id
+carries a namespace per assistant and a hash of the clip, so two homes never
+see each other's voices and a replaced clip is picked up by itself. With such
+a store, the brain's voice tools (`voice_list_voices`, `voice_set_voice`)
+offer these voices instead of the Piper list
+(`voice_assistant/services/stimmen.py`). The chosen voice is used for
+everything: confirmations and acks go through the same stream, files (phone
+satellites) ask the service first, and fixed short phrases (the wake ack,
+"Okay.", thinking phrases) are rendered once per voice and cached. A voice
+clone is unreliable on such short texts (the ack came out 0.8–1.6 s long,
+sometimes with a second of silence in front, against Piper's 0.3 s), so each
+is rendered several times, silence is trimmed and the take closest to the
+expected length is kept — listen to the result once. The echo window after
+the ack grows with its length. Learned while choosing clips by ear:
+the cloned voice copies **loudness, pace and mood of the clip**. An acted
+scene sounded too emotional, and a clip at −31 LUFS came out 14 dB quieter
+than the others — normalise clips (e.g. ffmpeg `loudnorm` to −18 LUFS).
+And use **one sentence**: a two-sentence 12 s clip made the service cut 9 of
+60 tricky replies short, each of its sentences on its own 0 of 60
+(`tools/tts_abbruch_test.py`, a speech-to-text round trip). Every excerpt of
+the same clip sounds different, and neither speech-emotion scores nor pitch
+predicted which one a listener prefers, so choose by ear:
+`tools/stimmprobe_zerlegen.py` cuts a clip at its pauses and serves a local
+page with each piece and test sentences spoken with it.
+
+**New voices from the chat (`voice_stimme_einreichen`,
+`voice_stimme_waehlen`).** Send the assistant's chat an audio file or voice
+message and say it should become a voice. The brain passes the received file
+(only files from OpenClaw's inbound media folder are accepted) to the
+assistant, which does the same in the background: cut at pauses, normalise,
+transcribe; drop what can be measured as bad (a piece that ends mid-word —
+the clone continues it, "Abbrauchst du…" — a test sentence with a foreign
+word at the start, a missing end, or a length far off the others, which
+means silence, breathing or hiss); then up to five pieces arrive in the chat
+as voice messages, each the piece followed by a test sentence. Answer with a
+number; that piece runs through the truncation test (60 sentences, about
+four minutes) and only with 0 cut-offs it lands in the store, with its fixed
+phrases rendered. Right after that the short fixed phrases ("Ja?", "Okay.")
+arrive in up to three takes each; answer e.g. "Ja 2, Okay 1"
+(`voice_stimme_kurz_waehlen`; `voice_stimme_kurz_anhoeren` does it again for
+an existing voice). The STT check is blind on single words, so the ear
+decides, and no listening page is needed. Switching to the voice stays a
+separate step: for one person with `for_speaker`, for everyone with
+`fuer_alle` (persisted next to the store, wins over the profile's default).
+One job at a time (`voice_assistant/services/stimmen_eingang.py`).
+
 ## A phone as a satellite (`satelliten:`, optional)
 
 One microphone doesn't cover the whole home. For rooms you rarely talk in
@@ -1319,6 +1400,8 @@ Each recording runs through Speaches diarization in parallel to STT. The dominan
 
 **Faster alternative: speaker verification** (`sprecher_verifikation: true`). Instead of a full diarization per turn (segmentation, embedding, clustering — around 2 s live, and short sentences often need a second pass), one voice embedding of the whole recording is compared with the enrolled references on the CPU (~50 ms, same WeSpeaker model). A speaker counts as known only above `sprecher_schwelle` **and** with `sprecher_abstand` ahead of the next-best reference. Enrolment via the brain works unchanged; a changed reference file is picked up without a restart. The default threshold (0.40) was chosen against blind, ear-checked labels so that no recording was attributed to the wrong person — measure again with `tools/sprecher_verifikation_test.py` for your own voices before trusting it; the speaker gate depends on it. On weak hardware (a Raspberry Pi 4 needs about 0.37 s per second of audio, longer than the assistant waits for the speaker) another machine can compute the embedding: `sprecher_verifikation_url: http://<host>:8001` points to `voice-analysis` from [openclaw-voice-stack](https://github.com/jochen/openclaw-voice-stack) (endpoint `/fingerabdruck`). The audio samples themselves are sent, so the result is bit-identical to the local computation; references and the verdict stay on the assistant, and if the service fails the speaker counts as `ausgefallen` (failed).
 
+**Two levels for the speaker gate** (`sprecher_schwelle_sicher`, default 0 = off). The distance rule only compares against *enrolled* voices, so it cannot tell a known person from a visitor who was never enrolled and happens to sound a little similar. In a makerspace with many visitors, a non-enrolled member reached 0.47 against one reference while the other references stayed far behind, so he was recognised as that person; that person's own recordings there ranged from 0.43 to 0.90. With a second threshold, `bekannt` (known, used for greeting and voice choice) stays at `sprecher_schwelle`, while `current_speaker.json` reports `sicher: true` only above the stricter one, and that field is what the gate reads (see `SPEAKER_STATE.md`). Borderline cases (known but not `sicher`, or above the threshold and failing only on the distance) are kept with all scores in `voice/sprecher_grenzfaelle/`, so you can label them by ear and measure a threshold instead of guessing it. Enrolling every regular is still the most effective fix for a single person.
+
 ### Workspace layout
 
 ```
@@ -1367,9 +1450,11 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 | Tool | Purpose |
 |---|---|
 | `voice_speak_text(text)` | speak a short text out loud (fire-and-forget) |
-| `voice_enroll_speaker(name)` | store the last recording as this speaker's reference |
+| `voice_enroll_speaker(name)` | store the last recording as this speaker's reference; every enrolment, renewal and removal is announced in the profile's Telegram chat together with the speaker recognised at that moment, because anyone can claim a free name |
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | manage known speakers |
-| `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (also per speaker via `for_speaker`) |
+| `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (per speaker via `for_speaker`, default for everyone via `fuer_alle`) |
+| `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | new voice from an audio file sent in the chat: listen to pieces, pick one, truncation test |
+| `voice_stimme_kurz_anhoeren(name?)` / `voice_stimme_kurz_waehlen(satz, fassung)` | takes of "Ja?"/"Okay." as voice messages, pick one by ear |
 | `voice_analyze_last_output(…)` | re-analyse the assistant's own last spoken reply (text fidelity, timing, prosody) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | fix how a word is pronounced, at once ("Sauce is said *Sohße*"); see *Pronunciation list* |
 

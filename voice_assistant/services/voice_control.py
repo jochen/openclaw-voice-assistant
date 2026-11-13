@@ -35,8 +35,14 @@ class VoiceController:
         default_model: str,
         default_voice: str,
         on_voice_changed=None,  # Callable[[], None] | None — nach erfolgreichem set_active
+        stimmen=None,  # StimmenLager | None — eigene Stimmen des Antwort-Dienstes
     ) -> None:
         self.base = base.rstrip("/")
+        # Mit Lager (services/stimmen.py) sind die eigenen CosyVoice-Stimmen die
+        # Auswahl; die Piper-Stimmen von Speaches bleiben nur Rückfall
+        # (Jochen 2026-11-09: „falls der Endpunkt ausfällt, gibts einfach piper
+        # mit Thorsten, dann weiß man auch gleich, dass cosyvoice weg ist“).
+        self.stimmen = stimmen
         self.default_model = default_model
         self.default_voice = default_voice
         # Hook, der nach einem erfolgreichen Stimmwechsel feuert (z.B. um die
@@ -109,6 +115,13 @@ class VoiceController:
         if lang not in ("de", "en", "all"):
             lang = "de"
 
+        if self.stimmen is not None:
+            # CosyVoice spricht mit jeder Stimme jede Sprache, der Filter
+            # entfällt; die Beschreibung hilft dem Brain bei der Wahl.
+            return [{"model": self.stimmen.modell, "voice": e["name"], "language": "de",
+                     "beschreibung": e["beschreibung"]}
+                    for e in self.stimmen.eintraege()]
+
         url = f"{self.base}/v1/registry?task=text-to-speech"
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
@@ -160,6 +173,8 @@ class VoiceController:
 
     def ensure_loaded(self, model: str) -> bool:
         """Lädt das Modell, falls es noch nicht geladen ist. True = OK."""
+        if self.stimmen is not None and model == self.stimmen.modell:
+            return True  # der Antwort-Dienst lädt nichts; Stimmen siehe _apply
         try:
             if model in self.loaded_models():
                 return True
@@ -187,6 +202,8 @@ class VoiceController:
         if model == self.default_model:
             log.debug("VoiceController: Default-Modell wird nicht entladen.")
             return False
+        if self.stimmen is not None and model == self.stimmen.modell:
+            return False  # kein Speaches-Modell
         encoded = urllib.parse.quote(model, safe="")
         url = f"{self.base}/v1/models/{encoded}"
         req = urllib.request.Request(url, method="DELETE")
@@ -217,6 +234,11 @@ class VoiceController:
         """
         prev_model, _, _ = _state.voice_state.get()
 
+        if self.stimmen is not None and model == self.stimmen.modell:
+            if not self.stimmen.hat(voice):
+                log.warning("VoiceController._apply: Stimme '%s' gibt es nicht.", voice)
+                return False
+            self.stimmen.vorab_hochladen(voice)
         ok = self.ensure_loaded(model)
         if not ok:
             log.warning("VoiceController._apply: '%s' konnte nicht geladen werden.", model)
@@ -241,6 +263,15 @@ class VoiceController:
                 log.warning("VoiceController.on_voice_changed Fehler: %s", exc)
 
         return True
+
+    def wirksam(self) -> tuple[str | None, str | None, float | None]:
+        """Was gerade wirklich spricht (für Auskünfte an den Brain). Mit Lager
+        ist das die Stimme des Antwort-Dienstes, auch wenn voice_state noch die
+        Piper-Vorgabe des Profils trägt."""
+        model, voice, speed = _state.voice_state.get()
+        if self.stimmen is not None:
+            return self.stimmen.modell, self.stimmen.wirksam(model, voice), speed
+        return model, voice, speed
 
     def set_active(self, model: str, voice: str, speed: float | None = None) -> bool:
         """Manueller Tool-Wechsel (voice_set_voice OHNE for_speaker).
@@ -289,6 +320,26 @@ class VoiceController:
             _state.voice_state.set_last_apply_ts(time.monotonic())
             log.info("VoiceController: '%s' → %s gespeichert", speaker, entry)
         return ok
+
+    def set_standard(self, voice: str, speaker: str | None = None) -> list[str]:
+        """Standard-Stimme für alle, dauerhaft (nur mit eigenem Stimmen-Lager).
+
+        Wer „für alle“ sagt, meint sich mit: eine eigene gespeicherte Wahl des
+        Sprechers fällt weg. Gibt die Sprecher zurück, die eine andere eigene
+        Stimme behalten (der Brain soll das sagen, nicht „für alle“ behaupten)."""
+        if self.stimmen is None:
+            raise ValueError("Eine Standard-Stimme für alle gibt es nur mit eigenen Stimmen")
+        self.stimmen.standard_setzen(voice, von=speaker)
+        key = self._norm(speaker)
+        if key and key in self._speaker_map:
+            del self._speaker_map[key]
+            self._save_map()
+        self._apply(self.stimmen.modell, voice, 1.0)
+        _state.voice_state.set_voice_owner(None)
+        _state.voice_state.set_last_apply_ts(time.monotonic())
+        log.info("VoiceController: Standard für alle = %s (von %s)", voice, speaker)
+        return sorted(k for k, v in self._speaker_map.items()
+                      if self.stimmen.wirksam(v.get("model"), v.get("voice")) != voice)
 
     def apply_speaker_default(self, speaker: str | None) -> None:
         """Wählt die passende Stimme für den aktuell erkannten Sprecher.

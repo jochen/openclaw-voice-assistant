@@ -146,11 +146,16 @@ export default definePluginEntry({
         const langLabel = { de: "deutsch", en: "englisch", all: "alle Sprachen" }[appliedLang] ?? appliedLang;
 
         const lines = [];
-        lines.push(`Sprachfilter: ${langLabel}.`);
+        const eigene = available.some((v) => v.beschreibung !== undefined);
+        // Eigene Stimmen sprechen jede Sprache, der Filter greift dort nicht.
+        if (!eigene) lines.push(`Sprachfilter: ${langLabel}.`);
         if (available.length) {
           lines.push("Verfügbare Stimmen:");
           for (const v of available) {
-            lines.push(`- ${v.voice} (Modell ${v.model}, Sprache ${v.language})`);
+            // Eigene Stimmen (CosyVoice) tragen eine Beschreibung, Piper-Stimmen nicht.
+            lines.push(v.beschreibung
+              ? `- ${v.voice}: ${v.beschreibung}`
+              : `- ${v.voice} (Modell ${v.model}, Sprache ${v.language})`);
           }
         } else {
           lines.push("Keine Stimmen verfügbar.");
@@ -175,16 +180,19 @@ export default definePluginEntry({
         "Wechselt die Stimme, mit der der Voice-Assistant spricht (z.B. wenn der Nutzer eine andere/weibliche/lustige Stimme will). " +
         "voice ist der Stimmenname aus voice_list_voices; model optional für exakte Wahl. " +
         "speed optional (1.0 normal, >1 schneller). " +
-        "for_speaker: wenn gesetzt, wird diese Stimme dauerhaft für diesen Sprecher gemerkt und künftig automatisch verwendet — nutze dafür den erkannten Sprechernamen.",
+        "for_speaker: wenn gesetzt, wird diese Stimme dauerhaft für diesen Sprecher gemerkt und künftig automatisch verwendet — nutze dafür den erkannten Sprechernamen. " +
+        "fuer_alle: true, wenn die Stimme die Standard-Stimme für alle werden soll („für alle“, „als normale Stimme“); bleibt auch nach einem Neustart. " +
+        "Ohne for_speaker und fuer_alle gilt die Wahl nur vorübergehend für den, der gerade spricht — sag dann nicht, sie gelte für alle oder dauerhaft.",
       parameters: {
         type: "object",
         additionalProperties: false,
         required: ["voice"],
         properties: {
-          voice: { type: "string", description: "Stimmenname aus voice_list_voices (z.B. 'kerstin')." },
+          voice: { type: "string", description: "Stimmenname aus voice_list_voices (genau wie dort geschrieben)." },
           model: { type: "string", description: "Optional: exakte Modell-ID, falls eine Stimme in mehreren Modellen existiert." },
           speed: { type: "number", description: "Optional: Sprechtempo (1.0 normal, >1 schneller, <1 langsamer)." },
           for_speaker: { type: "string", description: "Optional: erkannter Sprechername, für den diese Stimme dauerhaft gemerkt werden soll." },
+          fuer_alle: { type: "boolean", description: "Optional: true = dauerhafte Standard-Stimme für alle." },
         },
       },
       async execute(_toolCallId, params) {
@@ -196,6 +204,7 @@ export default definePluginEntry({
         if (params?.model) payload.model = String(params.model).trim();
         if (params?.speed != null) payload.speed = Number(params.speed);
         if (params?.for_speaker) payload.for_speaker = String(params.for_speaker).trim();
+        if (params?.fuer_alle === true) payload.fuer_alle = true;
 
         let data;
         try {
@@ -218,11 +227,14 @@ export default definePluginEntry({
           return textResult(`Voice-Dienst nicht erreichbar: ${err.message}`, { ok: false });
         }
 
+        if (payload.fuer_alle && data?.text) {
+          return textResult(data.text, { ok: true, details: data });
+        }
         const active = data?.active ?? {};
         const speedTxt = active.speed != null && active.speed !== 1.0 ? ` mit Tempo ${active.speed}` : "";
         const remembered = payload.for_speaker
           ? ` Ich merke mir das für ${payload.for_speaker}.`
-          : "";
+          : " Das gilt vorübergehend für dich, nicht für alle.";
         return textResult(
           `Alles klar, ich spreche jetzt mit der Stimme ${active.voice ?? voice}${speedTxt}.${remembered}`,
           { ok: true, details: data }
@@ -439,6 +451,135 @@ export default definePluginEntry({
         } catch (err) {
           return textResult(`Fehler: ${err.message}`, { ok: false });
         }
+      },
+    });
+
+    /** POST an den Sprech-Server, Antwort als Werkzeug-Ergebnis. */
+    async function stimmenAuftrag(pfad, payload) {
+      try {
+        const res = await fetch(`${SPEAK_BASE}${pfad}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          data = { raw: text };
+        }
+        if (!res.ok) {
+          return textResult(`Geht nicht: ${data?.error ?? `HTTP ${res.status}`}`, { ok: false });
+        }
+        return textResult(data?.text ?? "Läuft.", { ok: true, details: data });
+      } catch (err) {
+        return textResult(`Voice-Dienst nicht erreichbar: ${err.message}`, { ok: false });
+      }
+    }
+
+    api.registerTool({
+      name: "voice_stimme_einreichen",
+      label: "Neue Stimme aus Audiodatei",
+      description:
+        "Legt aus einer Audiodatei (Sprachnachricht, mp3, ogg, wav), die der Nutzer im Chat geschickt hat, " +
+        "eine neue Stimme an, mit der Gaston sprechen kann. Aufrufen, wenn jemand eine Datei schickt und sagt, " +
+        "daraus solle eine Stimme werden; fehlt der Name, kurz nachfragen. datei ist der lokale Pfad der " +
+        "empfangenen Datei (unter .openclaw/…/media/inbound/). Die Aufbereitung läuft im Hintergrund: " +
+        "die Probe wird zerlegt, schlechte Stücke fliegen raus, die besten (höchstens fünf) kommen als " +
+        "Sprachnachrichten mit Nummer in den Hauskanal. Danach wählt der Nutzer eine Nummer — dann " +
+        "voice_stimme_waehlen. Du musst die Hörproben nicht selbst schicken. " +
+        "Am besten taugen ruhige, ganze Sätze von einem Sprecher ohne Musik, 5–8 Sekunden je Satz.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["datei", "name"],
+        properties: {
+          datei: { type: "string", description: "Lokaler Pfad der empfangenen Audiodatei." },
+          name: { type: "string", description: "Name der neuen Stimme (ein Wort, z. B. 'opa' oder 'erzaehler')." },
+          beschreibung: { type: "string", description: "Optional: kurze Beschreibung für voice_list_voices (z. B. 'tiefe, ruhige Männerstimme')." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        return stimmenAuftrag("/stimmen/einreichen", {
+          datei: String(params?.datei ?? "").trim(),
+          name: String(params?.name ?? "").trim(),
+          beschreibung: String(params?.beschreibung ?? "").trim(),
+        });
+      },
+    });
+
+    api.registerTool({
+      name: "voice_stimme_kurz_anhoeren",
+      label: "Ja/Okay einer Stimme anhören",
+      description:
+        "Rechnet die kurzen festen Sätze („Ja?“, „Okay.“) in einer Stimme je in bis zu drei Fassungen " +
+        "und schickt sie als nummerierte Sprachnachrichten in den Hauskanal. Nach dem Anlegen einer " +
+        "neuen Stimme passiert das von selbst; dieses Werkzeug nur, wenn der Nutzer die Fassungen einer " +
+        "vorhandenen Stimme hören oder neu wählen will. name optional (Default: die Standard-Stimme). " +
+        "Die Sprachnachrichten nicht selbst schicken.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string", description: "Optional: Name der Stimme aus voice_list_voices." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const payload = {};
+        if (params?.name) payload.name = String(params.name).trim();
+        return stimmenAuftrag("/stimmen/kurz_anhoeren", payload);
+      },
+    });
+
+    api.registerTool({
+      name: "voice_stimme_kurz_waehlen",
+      label: "Fassung von Ja/Okay wählen",
+      description:
+        "Der Nutzer hat die Fassungen von „Ja?“/„Okay.“ gehört und nennt eine Nummer („Ja 2, Okay 1“). " +
+        "Je Satz ein Aufruf: satz ist der Satz („Ja?“ oder „Okay.“), fassung die Nummer. " +
+        "Wirkt sofort. name nur, wenn mehrere Stimmen offen sind.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["satz", "fassung"],
+        properties: {
+          satz: { type: "string", description: "Der feste Satz, z. B. „Ja?“ oder „Okay.“." },
+          fassung: { type: "number", description: "Nummer der Fassung aus den Sprachnachrichten." },
+          name: { type: "string", description: "Optional: Name der Stimme (Default: zuletzt angehört)." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const payload = { satz: String(params?.satz ?? "").trim(), fassung: Number(params?.fassung) };
+        if (params?.name) payload.name = String(params.name).trim();
+        return stimmenAuftrag("/stimmen/kurz_waehlen", payload);
+      },
+    });
+
+    api.registerTool({
+      name: "voice_stimme_waehlen",
+      label: "Stück für neue Stimme wählen",
+      description:
+        "Nach voice_stimme_einreichen: der Nutzer hat die Hörproben gehört und nennt eine Nummer " +
+        "(„nimm Stück 2“). Das Stück wird auf abgeschnittene Sätze geprüft (drei bis vier Minuten); " +
+        "besteht es, ist die Stimme angelegt, das Ergebnis kommt in den Hauskanal. Umschalten ist " +
+        "danach ein eigener Schritt (voice_set_voice). Danach kommen von selbst Fassungen von „Ja?“/„Okay.“ zur Wahl (voice_stimme_kurz_waehlen). name nur angeben, wenn mehrere Stimmen offen sind. " +
+        "text nur, wenn der Nutzer sagt, dass der Text unter dem Stück falsch ist: dann der richtige Wortlaut.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["stueck"],
+        properties: {
+          stueck: { type: "number", description: "Nummer des Stücks aus den Hörproben." },
+          name: { type: "string", description: "Optional: Name der Stimme (Default: zuletzt eingereicht)." },
+          text: { type: "string", description: "Optional: korrigierter Wortlaut des Stücks." },
+        },
+      },
+      async execute(_toolCallId, params) {
+        const payload = { stueck: Number(params?.stueck) };
+        if (params?.name) payload.name = String(params.name).trim();
+        if (params?.text) payload.text = String(params.text).trim();
+        return stimmenAuftrag("/stimmen/waehlen", payload);
       },
     });
 

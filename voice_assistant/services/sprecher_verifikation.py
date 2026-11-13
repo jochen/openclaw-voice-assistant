@@ -36,6 +36,20 @@ Paketversionen. Anlass: ein Pi 4 braucht ~0,37 s je Audio-Sekunde (median
 float32-Samples selbst, kein neu kodiertes WAV — so kommt auf der Gegenseite
 exakt dasselbe Array an. Referenzen, Vergleich und Urteil bleiben hier;
 antwortet der Dienst nicht, ist das ein Ausfall wie jeder andere.
+
+Zwei Stufen (seit 2026-11-11, `sprecher_schwelle_sicher`). Anlass im Fablab:
+Rosty war nicht angelernt und kam zweimal als jochen durch (0,47 und 0,40,
+die anderen Referenzen weit dahinter). Der Abstand misst nur gegen die
+angelernten Stimmen, gegen einen ungeübten Fremden schützt er nicht; echte
+Jochen-Aufnahmen lagen dort bei 0,43-0,90. Deshalb: `bekannt` ab `schwelle`
+wie bisher (Anrede, Stimme), `sicher` erst ab `schwelle_sicher` — das liest
+die Sprecher-Schranke (SPEAKER_STATE.md). 0 = aus, dann ist bekannt sicher.
+
+Grenzfälle werden aufgehoben (`grenzfall_dir`): bekannt, aber nicht sicher,
+oder über der Schwelle und nur am Abstand gescheitert. Audio + eine Zeile mit
+allen Werten in grenzfaelle.jsonl, damit man sie per Ohr labeln und eine
+Grenze messen kann. Vorher fehlten genau diese Fälle: Follow-up-Turns werden
+sonst nicht archiviert.
 """
 
 from __future__ import annotations
@@ -44,6 +58,7 @@ import io
 import json
 import os
 import threading
+import time
 import urllib.request
 import wave
 
@@ -103,7 +118,9 @@ class SprecherVerifikation:
 
     def __init__(self, schwelle: float = 0.40, abstand: float = 0.15,
                  threads: int = 4, sprecher_dir: str = SPEAKERS_DIR,
-                 url: str = "", timeout: float = 3.0) -> None:
+                 url: str = "", timeout: float = 3.0,
+                 schwelle_sicher: float = 0.0, grenzfall_dir: str = "",
+                 grenzfall_max: int = 300) -> None:
         self.url = url.rstrip("/")
         self.timeout = timeout
         self._sess = None
@@ -118,6 +135,9 @@ class SprecherVerifikation:
             self._sess = ort.InferenceSession(pfad, so, providers=["CPUExecutionProvider"])
         self.schwelle = schwelle
         self.abstand = abstand
+        self.schwelle_sicher = schwelle_sicher
+        self.grenzfall_dir = grenzfall_dir
+        self.grenzfall_max = grenzfall_max
         self.sprecher_dir = sprecher_dir
         self._lock = threading.Lock()
         self._refs: dict[str, tuple[float, np.ndarray]] = {}   # name -> (mtime, Fingerabdruck)
@@ -178,9 +198,40 @@ class SprecherVerifikation:
         reihe = sorted(aehnlichkeit.items(), key=lambda kv: kv[1], reverse=True)
         name, best = reihe[0]
         zweit = reihe[1][1] if len(reihe) > 1 else -1.0
+        werte = dict(aehnlichkeit=round(best, 3), abstand=round(best - zweit, 3))
         if best >= self.schwelle and best - zweit >= self.abstand:
-            return SpeakerVerdict(name, STATUS_BEKANNT)
-        return SpeakerVerdict(None, STATUS_UNBEKANNT)
+            sicher = best >= getattr(self, "schwelle_sicher", 0.0)
+            return SpeakerVerdict(name, STATUS_BEKANNT, sicher=sicher, **werte)
+        return SpeakerVerdict(None, STATUS_UNBEKANNT, sicher=False, **werte)
+
+    def _ist_grenzfall(self, u: SpeakerVerdict) -> bool:
+        if u.status == STATUS_BEKANNT:
+            return u.sicher is False
+        return u.aehnlichkeit is not None and u.aehnlichkeit >= self.schwelle
+
+    def _grenzfall_ablegen(self, wav_bytes: bytes, aehnlich: dict[str, float],
+                           u: SpeakerVerdict) -> None:
+        """Audio + Werte aufheben (best effort, ältestes fliegt bei Überlauf)."""
+        verz = getattr(self, "grenzfall_dir", "")
+        if not verz or not self._ist_grenzfall(u):
+            return
+        try:
+            os.makedirs(verz, exist_ok=True)
+            jetzt = time.time()
+            stamm = time.strftime("%Y%m%d_%H%M%S", time.localtime(jetzt)) + f"_{int(jetzt * 1000) % 1000:03d}"
+            with open(os.path.join(verz, f"{stamm}.wav"), "wb") as f:
+                f.write(wav_bytes)
+            zeile = {"ts": stamm, "status": u.status, "name": u.name, "sicher": u.sicher,
+                     "werte": {n: round(s, 3) for n, s in
+                               sorted(aehnlich.items(), key=lambda kv: -kv[1])}}
+            with open(os.path.join(verz, "grenzfaelle.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(zeile, ensure_ascii=False) + "\n")
+            wavs = sorted(n for n in os.listdir(verz) if n.endswith(".wav"))
+            for alt in wavs[:max(0, len(wavs) - self.grenzfall_max)]:
+                os.unlink(os.path.join(verz, alt))
+            print(f"🎙  Grenzfall aufgehoben: {stamm}.wav")
+        except Exception as e:      # darf das Urteil nie kosten
+            print(f"⚠️  Grenzfall nicht aufgehoben: {e}")
 
     def diarize(self, wav_bytes: bytes) -> SpeakerVerdict:
         try:
@@ -194,7 +245,9 @@ class SprecherVerifikation:
             aehnlich = {n: float(e @ r) for n, r in refs.items()}
             print("🎙  Verifikation: " + ", ".join(f"{n} {s:.2f}" for n, s in
                                                    sorted(aehnlich.items(), key=lambda kv: -kv[1])))
-            return self.urteil(aehnlich)
+            u = self.urteil(aehnlich)
+            self._grenzfall_ablegen(wav_bytes, aehnlich, u)
+            return u
         except Exception as e:
             # Jeder Fehler ist ein Ausfall, kein Fremder (SPEAKER_STATE.md).
             print(f"⚠️  Sprecher-Verifikation: {e}")
