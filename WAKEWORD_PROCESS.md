@@ -5,17 +5,19 @@ wurde, Runde für Runde, mit allen Zahlen. **Wie man nachtrainiert** (Ablauf,
 Befehle, Fallen) steht in `WAKEWORD_TRAINING.de.md` (englisch `WAKEWORD_TRAINING.md`); diese Datei ist der Beleg
 dazu und wächst nach unten.
 
-## Stand (2026-11-08)
+## Stand (2026-11-13)
 
 - **Live: R7 voll l2 (seit 2026-10-31 18:08), Woche ausgewertet, bleibt.**
   Nach Ohr 1,9 Fehltrigger/Tag gegen 2,6 bei v5, echte Rufe gleich
   (Abschnitt „Live-Versuch R7 voll l2“, Ergebnis). Nächster Modellschritt:
-  voll4-Ensemble, erst wenn die Schranke eine Woche gelaufen ist.
+  voll4-Ensemble (die Schranke ist jetzt bestätigt).
 - **Seit 2026-11-08 Schranke nach dem Trigger: das Anfangs-Maß verwirft**
   (`wake_pruefung.schranke`, Grenze −6,5). In der l2-Woche lagen echte Rufe
   alle ≥ −5,05, Ohr-Fehlauslöser alle ≤ −8,2. Verworfenes steht als
-  Near-Miss `failed_on: "anfang"` in wake_events.log. Abschnitt
-  „Schranke Anfangs-Maß“.
+  Near-Miss `failed_on: "anfang"` in wake_events.log. **Live bestätigt
+  (2026-11-13):** 5 Tage, 40 Trigger, 0 Fehltrigger nach Ohr; von 5
+  Verworfenen war 1 ein echter Ruf (wiederholt). Abschnitt
+  „Schranke Anfangs-Maß“, Bilanz.
 - **Streuung je Lauf** bleibt das Hauptproblem jeder Schranke (gleiche Daten,
   acht Läufe: FP/h 0,19 bis 1,22). Ensemble (Score-Mittel aller Läufe eines
   Rezepts) gemessen: voll4 besteht die R7-Schranke, die Live-Engine kann es
@@ -1769,6 +1771,26 @@ durchgesprochen) durch, −0,01 bis −0,14, Wartezeit 0,29–0,55 s.
 
 Zu beobachten: verworfene Fälle per Ohr prüfen (`failed_on: anfang` in
 wake_triage), und ob die Grenze bei mehr Fehlauslösern hält.
+
+**Bilanz nach 5 Tagen (2026-11-13, Ohr-Review Stapel S, 08.11. 22:23 bis
+13.11. ~21:50):** 40 Trigger, per Ohr alle 40 echte Rufe, **0 Fehltrigger**
+(v5-Woche 2,5/Tag, l2-Woche 1,7/Tag); echte Rufe 8,0/Tag. Im Raum fiel es
+auch ohne Zahlen auf (aus dem Haushalt: „praktisch keiner mehr“). Verworfen hat die
+Schranke 5:
+
+| Zeit | Anfang | Qwen im Wake-Clip | Ohr |
+|---|---|---|---|
+| 10.11. 17:55 | −24,9 | „was dafür sorgt, dass man wenn man zu viel macht“ | Fehlauslöser |
+| 10.11. 20:27 | −7,4 | „Gestern, du weißt schon, Zahlen etc.“ | Fehlauslöser |
+| 11.11. 20:16 | −14,2 | „War bestimmt verstorben.“ | Fehlauslöser |
+| 11.11. 20:31 | −19,1 | „Das Tor scheint dis.“ | **echter Ruf** |
+| 11.11. 20:50 | −11,6 | „Wenn du Songs hast oder dann kommt ein Schuh.“ | unklar („Gaston“ im Satz, danach „Stopp Stopp“) |
+
+Der verlorene Ruf wurde 13 s später wiederholt, kam durch und schaltete. Er
+lag weit unter der Grenze, nicht an ihr: an −6,5 zu drehen hätte ihn nicht
+gerettet, nur Fehlauslöser durchgelassen (der nächste lag bei −7,4). Die
+Grenze bleibt. Was die Schranke bei einem verwaschenen Ruf kostet, ist eine
+Wiederholung.
 
 ### Paralleles Training, Probelauf r7b (2026-10-31 18:15–19:12)
 
