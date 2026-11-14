@@ -1386,7 +1386,7 @@ def run() -> None:
             stimmen_lager,
             LlamaCppAsrStt(profile.stt_llamacpp_url, timeout=30, sprache="German"),
             melden=lambda text: telegram.send(*_tg, text),
-            melden_audio=lambda ogg, unterschrift: telegram.send_voice(*_tg, ogg, unterschrift),
+            melden_audio=lambda ogg, unterschrift: telegram.send_audio(*_tg, ogg, unterschrift),
             ordner=STIMMEN_EINGANG_DIR, erlaubt=OPENCLAW_MEDIA_DIRS,
             vorbereiten=lambda name: antwort_tts.vorbereiten(_feste_saetze(), name=name),
             # Kurze feste Sätze wählt das Ohr (Denk-Phrasen: nur Nuancen, Jochen)
