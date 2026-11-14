@@ -1014,9 +1014,13 @@ Hörproben als Sprachnachricht in den Hauskanal, Wahl per Nummer, Abbruch-Test
 Eingangs-Ablage (`OPENCLAW_MEDIA_DIRS`). Jeder darf (Jochen: per Telegram
 sind nur Berechtigte); Mikro-Aufnahmen als Quelle sind offen. Die
 Qwen-Prüfung ist bei Einzelwörtern blind (ein „hh oh“ hörte sie als „okay“),
-Ja/Okay bleiben Sache des Ohrs: nach dem Anlegen kommen je 3 Fassungen als
-Sprachnachricht, Wahl per `voice_stimme_kurz_waehlen` (auch im Fablab ohne
-Hörseite; `voice_stimme_kurz_anhoeren` für vorhandene Stimmen). Erster echter
+Ja/Okay bleiben Sache des Ohrs: nach dem Anlegen kommen 3 Fassungen „Ja?“,
+nach der Wahl 3 „Okay.“ (Runde in `kurz/runde.json`; gemischt hintereinander
+sind sie kaum zu vergleichen, Jochen 2026-11-14), als Audiodatei (MP3) mit
+1,5 s Pause dahinter, weil Telegram weiterspielt. Wahl per
+`voice_stimme_kurz_waehlen` (auch im Fablab ohne Hörseite;
+`voice_stimme_kurz_anhoeren` für vorhandene Stimmen). **Eine angelegte Stimme
+wird nie ersetzt** (Jochen 2026-11-14: keine darf verloren gehen). Erster echter
 Durchlauf 2026-11-09: `edgar_3` aus einem Hörbuchausschnitt. **Standard für
 alle** (`voice_set_voice` mit `fuer_alle`, seit 2026-11-09): steht in
 `<lager>/_standard.json` und gewinnt gegen `antwort_tts_voice`; Anlass: der
@@ -1352,6 +1356,24 @@ wer sie ändert, baut das zuerst. Der Barge-in ist
 nicht betroffen. Ende der Aufnahme am Sprecher-Pegel ist noch offen
 (hilft nur, wenn ein Mensch auslöst, nicht bei einem Fernseh-Trigger).
 Tests: `tests/test_umgebung.py`.
+
+### Aufnahme-Ende im Maschinenlärm (`vad_silero`, seit 2026-11-13)
+
+Fablab 2026-11-04..07: mit Lasercutter-Lüftern (Grundpegel 700–1000, über
+`vad_voice_rms_min` 900) hielt WebRTC-VAD 80–100 % der Chunks für Sprache,
+Aufnahmen liefen bis zum 30-s-Deckel. `sprache_vad.py`: WebRTC entscheidet,
+Silero (ONNX in `models/silero_vad/`) darf nur widersprechen, wenn der Chunk
+leiser als `vad_silero_faktor` (2) × Raumpegel vor dem Ruf ist
+(`umgebung.gleitend` zum letzten Leerlauf-Chunk, `_umg_zeit`); ohne
+Raumpegel und bei Handy-Satelliten alte Regel. Silero allein war zu streng
+(daheim 58 frühere Schnitte, ein „Stopp, Stopp“ weg). Gemessen (Dialog,
+Qwen-Wortvergleich): daheim 12/483 früher, 0 Wörter verloren; Fablab
+Lasercutter 30 s → 10,2/3,8 s. Log: `vad_raum`, `silero_ueberstimmt_s`,
+`vad_alt_ende_s`, `dsp_sprachenergie` (XVF3800-Sensor „Sprachenergie“, nur
+Log). `followup_archivieren` legt Follow-ups als `*_followup<n>.wav` ab
+(ohne Pre-Roll, darum nicht `_rec.wav`). **Änderungen nur gegen
+`tools/endpoint_replay.py --dialog --silero`.** Tests:
+`tests/test_sprache_vad.py`.
 
 ### Prüfung nach dem Trigger (`wake_pruefung:`, Schatten seit 2026-10-27, Schranke seit 2026-11-08)
 

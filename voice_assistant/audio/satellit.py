@@ -150,6 +150,12 @@ class SatellitQuelle:
         fn = getattr(self._haupt, "kanal2_letzte", None)
         return fn(n) if fn else []
 
+    def sprachenergie_seit(self, t0: float) -> list[float]:
+        if self.aktiv is not None:
+            return []
+        fn = getattr(self._haupt, "sprachenergie_seit", None)
+        return fn(t0) if fn else []
+
     @property
     def beam_angle(self):
         if self.aktiv is not None:

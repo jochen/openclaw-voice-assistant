@@ -29,6 +29,17 @@ Auswertung auf das, was aus dem Turn geworden ist (wake_events.log: ausgang,
 ein_satz; actuator_turns.log: war es ein Schaltbefehl). Ein Kommando, das
 damals ausgeführt wurde, ist der belastbarste positive Fall, den es hier gibt.
 
+Silero als Einspruch (`--silero`, seit 2026-11-13): dieselbe Regel wie
+`vad_silero` im Betrieb (voice_assistant/sprache_vad.py), mit dem Raumpegel
+aus wake_events.log (`umgebung.gleitend` des Triggers). Aufnahmen ohne
+Raumpegel laufen mit der alten Regel. `--dialog` misst alle Aufnahmen mit
+dem Dialog-Endpointing (2 s / 30 s) — dort lagen die Lasercutter-Fälle.
+Messreihe 2026-11-13 (Dialog, Wörter per Qwen bis zum Schnitt verglichen):
+daheim 483 Aufnahmen, 12 früher beendet, 0 Wörter verloren; Fablab 42,
+die zwei Lasercutter-Aufnahmen 30 s → 10,2 s und 3,8 s, verloren nur das
+Gespräch im Raum nach der Frage. Silero allein (ohne Pegel-Vorbehalt):
+daheim 58 frühere Schnitte, ein "Stopp, Stopp" und ein Befehlsende weg.
+
 Ein Vorbehalt aus der Praxis: die Ein-Satz-Einstufung im Log ist selbst
 fehlbar — sie entsteht 0,4 s nach dem Trigger aus dem VAD, und Störgeräusch
 kann sie auslösen (Vorfall 2026-08-01). Turns mit ein_satz=true sind also
@@ -102,6 +113,8 @@ def _turn_infos() -> dict[str, dict]:
         eintrag = infos.setdefault(audio, {})
         if row.get("result") == "ack":
             eintrag["ein_satz"] = bool(row.get("ein_satz"))
+        elif row.get("result") == "trigger" and isinstance(row.get("umgebung"), dict):
+            eintrag["raum"] = row["umgebung"].get("gleitend")
         elif row.get("result") == "outcome":
             eintrag["ausgang"] = row.get("ausgang")
             if row.get("transcript"):
@@ -134,6 +147,8 @@ def _schnitt(
     rms_min: float,
     vorlauf_sec: float,
     still_abbruch_sec: float = 0.0,
+    entscheider=None,
+    raum: float | None = None,
 ) -> tuple[float | None, float, float]:
     """(Schnittzeitpunkt in s oder None, Gesamtdauer in s, letzte Sprache in s).
 
@@ -160,6 +175,9 @@ def _schnitt(
     nach dem Trigger keine Sprache, endet die Aufnahme dort (reiner Abbruch).
     0 = aus.
 
+    entscheider: ein sprache_vad.SprachEntscheider (--silero); dann
+    entscheidet er je Chunk statt der Inline-Regel, mit raum als Raumpegel.
+
     None = die Aufnahme wäre bis zum Deckel bzw. Dateiende gelaufen.
     """
     frame = int(RATE_OW * 20 / 1000)
@@ -170,6 +188,8 @@ def _schnitt(
     schnitt: float | None = None
     letzte_sprache = 0.0
     start = int(RATE_OW * min(vorlauf_sec, dauer)) // chunk * chunk
+    if entscheider is not None:
+        entscheider.neuer_turn(raum)
     # Bis zum Dateiende durchlaufen, auch nach dem Schnitt: letzte_sprache muss
     # die GANZE Originalaufnahme kennen, sonst ist die Verlustprüfung blind.
     for k in range(start, len(audio) - chunk, chunk):
@@ -179,7 +199,9 @@ def _schnitt(
         scharf = sprach_chunks >= min_sprach_chunks
         rms = float(np.sqrt(np.mean(c.astype(np.float32) ** 2)))
         ist_sprache = False
-        if rms_min <= 0.0 or rms >= rms_min:
+        if entscheider is not None:
+            ist_sprache = entscheider.chunk(c, nachlauf_chunks if scharf else dialog_nachlauf_chunks)[0]
+        elif rms_min <= 0.0 or rms >= rms_min:
             for j in range(0, chunk, frame):
                 f = c[j:j + frame]
                 if len(f) == frame and vad.is_speech(f.tobytes(), RATE_OW):
@@ -251,6 +273,12 @@ def main() -> int:
                          "NUR die bekommen im Betrieb das Kommando-Endpointing. "
                          "Ohne diesen Schalter misst man auch Turns mit, die "
                          "real weiter im Dialog-Modus laufen (zu pessimistisch)")
+    ap.add_argument("--silero", action="store_true",
+                    help="Silero als Einspruch im Raumpegel (vad_silero, sprache_vad.py)")
+    ap.add_argument("--silero-schwelle", type=float, default=None, dest="silero_schwelle")
+    ap.add_argument("--silero-faktor", type=float, default=None, dest="silero_faktor")
+    ap.add_argument("--dialog", action="store_true",
+                    help="alle Aufnahmen mit Dialog-Endpointing (Nachlauf/Deckel des Dialogs)")
     args = ap.parse_args()
 
     if not os.path.isdir(TRIGGER_AUDIO_DIR):
@@ -263,6 +291,18 @@ def main() -> int:
     rms_min = args.rms_min if args.rms_min is not None else profil.vad_voice_rms_min
     min_sprache = args.min_sprache
     vad = webrtcvad.Vad(profil.vad_aggressiveness)
+    if args.dialog:
+        nachlauf, deckel = profil.silence_seconds, RECORDING_MAX_SEC
+    entscheider = None
+    if args.silero:
+        from voice_assistant.assistant import _chunk_speech_stats
+        from voice_assistant.sprache_vad import SileroVad, SprachEntscheider
+        entscheider = SprachEntscheider(
+            _chunk_speech_stats, vad, rms_min, SileroVad(),
+            schwelle=args.silero_schwelle if args.silero_schwelle is not None else profil.vad_silero_schwelle,
+            faktor=args.silero_faktor if args.silero_faktor is not None else profil.vad_silero_faktor)
+        print(f"Silero-Einspruch: Schwelle {entscheider.schwelle:g}, Faktor {entscheider.faktor:g} "
+              f"× Raumpegel (ohne Raumpegel: alte Regel)")
 
     infos = _turn_infos()
     akt_tx = _aktuator_transkripte()
@@ -286,7 +326,7 @@ def main() -> int:
           f"Sprache, Deckel {deckel:.0f}s | Dialog {profil.silence_seconds:.1f}s/"
           f"{RECORDING_MAX_SEC:.0f}s | rms_min {rms_min:.0f}, VAD {profil.vad_aggressiveness}")
     print(f"{len(dateien)} Aufnahmen im Archiv")
-    if not args.nur_ein_satz:
+    if not args.nur_ein_satz and not args.dialog:
         print("HINWEIS: ohne --nur-ein-satz bekommt hier JEDE Aufnahme das "
               "Kommando-Endpointing. Im Betrieb trifft das nur Ein-Satz-Turns "
               "— diese Zahlen sind also eine Was-waere-wenn-Rechnung, nicht "
@@ -332,6 +372,8 @@ def main() -> int:
             rms_min=rms_min,
             vorlauf_sec=_PRE_ROLL_SEC,
             still_abbruch_sec=nachlauf if args.bargein else 0.0,
+            entscheider=entscheider,
+            raum=info.get("raum"),
         )
         schnitt = t if t is not None else dauer
         ergebnisse.append({

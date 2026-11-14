@@ -24,11 +24,20 @@ von Hand die Stimme ``gaston`` ergab (``tools/stimmprobe_zerlegen.py``):
 5. Bestanden → ins Lager, feste Sätze vorrechnen. Umschalten bleibt eigener
    Schritt (``voice_set_voice``).
 6. Gleich danach je kurzem festem Satz („Ja?“, „Okay.“) bis zu ``FASSUNGEN``
-   Fassungen als Sprachnachricht (``kurz_anhoeren``, auch später für eine
-   vorhandene Stimme), Wahl per ``kurz_waehlen(satz, fassung)``. Die
+   Fassungen als Audiodatei (``kurz_anhoeren``, auch später für eine
+   vorhandene Stimme), Wahl per ``kurz_waehlen(satz, fassung)``. Immer nur
+   ein Satz zur Zeit, der nächste der Runde erst nach der Wahl: „Ja?“ und
+   „Okay.“ direkt hintereinander gehört sind kaum zu vergleichen, drei
+   Fassungen desselben Satzes schon (Jochen 2026-11-14). Eine Runde
+   (``kurz/runde.json``) sind nach dem Anlegen alle Sätze, auf Anfrage
+   alle oder nur der gewünschte; eine neue Wahl außerhalb der Runde fragt
+   nichts nach. Die
    Qwen-Rückprobe ist bei Einzelwörtern blind („hh oh“ als „okay“), das Ohr
    entscheidet — so auch im Fablab ohne Hörseite (Jochen 2026-11-09: „2–3
    Beispiele reichen“). Ohne Antwort bleibt die automatisch gewählte.
+
+Eine angelegte Stimme wird nie ersetzt (Jochen 2026-11-14: keine Stimme darf
+verloren gehen); ein anderes Stück braucht einen neuen Namen.
 
 Es läuft immer nur ein Auftrag; Meldungen gehen per Telegram, weil das
 Zerlegen ~1 min und der Abbruch-Test ~4 min dauern.
@@ -69,6 +78,7 @@ ABBRUCH_WDH = 15
 HOERPROBEN_MAX = 5
 FASSUNGEN = 3           # je kurzem festem Satz
 KURZ_VERSUCHE = 8       # Rechnungen, bis FASSUNGEN die Rückprobe bestehen
+NACHPAUSE_S = 1.5       # Stille hinter jeder Hörprobe: Telegram spielt die nächste gleich weiter
 VORAUSWAHL_MAX = 8      # so viele Stücke werden transkribiert und gerechnet
 ZIEL_S = 6.0            # Regel für neue Stimmen: ein ruhiger Satz, 5–8 s
 DAUER_MIN_S, DAUER_MAX_S = 3.0, 180.0
@@ -82,6 +92,10 @@ def laden(pfad: str) -> np.ndarray:
     roh = subprocess.run(["ffmpeg", "-v", "error", "-i", pfad, "-ac", "1", "-ar", str(RATE),
                           "-f", "s16le", "-"], capture_output=True, check=True, timeout=60).stdout
     return np.frombuffer(roh, dtype="<i2")
+
+
+def mit_pause(pcm: np.ndarray, rate: int) -> np.ndarray:
+    return np.concatenate([pcm, np.zeros(int(NACHPAUSE_S * rate), dtype=pcm.dtype)])
 
 
 def _wav(pcm: np.ndarray, rate: int = RATE) -> bytes:
@@ -274,6 +288,7 @@ class StimmenEingang:
 
     def waehlen(self, stueck: int, name: str | None = None, text: str | None = None) -> dict:
         name = name_pruefen(name) if name else self._letzter()
+        self._nicht_ersetzen(name)
         auftrag = self._auftrag(name)
         stuecke = {k["nr"]: k for k in auftrag.get("hoerproben", [])}
         if int(stueck) not in stuecke:
@@ -284,16 +299,24 @@ class StimmenEingang:
                 "text": f"Ich prüfe Stück {stueck} für die Stimme {name} auf abgeschnittene "
                         "Sätze, das dauert drei bis vier Minuten. Das Ergebnis kommt in den Chat."}
 
-    def kurz_anhoeren(self, name: str | None = None) -> dict:
+    def kurz_anhoeren(self, name: str | None = None, satz: str | None = None) -> dict:
         if self.antwort is None or not self.kurze_saetze:
             raise ValueError("Feste Sätze sind hier nicht eingerichtet")
         name = name_pruefen(name) if name else self.lager.standard
         if not self.lager.hat(name):
             raise ValueError(f"Stimme {name!r} gibt es nicht")
-        self._starten(name, lambda: self._kurz(name))
-        return {"ok": True, "name": name,
-                "text": f"Ich rechne {', '.join(self.kurze_saetze)} in der Stimme {name}; "
-                        "die Fassungen kommen gleich als Sprachnachrichten in den Chat."}
+        runde = [self._satz(satz)] if satz else list(self.kurze_saetze)
+        ziel = runde[0]
+
+        def arbeit() -> None:
+            self._runde(name, runde)
+            self._kurz(name, ziel)
+        self._starten(name, arbeit)
+        text = (f"Ich rechne „{ziel}“ in der Stimme {name}; die Fassungen kommen gleich als "
+                "Audiodateien in den Chat.")
+        if len(runde) > 1:
+            text += f" Nach deiner Wahl frage ich „{runde[1]}“ ab."
+        return {"ok": True, "name": name, "satz": ziel, "text": text}
 
     def kurz_waehlen(self, satz: str, fassung: int, name: str | None = None) -> dict:
         if self.antwort is None:
@@ -316,8 +339,25 @@ class StimmenEingang:
         if not 1 <= int(fassung) <= len(pfade):
             raise ValueError(f"Fassung {fassung} gibt es bei „{t}“ nicht (1–{len(pfade)})")
         self.antwort.fest_uebernehmen(t, name, pfade[int(fassung) - 1], quelle="telegram")
+        text = f"„{t}“ spricht {name} ab jetzt in Fassung {fassung}."
+        # Nächsten Satz der Runde erst nach der Wahl: so liegen nur Fassungen
+        # desselben Satzes hintereinander im Chat (Jochen, 2026-11-14). Wer
+        # außerhalb der Runde neu wählt, bekommt nichts nachgeschickt.
+        offen = self._runde_offen(name)
+        if t in offen:
+            offen.remove(t)
+            self._runde_schreiben(name, offen)
+            if offen:
+                naechster = offen[0]
+                try:
+                    self._starten(name, lambda: self._kurz(name, naechster))
+                    text += f" Jetzt „{naechster}“."
+                except RuntimeError as e:
+                    log.warning("Folgesatz %s für %s nicht gestartet: %s", naechster, name, e)
+                    text += (f" „{naechster}“ kann ich gerade nicht abfragen ({e}); "
+                             "frag später danach.")
         return {"ok": True, "name": name,
-                "text": f"„{t}“ spricht {name} ab jetzt in Fassung {fassung}."}
+                "text": text}
 
     # --- intern ---
 
@@ -331,31 +371,64 @@ class StimmenEingang:
             raise ValueError("Keine Fassungen offen — erst anhören")
         return max(da, key=lambda n: os.path.getmtime(os.path.join(self.ordner, n, "kurz", "kurz.json")))
 
-    def _kurz(self, name: str) -> None:
+    def _satz(self, satz: str) -> str:
+        gesucht = woerter(satz)
+        for s in self.kurze_saetze:
+            if woerter(s) == gesucht:
+                return s
+        raise ValueError(f"Satz {satz!r} steht nicht zur Wahl ({', '.join(self.kurze_saetze)})")
+
+    def _runde(self, name: str, saetze: list[str]) -> None:
+        """Neue Runde: alte Fassungen weg, damit keine Reste einer früheren
+        Runde mitzählen."""
         d = os.path.join(self._dir(name), "kurz")
         if os.path.isdir(d):
             shutil.rmtree(d)
         os.makedirs(d)
-        kurz: dict[str, list[str]] = {}
-        for i, satz in enumerate(self.kurze_saetze):
-            fassungen = self.antwort.fest_kandidaten(satz, name, FASSUNGEN, KURZ_VERSUCHE)
-            if not fassungen:
-                self.melden(f"⚠️ „{satz}“ in {name}: keine Fassung hörte sich nach dem Satz an.")
-                continue
-            kurz[satz] = []
-            for j, (pcm, rate) in enumerate(fassungen, 1):
-                pfad = os.path.join(d, f"s{i}_f{j}.wav")
-                with open(pfad, "wb") as f:
-                    f.write(_wav(pcm, rate))
-                kurz[satz].append(pfad)
-                self.melden_audio(ogg_opus(_wav(pcm, rate)),
-                                  f"„{satz}“ Fassung {j} ({len(pcm) / rate:.1f} s)")
+        self._runde_schreiben(name, list(saetze))
+
+    def _runde_offen(self, name: str) -> list[str]:
+        try:
+            with open(os.path.join(self._dir(name), "kurz", "runde.json"), encoding="utf-8") as f:
+                return list(json.load(f).get("offen") or [])
+        except (OSError, ValueError, AttributeError):
+            return []
+
+    def _runde_schreiben(self, name: str, offen: list[str]) -> None:
+        with open(os.path.join(self._dir(name), "kurz", "runde.json"), "w", encoding="utf-8") as f:
+            json.dump({"offen": offen}, f, ensure_ascii=False)
+
+    def _nicht_ersetzen(self, name: str) -> None:
+        if self.lager.hat(name) or os.path.isdir(os.path.join(self.lager.ordner, name)):
+            raise ValueError(f"Die Stimme {name} gibt es schon, sie wird nicht ersetzt. Für ein "
+                             "anderes Stück die Probe bitte unter neuem Namen einreichen.")
+
+    def _kurz(self, name: str, satz: str) -> None:
+        d = os.path.join(self._dir(name), "kurz")
+        os.makedirs(d, exist_ok=True)
+        try:
+            with open(os.path.join(d, "kurz.json"), encoding="utf-8") as f:
+                kurz = json.load(f)
+        except (OSError, ValueError):
+            kurz = {}
+        i = self.kurze_saetze.index(satz) if satz in self.kurze_saetze else 0
+        fassungen = self.antwort.fest_kandidaten(satz, name, FASSUNGEN, KURZ_VERSUCHE)
+        if not fassungen:
+            self.melden(f"⚠️ „{satz}“ in {name}: keine Fassung hörte sich nach dem Satz an.")
+            return
+        kurz[satz] = []
+        for j, (pcm, rate) in enumerate(fassungen, 1):
+            pfad = os.path.join(d, f"s{i}_f{j}.wav")
+            with open(pfad, "wb") as f:
+                f.write(_wav(pcm, rate))
+            kurz[satz].append(pfad)
+            self.melden_audio(ogg_opus(_wav(mit_pause(pcm, rate), rate)),
+                              f"„{satz}“ Fassung {j} ({len(pcm) / rate:.1f} s)")
         with open(os.path.join(d, "kurz.json"), "w", encoding="utf-8") as f:
             json.dump(kurz, f, ensure_ascii=False, indent=1)
-        if kurz:
-            beispiel = ", ".join(f"{woerter(t)[0].capitalize()} 1" for t in kurz)
-            self.melden(f"Welche Fassungen soll {name} sprechen? Antworte z. B. „{beispiel}“. "
-                        "Ohne Antwort bleibt die automatisch gewählte.")
+        beispiel = f"{woerter(satz)[0].capitalize()} 1"
+        self.melden(f"Welche Fassung soll {name} für „{satz}“ sprechen? Antworte z. B. "
+                    f"„{beispiel}“. Ohne Antwort bleibt die automatisch gewählte.")
 
     def _starten(self, name: str, arbeit: Callable[[], None]) -> None:
         if not self._lock.acquire(blocking=False):
@@ -371,7 +444,8 @@ class StimmenEingang:
             finally:
                 self.laeuft = None
                 self._lock.release()
-        threading.Thread(target=lauf, name=f"stimmen-eingang-{name}", daemon=True).start()
+        self.faden = threading.Thread(target=lauf, name=f"stimmen-eingang-{name}", daemon=True)
+        self.faden.start()
 
     def _dir(self, name: str) -> str:
         return os.path.join(self.ordner, name)
@@ -471,7 +545,7 @@ class StimmenEingang:
                             f"{len(auswahl)} angesehen, {raus['satzende']} enden mitten im Wort, "
                             f"{raus['testsatz']} fielen im Testsatz auf. Hörproben: je das Stück, "
                             "dann ein Testsatz damit.")
-            self.melden_audio(ogg_opus(_wav(hoerprobe, prate)),
+            self.melden_audio(ogg_opus(_wav(mit_pause(hoerprobe, prate), prate)),
                               f"Stück {nr} ({info['bis_s'] - info['von_s']:.1f} s): „{info['text']}“")
         if not hoerproben:
             self._auftrag_schreiben(name, {"name": name, "hoerproben": []})
@@ -506,6 +580,11 @@ class StimmenEingang:
                         "vorzeitig ab. So taugt es nicht als Stimme — nimm ein anderes Stück.")
             return
         ziel = os.path.join(self.lager.ordner, name)
+        try:
+            self._nicht_ersetzen(name)     # inzwischen angelegt? dann nichts überschreiben
+        except ValueError as e:
+            self.melden(f"⚠️ {e}")
+            return
         os.makedirs(ziel)
         for datei in ("probe.wav", "probe.txt"):
             shutil.copyfile(os.path.join(lager_dir, k, datei), os.path.join(ziel, datei))
@@ -520,4 +599,5 @@ class StimmenEingang:
         self.melden(f"✅ Stimme {name} ist angelegt (0 von {n} Sätzen abgebrochen). "
                     f"Umschalten mit „nimm die Stimme {name}“.")
         if self.antwort is not None and self.kurze_saetze:
-            self._kurz(name)
+            self._runde(name, list(self.kurze_saetze))
+            self._kurz(name, self.kurze_saetze[0])

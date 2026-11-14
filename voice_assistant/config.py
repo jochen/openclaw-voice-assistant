@@ -820,6 +820,15 @@ class Profile:
     # Nützlich in Lärm-Umgebungen (Fablab): Hintergrundrauschen-RMS messen,
     # dann Schwelle knapp darüber setzen (z.B. 900 wenn Rauschen ca. 724 RMS).
     vad_voice_rms_min: float = 0.0
+    # Silero als Einspruch gegen WebRTC-"Sprache" im Raumpegel (sprache_vad.py):
+    # Lüfter/Maschinen hielten Aufnahmen bis zum Deckel offen. Braucht den
+    # Umgebungspegel (umgebung.enabled), sonst bleibt es bei WebRTC allein.
+    vad_silero: bool = False
+    vad_silero_schwelle: float = 0.3
+    vad_silero_faktor: float = 2.0
+    # Follow-up-Aufnahmen archivieren (Trigger-Archiv, *_followup<n>_rec.wav),
+    # damit das Endpointing auch dort nachrechenbar ist. Default aus.
+    followup_archivieren: bool = False
     # Pegel-Gate fürs WAKEWORD (nicht VAD!). 0 = deaktiviert. RMS des lautesten
     # 300-ms-Fensters im wake_ring zum Trigger-Zeitpunkt; unterschreitet der
     # Pegel diese Schwelle, feuert der Trigger NICHT. Blockt leise Fehltrigger
@@ -1345,6 +1354,10 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         tts_prefix=str(raw.get("tts_prefix", "")),
         vad_aggressiveness=int(raw.get("vad_aggressiveness", 3)),
         vad_voice_rms_min=float(raw.get("vad_voice_rms_min", 0.0)),
+        vad_silero=bool(raw.get("vad_silero", False)),
+        vad_silero_schwelle=float(raw.get("vad_silero_schwelle", 0.3)),
+        vad_silero_faktor=float(raw.get("vad_silero_faktor", 2.0)),
+        followup_archivieren=bool(raw.get("followup_archivieren", False)),
         wake_rms_min=float(raw.get("wake_rms_min", 0.0)),
         nearmiss_shadow=bool(raw.get("nearmiss_shadow", False)),
         silence_seconds=float(raw.get("silence_seconds", 2.0)),

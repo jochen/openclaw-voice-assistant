@@ -380,10 +380,14 @@ Ende oder einer Länge weit weg von den anderen, also Stille, Atmen oder
 Zischen); dann kommen bis zu fünf Stücke als Sprachnachrichten in den Chat,
 je das Stück und danach ein Testsatz damit. Mit einer Nummer antworten; das
 Stück geht durch den Abbruch-Test (60 Sätze, etwa vier Minuten) und nur mit 0
-Abbrüchen ins Lager, mit vorgerechneten festen Sätzen. Gleich danach kommen
-die kurzen festen Sätze („Ja?“, „Okay.“) in bis zu drei Fassungen; antworten
-z. B. mit „Ja 2, Okay 1“ (`voice_stimme_kurz_waehlen`;
-`voice_stimme_kurz_anhoeren` holt das für eine vorhandene Stimme nach). Die
+Abbrüchen ins Lager, mit vorgerechneten festen Sätzen. Eine vorhandene Stimme
+wird nie ersetzt, ein anderes Stück braucht einen neuen Namen. Gleich danach
+kommen die kurzen festen Sätze in bis zu drei Fassungen als Audiodatei, ein
+Satz zur Zeit: erst „Ja?“, antworten z. B. mit „Ja 2“, dann „Okay.“
+(`voice_stimme_kurz_waehlen`; `voice_stimme_kurz_anhoeren` holt das für eine
+vorhandene Stimme nach, beide Sätze oder nur einen). Drei Fassungen desselben
+Satzes lassen sich hintereinander gut vergleichen, „Ja?“ und „Okay.“ gemischt
+nicht; hinter jeder Fassung steht eine kurze Pause. Die
 STT-Prüfung ist bei Einzelwörtern blind, also entscheidet das Ohr, ohne
 Hörseite. Umschalten bleibt ein eigener Schritt: für eine Person mit
 `for_speaker`, für alle mit `fuer_alle` (neben dem Lager gespeichert, gewinnt
@@ -689,6 +693,39 @@ Mikrofon-Verstärkung als `wake_rms_min`.
 > Lärm kamen durch, 63 davon echt. Im Alltag löst der Fernseher praktisch
 > nicht mehr aus; bei Musik muss man etwas lauter rufen. Beispiel, keine
 > Voreinstellung: die Near-Misses im eigenen Log ansehen.
+
+**Aufnahme-Ende im Maschinenlärm (`vad_silero`, optional, braucht
+`umgebung:`).** Eine Aufnahme endet nach einer Sprechpause, und was „Sprache“
+ist, entscheidet je Chunk WebRTC-VAD (dazu `vad_voice_rms_min`).
+Gleichmäßiges, breitbandiges Rauschen in hohem Pegel — Lüfter, ein
+Lasercutter, eine Werkstatt — täuscht es auch auf der strengsten Stufe: in
+unserem Fablab galten 80–100 % der Chunks als Sprache, die Pause kam nie, und
+Aufnahmen liefen bis zum 30-s-Deckel. Mit `vad_silero: true` entscheidet
+weiter WebRTC, aber Silero-VAD (kleines ONNX-Modell, `models/silero_vad/`,
+MIT) darf widersprechen — **nur** bei Chunks, die leiser sind als
+`vad_silero_faktor` × der Raumpegel vor dem Ruf (`umgebung`). Lautes, nahes
+Sprechen wird nie überstimmt; Silero allein war zu streng (es schnitt daheim
+ein leises „Stopp, Stopp“ und das Ende eines Befehls ab). Ohne Raumpegel gilt
+die alte Regel.
+
+```yaml
+    vad_silero: true
+    vad_silero_schwelle: 0.3   # unter dieser Silero-Wahrscheinlichkeit Einspruch
+    vad_silero_faktor: 2.0     # ... aber nur unter diesem × Raumpegel
+    followup_archivieren: true # auch Follow-up-Aufnahmen archivieren (für Replays)
+```
+
+`endpoint.log` trägt dann `vad_raum`, `silero_ueberstimmt_s` und
+`vad_alt_ende_s` (wann die alte Regel geendet hätte — `null`, wenn noch
+nicht); am ReSpeaker mit unserer Firmware auch `dsp_sprachenergie` (die
+eigene Sprachenergie des XVF3800, 2-s-Maxima, nur Log). Gemessen am Archiv
+(Dialog-Endpointing, Wörter per STT bis zum jeweiligen Schnitt verglichen):
+daheim endeten 12 von 483 Aufnahmen früher, kein Wort verloren; im Fablab
+endeten die zwei Lasercutter-Aufnahmen nach 10,2 und 3,8 s statt nach 30 s,
+verloren ging nur das Gespräch im Raum nach der Frage. Kosten auf einem
+Raspberry Pi 4: etwa 5 % eines Kerns während der Aufnahme. Beispiel, keine
+Voreinstellung — das eigene Archiv nachrechnen
+(`tools/endpoint_replay.py --dialog --silero`).
 
 **Prüfung nach dem Trigger (`wake_pruefung:`, Experiment, nur Log)**
 Nachtraining allein brachte das Modell nicht verlässlich unter unser
@@ -1501,7 +1538,7 @@ Das Plugin in [`openclaw-plugin/`](openclaw-plugin/) registriert die Tools, die 
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | bekannte Sprecher verwalten |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | TTS-Stimme / Tempo wechseln (pro Sprecher via `for_speaker`, für alle via `fuer_alle`) |
 | `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | neue Stimme aus einer Audiodatei im Chat: Stücke anhören, eins wählen, Abbruch-Test |
-| `voice_stimme_kurz_anhoeren(name?)` / `voice_stimme_kurz_waehlen(satz, fassung)` | Fassungen von „Ja?“/„Okay.“ als Sprachnachricht, per Gehör wählen |
+| `voice_stimme_kurz_anhoeren(name?)` / `voice_stimme_kurz_waehlen(satz, fassung)` | Fassungen erst von „Ja?“, dann „Okay.“ als Audiodatei, per Gehör wählen |
 | `voice_analyze_last_output(…)` | die eigene zuletzt gesprochene Antwort erneut analysieren (Texttreue, Timing, Prosodie) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | Aussprache eines Worts sofort korrigieren („Sauce spricht man *Sohße*"); siehe *Aussprache-Liste* |
 
@@ -1678,6 +1715,7 @@ hat) und `voice/triggers/` (die archivierten Wake-/Aufnahme-/Near-Miss-WAVs).
   ging. Braucht Trigger-Archiv + `wake_events.log` + STT.
   ```bash
   ow-venv/bin/python -m tools.endpoint_replay --stt
+  ow-venv/bin/python -m tools.endpoint_replay --dialog --silero   # Silero-Einspruch (vad_silero)
   ```
 - `wake_rms_replay` (voll) — misst das Pegel-Gate gegen das Archiv: echte Rufe
   verloren (der Preis) gegen Fehltrigger geblockt (der Gewinn), mit

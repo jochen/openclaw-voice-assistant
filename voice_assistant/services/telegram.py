@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.request
 
 
@@ -27,6 +28,39 @@ def send(bot_token: str, chat_id: str, text: str, prefix: str = "",
         print(f"✅ Telegram: '{text[:60]}'")
     except Exception as e:
         print(f"⚠️ Telegram Fehler: {e}")
+
+
+def send_audio(bot_token: str, chat_id: str, ogg: bytes, caption: str = "") -> bool:
+    """Hörprobe als Audiodatei (nicht Sprachnachricht). Telegram hängt Sprachnachrichten
+    im Chat aneinander und spielt sie von selbst weiter — Audiodateien starten nur
+    auf Antippen (Jochen, 2026-11-14). Nimmt OGG/Opus und schickt MP3."""
+    if not bot_token or not chat_id:
+        return False
+    mp3 = subprocess.run(["ffmpeg", "-v", "error", "-i", "-", "-c:a", "libmp3lame",
+                          "-b:a", "64k", "-f", "mp3", "-"], input=ogg,
+                         capture_output=True, check=True, timeout=60).stdout
+    grenze = "----GastonAudioBoundary"
+    teile = []
+    for feld, wert in (("chat_id", chat_id), ("caption", caption[:1000])):
+        teile.append(f"--{grenze}\r\nContent-Disposition: form-data; name=\"{feld}\"\r\n\r\n"
+                     f"{wert}\r\n".encode())
+    teile.append(f"--{grenze}\r\nContent-Disposition: form-data; name=\"audio\"; "
+                 f"filename=\"probe.mp3\"\r\nContent-Type: audio/mpeg\r\n\r\n".encode()
+                 + mp3 + b"\r\n")
+    teile.append(f"--{grenze}--\r\n".encode())
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{bot_token}/sendAudio",
+        data=b"".join(teile),
+        headers={"Content-Type": f"multipart/form-data; boundary={grenze}"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=30).read()
+        print(f"✅ Telegram Audiodatei: '{caption[:60]}'")
+        return True
+    except Exception as e:
+        print(f"⚠️ Telegram Audiodatei Fehler: {e}")
+        return False
 
 
 def send_voice(bot_token: str, chat_id: str, ogg: bytes, caption: str = "") -> bool:

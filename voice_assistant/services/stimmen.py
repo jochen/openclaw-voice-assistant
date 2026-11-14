@@ -172,6 +172,9 @@ class StimmenLager:
 # die Auswahl gehört einmal per Hörseite abgenommen.
 _FEST_VERSUCHE = 5
 _RAND_S = 0.04          # bleibt vor und hinter der Sprache stehen
+_LAUF_MIN = 3           # 20-ms-Fenster am Stück ab, die als Sprache zählen
+_KLICK_MAX = 7          # ein Ton bis 140 ms am Anfang …
+_KLICK_PAUSE = 5        # … mit 100 ms Pause dahinter ist ein Knackser
 _CACHE_MAX = 400        # Dateien je Lager-Cache; älteste fliegen
 
 
@@ -189,17 +192,64 @@ def _erwartet_s(text: str) -> float:
 
 
 def _sprache_schneiden(pcm: np.ndarray, rate: int) -> np.ndarray:
-    """Stille vorn und hinten weg (Fenster 20 ms, Schwelle 5 % der Spitze)."""
+    """Stille vorn und hinten weg (Fenster 20 ms, Schwelle 5 % der Spitze).
+
+    Ein einzelnes lautes Fenster zählt nicht als Sprachbeginn: CosyVoice setzt
+    bei kurzen Sätzen gern einen Knackser oder einen kurzen Vorlauf vor die
+    Sprache. Erst ab ``_LAUF_MIN`` lauten Fenstern in Folge (60 ms) gilt der
+    Satz als angefangen (Jochen, 2026-11-14: „da ist sehr viel Vorlauf dabei
+    und eine Art Klackgeräusch“). Das Ende bleibt beim letzten lauten Fenster:
+    ein Verschlusslaut am Wortende ist ein kurzer Knall nach kleiner Lücke
+    (das „k“ von „Augenblick“, 20–40 ms) und fiele mit derselben Regel weg —
+    gemessen 2026-11-14 an 3 von 63 festen Sätzen im Cache."""
     f = max(1, rate // 50)
     n = len(pcm) // f
     if n == 0:
         return pcm
     rms = np.sqrt(np.mean(pcm[:n * f].astype(np.float64).reshape(n, f) ** 2, axis=1))
-    laut = np.where(rms > 0.05 * rms.max())[0] if rms.max() > 0 else np.array([], dtype=int)
-    if not len(laut):
+    if rms.max() <= 0:
         return pcm[:0]
+    laut = rms > 0.05 * rms.max()
+    laeufe: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        if not laut[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and laut[j]:
+            j += 1
+        laeufe.append((i, j))
+        i = j
+    # Ein kurzer Ton direkt am Anfang, gefolgt von einer Pause, ist ein
+    # Knackser oder ein Anlaut des Synthesizers, nicht der Satz. CosyVoice
+    # setzt so etwas gern vor „Ja?“ (Jochen, 2026-11-14).
+    while len(laeufe) > 1:
+        (a, b), (c, _) = laeufe[0], laeufe[1]
+        if b - a <= _KLICK_MAX and c - b >= _KLICK_PAUSE:
+            laeufe.pop(0)
+            continue
+        break
+    beginn = next((a for a, b in laeufe if b - a >= _LAUF_MIN), None)
+    if beginn is None:
+        return pcm[:0]
+    ende = laeufe[-1][1]
     rand = int(_RAND_S * rate)
-    return pcm[max(0, laut[0] * f - rand):min(len(pcm), (laut[-1] + 1) * f + rand)]
+    kern = pcm[max(0, beginn * f - rand):min(len(pcm), ende * f + rand)]
+    return _weich_an_den_raendern(kern, rate)
+
+
+def _weich_an_den_raendern(pcm: np.ndarray, rate: int, ms: float = 5.0) -> np.ndarray:
+    """5 ms Rampe am Anfang und Ende: der Schnitt trifft selten die Nullinie,
+    ein harter Sprung knackt sonst hörbar beim Abspielen (Jochen, 2026-11-14)."""
+    n = min(int(ms / 1000 * rate), len(pcm) // 2)
+    if n < 2:
+        return pcm
+    out = pcm.astype(np.float32).copy()
+    rampe = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    out[:n] *= rampe
+    out[-n:] *= rampe[::-1]
+    return np.clip(out, -32768, 32767).astype(pcm.dtype)
 
 
 def text_gehoert(mitschrift: str, ziel: str) -> bool:
