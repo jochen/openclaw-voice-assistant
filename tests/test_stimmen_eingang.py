@@ -197,24 +197,69 @@ class Ablauf(unittest.TestCase):
         self.assertIn("✅", self.texte[-1])
         self.assertEqual(len(self.tts.aufrufe), 2 * len(se.ABBRUCH_SAETZE))
 
-    def test_nach_dem_anlegen_kommen_ja_und_okay(self):
+    def test_nach_dem_anlegen_erst_ja_dann_okay(self):
         antwort = FakeAntwort()
         e = self._eingang(antwort=antwort)
         e._zerlegen(self._datei(), "opa", "")
         n = len(self.audios)
         e._pruefen("opa", e._auftrag("opa")["hoerproben"][0], None)
         caps = [c for _, c in self.audios[n:]]
-        self.assertEqual(len(caps), 6)
-        self.assertIn("„Ja?“ Fassung 1", caps[0])
-        self.assertIn("„Okay.“ Fassung 3", caps[-1])
-        self.assertIn("Ja 1, Okay 1", self.texte[-1])
-        # Wahl: Satz ohne Satzzeichen, Groß/klein egal
+        self.assertEqual(len(caps), 3)                     # nur „Ja?“, Okay erst nach der Wahl
+        self.assertTrue(all("„Ja?“" in c for c in caps))
+        self.assertIn("„Ja?“", self.texte[-1])
+        # Wahl: Satz ohne Satzzeichen, Groß/klein egal; danach kommt „Okay.“
         erg = e.kurz_waehlen("ja", 2)
+        e.faden.join(5)
         self.assertEqual(antwort.uebernommen, [("Ja?", "opa", "s0_f2.wav", "telegram")])
         self.assertIn("Fassung 2", erg["text"])
+        self.assertIn("Jetzt „Okay.“", erg["text"])
+        caps = [c for _, c in self.audios[n + 3:]]
+        self.assertEqual(len(caps), 3)
+        self.assertTrue(all("„Okay.“" in c for c in caps))
+        e.kurz_waehlen("Okay", 1)
+        # Runde zu Ende: eine neue Ja-Wahl schickt nichts mehr nach
+        m = len(self.audios)
+        erg = e.kurz_waehlen("Ja", 3)
+        self.assertNotIn("Jetzt", erg["text"])
+        self.assertEqual(len(self.audios), m)
         for falsch in (("Ja?", 4), ("Hallo", 1)):
             with self.assertRaises(ValueError):
                 e.kurz_waehlen(*falsch)
+
+    def test_hoerproben_enden_mit_pause(self):
+        e = self._eingang(antwort=FakeAntwort())
+        alt = se.ogg_opus
+        se.ogg_opus = lambda wav_bytes: wav_bytes          # WAV statt Opus, damit messbar
+        try:
+            e._zerlegen(self._datei(), "opa", "")
+            e._pruefen("opa", e._auftrag("opa")["hoerproben"][0], None)
+        finally:
+            se.ogg_opus = alt
+        fassung1 = next(o for o, c in self.audios if "„Ja?“ Fassung 1" in c)
+        with wave.open(io.BytesIO(fassung1)) as w:
+            pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+            rate = w.getframerate()
+        self.assertAlmostEqual(len(pcm) / rate, 0.4 + se.NACHPAUSE_S, places=2)
+        self.assertFalse(pcm[-int(se.NACHPAUSE_S * rate):].any())
+        with wave.open(os.path.join(e._dir("opa"), "kurz", "s0_f1.wav")) as w:
+            self.assertAlmostEqual(w.getnframes() / w.getframerate(), 0.4, places=2)  # gespeichert ohne
+
+    def test_angelegte_stimme_wird_nicht_ersetzt(self):
+        e = self._eingang()
+        e._zerlegen(self._datei(), "opa", "")
+        hp = e._auftrag("opa")["hoerproben"][0]
+        e._pruefen("opa", hp, None)
+        self.assertTrue(self.lager.hat("opa"))
+        with open(os.path.join(self.lager.ordner, "opa", "probe.wav"), "rb") as f:
+            vorher = f.read()
+        with self.assertRaises(ValueError):
+            e.waehlen(hp["nr"], "opa")
+        e._pruefen("opa", hp, "Ganz anderer Text.")       # falls es doch so weit kommt
+        self.assertIn("nicht ersetzt", self.texte[-1])
+        with open(os.path.join(self.lager.ordner, "opa", "probe.wav"), "rb") as f:
+            self.assertEqual(f.read(), vorher)
+        with open(os.path.join(self.lager.ordner, "opa", "probe.txt"), encoding="utf-8") as f:
+            self.assertNotEqual(f.read(), "Ganz anderer Text.")
 
     def test_kurz_anhoeren_fuer_vorhandene_stimme(self):
         e = self._eingang(antwort=FakeAntwort(n=2))
@@ -226,10 +271,22 @@ class Ablauf(unittest.TestCase):
         for d, inhalt in (("probe.wav", b"x"), ("probe.txt", "Hallo.")):
             with open(os.path.join(self.lager.ordner, "gaston", d), "wb" if isinstance(inhalt, bytes) else "w") as f:
                 f.write(inhalt)
-        e._kurz("gaston")                                  # was kurz_anhoeren im Thread tut
-        self.assertEqual(len(self.audios), 4)
-        e.kurz_waehlen("Okay", 2)
+        with self.assertRaises(ValueError):
+            e.kurz_anhoeren("gaston", "Hallo")
+        # nur „Okay.“ gewünscht: eine Runde aus diesem einen Satz
+        erg = e.kurz_anhoeren("gaston", "okay")
+        e.faden.join(5)
+        self.assertEqual(erg["satz"], "Okay.")
+        self.assertEqual(len(self.audios), 2)
+        erg = e.kurz_waehlen("Okay", 2)
         self.assertEqual(e.antwort.uebernommen[0][:3], ("Okay.", "gaston", "s1_f2.wav"))
+        self.assertNotIn("Jetzt", erg["text"])
+        # ohne Satz: ganze Runde, alte Fassungen sind weg
+        e.kurz_anhoeren("gaston")
+        e.faden.join(5)
+        self.assertEqual(len(self.audios), 4)
+        with self.assertRaises(ValueError):
+            e.kurz_waehlen("Okay", 1)                     # gehört nicht mehr zur Runde
 
     def test_ohne_feste_saetze_nicht_eingerichtet(self):
         with self.assertRaises(ValueError):

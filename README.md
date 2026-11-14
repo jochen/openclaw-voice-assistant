@@ -372,10 +372,13 @@ means silence, breathing or hiss); then up to five pieces arrive in the chat
 as voice messages, each the piece followed by a test sentence. Answer with a
 number; that piece runs through the truncation test (60 sentences, about
 four minutes) and only with 0 cut-offs it lands in the store, with its fixed
-phrases rendered. Right after that the short fixed phrases ("Ja?", "Okay.")
-arrive in up to three takes each; answer e.g. "Ja 2, Okay 1"
-(`voice_stimme_kurz_waehlen`; `voice_stimme_kurz_anhoeren` does it again for
-an existing voice). The STT check is blind on single words, so the ear
+phrases rendered. An existing voice is never replaced; another piece needs a
+new name. Right after that the short fixed phrases arrive in up to three takes
+as audio files, one phrase at a time: first "Ja?", answer e.g. "Ja 2", then
+"Okay." (`voice_stimme_kurz_waehlen`; `voice_stimme_kurz_anhoeren` does it
+again for an existing voice, both phrases or just one). Three takes of the same
+phrase compare well back to back, "Ja?" and "Okay." mixed do not; each take
+ends in a short silence. The STT check is blind on single words, so the ear
 decides, and no listening page is needed. Switching to the voice stays a
 separate step: for one person with `for_speaker`, for everyone with
 `fuer_alle` (persisted next to the store, wins over the profile's default).
@@ -1485,7 +1488,7 @@ The companion plugin in [`openclaw-plugin/`](openclaw-plugin/) registers the too
 | `voice_list_speakers()` / `voice_remove_speaker(name)` | manage known speakers |
 | `voice_list_voices()` / `voice_set_voice(…)` / `voice_set_speed(…)` | switch TTS voice / rate (per speaker via `for_speaker`, default for everyone via `fuer_alle`) |
 | `voice_stimme_einreichen(datei, name)` / `voice_stimme_waehlen(stueck)` | new voice from an audio file sent in the chat: listen to pieces, pick one, truncation test |
-| `voice_stimme_kurz_anhoeren(name?)` / `voice_stimme_kurz_waehlen(satz, fassung)` | takes of "Ja?"/"Okay." as voice messages, pick one by ear |
+| `voice_stimme_kurz_anhoeren(name?)` / `voice_stimme_kurz_waehlen(satz, fassung)` | takes of "Ja?", then "Okay." as audio files, pick one by ear |
 | `voice_analyze_last_output(…)` | re-analyse the assistant's own last spoken reply (text fidelity, timing, prosody) |
 | `voice_aussprache_setzen(wort, umschreibung)` / `_zeigen` / `_loeschen` | fix how a word is pronounced, at once ("Sauce is said *Sohße*"); see *Pronunciation list* |
 
