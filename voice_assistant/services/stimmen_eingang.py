@@ -321,6 +321,12 @@ class StimmenEingang:
 
     # --- intern ---
 
+    def _trenner(self, text: str) -> None:
+        """Kurze Textzeile nach jeder Sprachnachricht. Telegram spielt aufeinander
+        folgende Sprachnachrichten sonst automatisch nacheinander ab; eine
+        Textnachricht dazwischen bricht die Kette (Jochen, 2026-11-14)."""
+        self.melden(text)
+
     def _letzter_kurz(self) -> str:
         try:
             da = [n for n in os.listdir(self.ordner)
@@ -350,6 +356,7 @@ class StimmenEingang:
                 kurz[satz].append(pfad)
                 self.melden_audio(ogg_opus(_wav(pcm, rate)),
                                   f"„{satz}“ Fassung {j} ({len(pcm) / rate:.1f} s)")
+                self._trenner(f"▸ Fassung {j} ({j}/{len(fassungen)}) — antippen zum Anhören")
         with open(os.path.join(d, "kurz.json"), "w", encoding="utf-8") as f:
             json.dump(kurz, f, ensure_ascii=False, indent=1)
         if kurz:
@@ -473,6 +480,7 @@ class StimmenEingang:
                             "dann ein Testsatz damit.")
             self.melden_audio(ogg_opus(_wav(hoerprobe, prate)),
                               f"Stück {nr} ({info['bis_s'] - info['von_s']:.1f} s): „{info['text']}“")
+            self._trenner(f"▸ Stück {nr}/{len(bewertet[:HOERPROBEN_MAX])} — antippen zum Anhören")
         if not hoerproben:
             self._auftrag_schreiben(name, {"name": name, "hoerproben": []})
             self.melden(f"⚠️ Stimme {name}: kein brauchbares Stück gefunden ({len(kand)} Stücke, "
@@ -506,7 +514,9 @@ class StimmenEingang:
                         "vorzeitig ab. So taugt es nicht als Stimme — nimm ein anderes Stück.")
             return
         ziel = os.path.join(self.lager.ordner, name)
-        os.makedirs(ziel)
+        # Ein zweites Stück für eine schon angelegte Stimme ersetzt die Referenz;
+        # ohne exist_ok brach genau das mit FileExistsError ab (2026-11-14).
+        os.makedirs(ziel, exist_ok=True)
         for datei in ("probe.wav", "probe.txt"):
             shutil.copyfile(os.path.join(lager_dir, k, datei), os.path.join(ziel, datei))
         meta = {"beschreibung": auftrag.get("beschreibung") or f"eigene Stimme {name}",
