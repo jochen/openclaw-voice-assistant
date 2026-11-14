@@ -513,21 +513,24 @@ export default definePluginEntry({
       name: "voice_stimme_kurz_anhoeren",
       label: "Ja/Okay einer Stimme anhören",
       description:
-        "Rechnet die kurzen festen Sätze („Ja?“, „Okay.“) in einer Stimme je in bis zu drei Fassungen " +
-        "und schickt sie als nummerierte Sprachnachrichten in den Hauskanal. Nach dem Anlegen einer " +
-        "neuen Stimme passiert das von selbst; dieses Werkzeug nur, wenn der Nutzer die Fassungen einer " +
-        "vorhandenen Stimme hören oder neu wählen will. name optional (Default: die Standard-Stimme). " +
-        "Die Sprachnachrichten nicht selbst schicken.",
+        "Rechnet einen der kurzen festen Sätze („Ja?“ oder „Okay.“) in einer Stimme in bis zu drei " +
+        "Fassungen und schickt sie als nummerierte Audiodateien in den Hauskanal. Immer nur ein Satz " +
+        "zur Zeit: ohne satz kommt der erste noch offene („Ja?“), den nächsten fragt der Dienst nach " +
+        "der Wahl von selbst ab. Nach dem Anlegen einer neuen Stimme passiert das von selbst; dieses " +
+        "Werkzeug nur, wenn der Nutzer die Fassungen einer vorhandenen Stimme hören oder neu wählen " +
+        "will. name optional (Default: die Standard-Stimme). Die Audios nicht selbst schicken.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           name: { type: "string", description: "Optional: Name der Stimme aus voice_list_voices." },
+          satz: { type: "string", description: "Optional: „Ja?“ oder „Okay.“. Ohne Angabe der erste offene Satz." },
         },
       },
       async execute(_toolCallId, params) {
         const payload = {};
         if (params?.name) payload.name = String(params.name).trim();
+        if (params?.satz) payload.satz = String(params.satz).trim();
         return stimmenAuftrag("/stimmen/kurz_anhoeren", payload);
       },
     });
@@ -536,9 +539,9 @@ export default definePluginEntry({
       name: "voice_stimme_kurz_waehlen",
       label: "Fassung von Ja/Okay wählen",
       description:
-        "Der Nutzer hat die Fassungen von „Ja?“/„Okay.“ gehört und nennt eine Nummer („Ja 2, Okay 1“). " +
+        "„Ja?“/„Okay.“ gehört und nennt eine Nummer („Ja 2“). " +
         "Je Satz ein Aufruf: satz ist der Satz („Ja?“ oder „Okay.“), fassung die Nummer. " +
-        "Wirkt sofort. name nur, wenn mehrere Stimmen offen sind.",
+        "Wirkt sofort; den nächsten Satz fragt der Dienst danach selbst ab. name nur, wenn mehrere Stimmen offen sind.",
       parameters: {
         type: "object",
         additionalProperties: false,

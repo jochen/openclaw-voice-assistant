@@ -157,7 +157,8 @@ class _Handler(BaseHTTPRequestHandler):
                 erg = _stimmen_eingang.waehlen(int(body.get("stueck", 0)), body.get("name") or None,
                                                body.get("text") or None)
             elif was == "kurz_anhoeren":
-                erg = _stimmen_eingang.kurz_anhoeren(body.get("name") or None)
+                erg = _stimmen_eingang.kurz_anhoeren(body.get("name") or None,
+                                                     body.get("satz") or None)
             else:
                 erg = _stimmen_eingang.kurz_waehlen(str(body.get("satz", "")), int(body.get("fassung", 0)),
                                                     body.get("name") or None)
