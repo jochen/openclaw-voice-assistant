@@ -173,6 +173,8 @@ class StimmenLager:
 _FEST_VERSUCHE = 5
 _RAND_S = 0.04          # bleibt vor und hinter der Sprache stehen
 _LAUF_MIN = 3           # 20-ms-Fenster am Stück ab, die als Sprache zählen
+_KLICK_MAX = 7          # ein Ton bis 140 ms am Anfang …
+_KLICK_PAUSE = 5        # … mit 100 ms Pause dahinter ist ein Knackser
 _CACHE_MAX = 400        # Dateien je Lager-Cache; älteste fliegen
 
 
@@ -206,7 +208,7 @@ def _sprache_schneiden(pcm: np.ndarray, rate: int) -> np.ndarray:
     if rms.max() <= 0:
         return pcm[:0]
     laut = rms > 0.05 * rms.max()
-    beginn = ende = None
+    laeufe: list[tuple[int, int]] = []
     i = 0
     while i < n:
         if not laut[i]:
@@ -215,11 +217,24 @@ def _sprache_schneiden(pcm: np.ndarray, rate: int) -> np.ndarray:
         j = i
         while j < n and laut[j]:
             j += 1
-        if j - i >= _LAUF_MIN:
-            if beginn is None:
-                beginn = i
-            ende = j
+        laeufe.append((i, j))
         i = j
+    # Ein kurzer Ton direkt am Anfang, gefolgt von einer Pause, ist ein
+    # Knackser oder ein Anlaut des Synthesizers, nicht der Satz. CosyVoice
+    # setzt so etwas gern vor „Ja?“ (Jochen, 2026-11-14).
+    while len(laeufe) > 1:
+        (a, b), (c, _) = laeufe[0], laeufe[1]
+        if b - a <= _KLICK_MAX and c - b >= _KLICK_PAUSE:
+            laeufe.pop(0)
+            continue
+        break
+    beginn = ende = None
+    for a, b in laeufe:
+        if b - a < _LAUF_MIN:
+            continue
+        if beginn is None:
+            beginn = a
+        ende = b
     if beginn is None:
         return pcm[:0]
     rand = int(_RAND_S * rate)
