@@ -227,6 +227,25 @@ class FesteSaetzeTest(_Basis):
         kern = _sprache_schneiden(pcm, 24000)
         self.assertAlmostEqual(len(kern) / 24000, 0.4 + 2 * 0.04, delta=0.03)
 
+    def test_knackser_vorn_weg_schlussknall_hinten_bleibt(self):
+        import numpy as np
+        r = 24000
+        ton = lambda sek: np.frombuffer(_ton(sek, r), np.int16)
+        still = lambda sek: np.zeros(int(sek * r), np.int16)
+        # Knackser 40 ms, 0,5 s Rauschpause, Satz 0,4 s, 60 ms Verschluss, Knall 30 ms
+        pcm = np.concatenate([still(0.2), ton(0.04), still(0.5), ton(0.4), still(0.06), ton(0.03),
+                              still(0.3)])
+        kern = _sprache_schneiden(pcm, r)
+        self.assertAlmostEqual(len(kern) / r, 0.04 + 0.4 + 0.06 + 0.03 + 0.04, delta=0.03)
+        self.assertFalse(kern[-int(0.005 * r):].any() and abs(int(kern[-1])) > 200)  # Rampe am Ende
+
+    def test_kurzer_satz_ohne_knackser_bleibt_ganz(self):
+        import numpy as np
+        r = 24000
+        pcm = np.concatenate([np.zeros(r // 5, np.int16), np.frombuffer(_ton(0.3, r), np.int16),
+                              np.zeros(r // 5, np.int16)])
+        self.assertAlmostEqual(len(_sprache_schneiden(pcm, r)) / r, 0.3 + 2 * 0.04, delta=0.03)
+
     def test_fester_satz_aus_mehreren_versuchen_geschnitten_und_gespeichert(self):
         pfad = self.t.feste_datei("Ja?")
         self.assertTrue(pfad.startswith(self.cache))

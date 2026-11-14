@@ -197,9 +197,11 @@ def _sprache_schneiden(pcm: np.ndarray, rate: int) -> np.ndarray:
     Ein einzelnes lautes Fenster zählt nicht als Sprachbeginn: CosyVoice setzt
     bei kurzen Sätzen gern einen Knackser oder einen kurzen Vorlauf vor die
     Sprache. Erst ab ``_LAUF_MIN`` lauten Fenstern in Folge (60 ms) gilt der
-    Satz als angefangen, entsprechend endet er beim letzten solchen Lauf
-    (Jochen, 2026-11-14: „da ist sehr viel Vorlauf dabei und eine Art
-    Klackgeräusch“)."""
+    Satz als angefangen (Jochen, 2026-11-14: „da ist sehr viel Vorlauf dabei
+    und eine Art Klackgeräusch“). Das Ende bleibt beim letzten lauten Fenster:
+    ein Verschlusslaut am Wortende ist ein kurzer Knall nach kleiner Lücke
+    (das „k“ von „Augenblick“, 20–40 ms) und fiele mit derselben Regel weg —
+    gemessen 2026-11-14 an 3 von 63 festen Sätzen im Cache."""
     f = max(1, rate // 50)
     n = len(pcm) // f
     if n == 0:
@@ -228,15 +230,10 @@ def _sprache_schneiden(pcm: np.ndarray, rate: int) -> np.ndarray:
             laeufe.pop(0)
             continue
         break
-    beginn = ende = None
-    for a, b in laeufe:
-        if b - a < _LAUF_MIN:
-            continue
-        if beginn is None:
-            beginn = a
-        ende = b
+    beginn = next((a for a, b in laeufe if b - a >= _LAUF_MIN), None)
     if beginn is None:
         return pcm[:0]
+    ende = laeufe[-1][1]
     rand = int(_RAND_S * rate)
     kern = pcm[max(0, beginn * f - rand):min(len(pcm), ende * f + rand)]
     return _weich_an_den_raendern(kern, rate)
