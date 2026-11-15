@@ -305,6 +305,19 @@ class MusikDucker:
             return None
         return {str(r.get("room")) for r in raeume if r.get("state") in _SPIELT}
 
+    def raum_zustand(self, raum: str, timeout: float | None = None) -> str | None:
+        """Zustand eines Raums laut Bridge ("play", "pause", "stop", ...);
+        "" fuer einen unbekannten Raum, None, wenn die Bridge nicht antwortet."""
+        try:
+            raeume = self._get(f"{self._url}/api/v1/rooms", timeout or self._http_timeout)
+        except Exception as exc:
+            log.debug("Musik-Raeume nicht lesbar: %s", exc)
+            return None
+        for r in raeume:
+            if str(r.get("room")) == raum:
+                return str(r.get("state") or "")
+        return ""
+
     def musik_gestartet(self) -> bool:
         """Laeuft jetzt Musik in einem Raum, in dem beim Ruf keine lief?
 

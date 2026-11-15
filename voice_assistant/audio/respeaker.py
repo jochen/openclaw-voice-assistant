@@ -544,6 +544,16 @@ class RespeakerClient:
     def stop_playback(self) -> None:
         self._player_command(command=aioesphomeapi.MediaPlayerCommand.STOP)
 
+    def musik_url(self, url: str) -> bool:
+        """Spielt url als Musik (ohne announcement): bei Ava der Medien-Player,
+        nicht der Sprach-Player (audio/satellit_musik.py)."""
+        return self._player_command(media_url=url)
+
+    def player_zustand(self):
+        """Letzter gemeldeter Zustand des Media-Players (None = unbekannt)."""
+        with self._player_cv:
+            return self._player_state
+
     # Zustaende, die "der Player gibt gerade Ton aus" bedeuten.
     #
     # Gemessen am 2026-09-20 gegen die echte Hardware: eine Ansage ueber
@@ -1151,7 +1161,10 @@ class RespeakerSink:
             stroeme = list(self._stroeme.values())
         for strom in stroeme:
             strom.abbrechen()
-        self._client.stop_playback()
+        # Am Satelliten nicht: Ansagen laufen dort ueber die Announce-API (Avas
+        # Sprach-Player), ein Media-STOP traefe nur die Musik (satellit_musik).
+        if not self._cfg.satellit:
+            self._client.stop_playback()
 
     def resume(self) -> None:
         """Abbruch-Marke loeschen — der naechste Turn darf wieder sprechen."""

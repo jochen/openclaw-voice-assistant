@@ -76,6 +76,10 @@ class SatellitConfig:
     # Raum der Musik-Bridge, der zum Player auf diesem Geraet gehoert (z. B.
     # Squeezelite auf dem Handy). Leer = kein Musik-Hinweis an den Brain.
     musik_raum: str = ""
+    # Stream dieses Raums fuer den Medien-Player des Geraets (Ava). Gesetzt:
+    # Gaston startet/stoppt ihn dort nach dem Raumzustand der Bridge
+    # (audio/satellit_musik.py). Leer = Musik kommt anders aufs Geraet.
+    musik_stream: str = ""
 
 
 # Geht seit 2026-10-24 als "instructions" an /v1/responses (openclaw_instructions),
@@ -1134,6 +1138,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
             http_port=int(sat_raw.get("http_port", 18801 + i)),
             mikro_zu_ton=bool(sat_raw.get("mikro_zu_ton", True)),
             musik_raum=str(sat_raw.get("musik_raum", "") or ""),
+            musik_stream=str(sat_raw.get("musik_stream", "") or ""),
         ))
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---

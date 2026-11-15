@@ -142,6 +142,7 @@ voice_assistant/
     alsa.py              PyAudio + aplay
     respeaker.py         ESPHome Native API (ReSpeaker; mit satellit=True auch Ava)
     satellit.py          Handy-Satelliten: Turn gehört dem Gerät, das ihn auslöst
+    satellit_musik.py    Musik am Handy: Raum-Stream auf Avas Medien-Player
   wakeword/
     base.py              WakewordEngine Protocol
     openwakeword_engine.py
@@ -547,7 +548,20 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
 - **Musik aufs Handy (`satelliten[].musik_raum`, seit 2026-11-15):** „spiel die
   Playlist Baden“ vom Handy lief auf dem Kachelofen. Mit `musik_raum` hängt
   `hinweis_fuer` den `locale.satellit_musik_hinweis` an (Raum der Bridge, deren
-  Player Squeezelite auf dem Handy ist). Den Raum legt die Bridge auf pi51 an.
+  Player auf dem Handy spielt). Den Raum legt die Bridge auf pi51 an.
+- **Musik über Avas Medien-Player (`satelliten[].musik_stream`, seit
+  2026-11-15):** Squeezelite auf dem Handy schaltete beim Pausieren die
+  Medienlautstärke stumm und Avas Sprache gleich mit (per adb belegt). Jetzt
+  spielt auf pi51 ein Player ohne Ton für `musik_raum`, sein Ton kommt als
+  Dauer-Stream, der bei Pause Stille liefert. `audio/satellit_musik.py` fragt
+  alle 2 s den Raumzustand der Bridge ab und gibt Ava die Stream-URL, wenn
+  der Raum spielt; STOP erst 30 s nach Stopp bzw. 10 min nach Pause (die
+  Pause ist auch das Dämpfen). **Drei Regler** (Jochen, nach einem
+  Missverständnis): Echo/BT für alles, Avas volume fest auf voll (ein Wert für
+  Sprache UND Musik, nie anfassen), Musikserver nur für die Musik — das
+  Verhältnis Musik:Sprache ist allein dessen Lautstärke. Ein Barge-in schickt
+  dem Satelliten deshalb kein Media-STOP (`RespeakerSink.stop`). Tests:
+  `tests/test_satellit_musik.py`.
 - **Unklar am Handy → Brain ohne Rückfrage (seit 2026-11-15):** „Mach bitte
   etwas lauter“ (Musik am Handy) wurde zur Aktuator-Rückfrage „was ich
   schalten soll“. Jetzt geht ein unklarer Schaltbefehl dort mit

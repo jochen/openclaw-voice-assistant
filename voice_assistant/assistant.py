@@ -646,6 +646,24 @@ def _make_audio(profile: Profile):
     return mit_satelliten(profile.satelliten, source, sink)
 
 
+def _start_satellit_musik(profile: Profile, musik_ducker) -> None:
+    """Je Satellit mit musik_raum + musik_stream: Gaston gibt dessen
+    Medien-Player den Raum-Stream (audio/satellit_musik.py). Braucht die
+    Bridge aus musik_ducking fuer den Raumzustand."""
+    from voice_assistant.audio.respeaker import get_client
+    from voice_assistant.audio.satellit import _respeaker_cfg
+    from voice_assistant.audio.satellit_musik import SatellitMusik
+    for sat in profile.satelliten:
+        if not (sat.musik_raum and sat.musik_stream):
+            continue
+        if musik_ducker is None:
+            print(f"⚠️  Satellit {sat.name}: musik_stream ohne musik_ducking (Bridge) — aus")
+            continue
+        SatellitMusik(sat.name, get_client(_respeaker_cfg(sat)), sat.musik_raum,
+                      sat.musik_stream, musik_ducker.raum_zustand).start()
+        print(f"📱 Satellit {sat.name}: Musik aus Raum {sat.musik_raum} über Avas Medien-Player")
+
+
 def _make_wakeword(profile: Profile, wakewords: list | None = None):
     """Wakeword-Engine fuer ein Profil.
 
@@ -1374,6 +1392,7 @@ def run() -> None:
     # --- Küchentimer (Zustand hier, Anzeige/Klingeln auf Senken) ---
     kuechentimer = _start_kuechentimer(profile, audio_sink)
     musik_ducker = _start_musik_ducking(profile)
+    _start_satellit_musik(profile, musik_ducker)
     mikro = _start_mikro(profile)
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
