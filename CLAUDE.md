@@ -531,6 +531,15 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   im eigenen Turn (Aufnahme-Ende, Follow-up ohne Sprache) spielt ein eigener
   Faden unter `tts_lock` einen „umgekehrten Plop“ aufs Handy (70 ms, 1400 → 300 Hz). Noch nicht im Bad
   gehört; ob der Follow-up-Beep dort ankommt, ist ebenfalls ungeprüft.
+- **Sätze als Dateien, vorausgerechnet (seit 2026-11-15).** Ava spielt keinen
+  Strom: eine WAV mit Platzhalter-Länge meldet nie ihr Ende (auch nicht nach
+  STOP), MP3/FLAC ohne Länge starten erst nach 5–7 s, nur eine WAV mit
+  richtiger Länge spielt beim Laden (~2 s Überhang). Deshalb bleibt es bei
+  Dateien, aber `ReplyStreamSession` rechnet auf dem Datei-Weg den nächsten
+  Satz, während der vorige spielt (Rechen- und Spiel-Faden). Die Bestätigung
+  (`speak()`, `ganz=True`) hält `tts_lock` vom ersten Satz bis `end()`;
+  satzweise freigegeben lief sie im Wechsel mit der Antwort und ließ den Ring
+  auf „Denken“ stehen.
 
 Offen: Sprecher-Verifikation mit Handy-Mikro messen (Schwelle nur gegen den
 ReSpeaker gemessen; der erste Live-Turn erkannte jochen). Kein Barge-in,

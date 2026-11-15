@@ -17,7 +17,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import queue
 import wave
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable
 
 from voice_assistant.audio.strom import RATE as STROM_RATE, zu_48k_stereo
@@ -764,15 +766,22 @@ class ReplySpeaker:
         return [k for k in kandidaten if k.state.tts_ok()]
 
     def _play_speaches_sentence(self, sentence: str, recorder: ReplyRecorder | None = None) -> bool:
-        # Datei-Weg (Satelliten, Senke ohne Strom): erst der Antwort-Dienst,
-        # wenn er dran ist, dann speaches — dieselbe Reihenfolge wie im Strom.
-        audio_data = None
+        audio_data = self._synth_datei(sentence)
+        if not audio_data:
+            return False
+        return self._spiele_datei_bytes(sentence, audio_data, recorder)
+
+    def _synth_datei(self, sentence: str) -> bytes | None:
+        """Datei-Weg (Satelliten, Senke ohne Strom): erst der Antwort-Dienst,
+        wenn er dran ist, dann speaches — dieselbe Reihenfolge wie im Strom."""
         for dienst in self.strom_kandidaten():
             audio_data = dienst.synth(sentence)
             if audio_data:
-                break
-        if not audio_data:
-            return False
+                return audio_data
+        return None
+
+    def _spiele_datei_bytes(self, sentence: str, audio_data: bytes,
+                            recorder: ReplyRecorder | None = None) -> bool:
         if recorder:
             recorder.add_wav_bytes(sentence, audio_data)
         tmp_wav: str | None = None
@@ -918,6 +927,14 @@ class ReplyStreamSession:
         # Satz einen neuen.
         self._strom = None
         self._strom_ende: threading.Event | None = None
+        # Datei-Weg mit Vorausrechnen (2026-11-15, Ava): feed() stellt den
+        # Satz nur ein; ein Rechen-Faden synthetisiert der Reihe nach, ein
+        # Spiel-Faden spielt der Reihe nach. So rechnet der naechste Satz,
+        # waehrend der vorige am Handy laeuft (vorher je Satz Rechenzeit plus
+        # Abholen als Pause, ~3 s vor einem 6-s-Satz). end() wartet alles ab.
+        self._rechner: ThreadPoolExecutor | None = None
+        self._spiel_q: "queue.Queue[tuple[str, Future] | None]" = queue.Queue()
+        self._spieler: threading.Thread | None = None
 
     def _strom_abwarten(self) -> None:
         if self._strom_ende is not None:
@@ -1025,16 +1042,40 @@ class ReplyStreamSession:
             finally:
                 strom.beenden()
             return
-        if self.ganz:
-            if not self._lock_gehalten:
-                tts_lock.acquire()
-                self._lock_gehalten = True
-            self._satz_datei(clean)
-            return
-        with tts_lock:
-            self._satz_datei(clean)
+        if self.ganz and not self._lock_gehalten:
+            tts_lock.acquire()
+            self._lock_gehalten = True
+        if self._rechner is None:
+            self._rechner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts-voraus")
+            self._spieler = threading.Thread(target=self._spielen, daemon=True, name="tts-datei")
+            self._spieler.start()
+        self._spiel_q.put((clean, self._rechner.submit(self._rechnen, clean)))
 
-    def _satz_datei(self, clean: str) -> None:
+    def _rechnen(self, clean: str) -> bytes | None:
+        if turn_stopped(self.turn) or not self.sp.speaches.state.tts_ok():
+            return None
+        try:
+            return self.sp._synth_datei(clean)
+        except Exception as e:
+            print(f"⚠️  TTS (Datei) fehlgeschlagen: {e}")
+            return None
+
+    def _spielen(self) -> None:
+        while True:
+            eintrag = self._spiel_q.get()
+            if eintrag is None:
+                return
+            clean, fut = eintrag
+            try:
+                if self.ganz:
+                    self._satz_datei(clean, fut)   # Lock haelt feed()/end()
+                else:
+                    with tts_lock:
+                        self._satz_datei(clean, fut)
+            except Exception as e:
+                print(f"⚠️  Satz-Wiedergabe fehlgeschlagen: {e}")
+
+    def _satz_datei(self, clean: str, fut: Future) -> None:
         """Ein Satz als Datei; der Aufrufer haelt tts_lock."""
         from voice_assistant.services.leds import (
             LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION,
@@ -1051,22 +1092,13 @@ class ReplyStreamSession:
             )
             self._led_set = True
         print(f"🔊 Sentence (stream): '{clean}'")
-        played = False
-        if self.sp.speaches.state.tts_ok():
-            if self.restore_leds:
-                self.sp.leds.set_phase(LED_AUDIO_OUT)
-            ok = self.sp._play_speaches_sentence(clean, recorder=self.rec)
-            if not ok:
-                print("⚠️  Speaches failed (stream) → Piper fallback")
-                tmp_wav = piper_synth(clean)
-                if tmp_wav:
-                    self.rec.add_file(clean, tmp_wav)
-                    self.sp.play_wav(tmp_wav)
-                    os.unlink(tmp_wav)
-            played = True
-        if not played:
-            if self.restore_leds:
-                self.sp.leds.set_phase(LED_AUDIO_OUT)
+        audio_data = fut.result()        # meist schon fertig gerechnet
+        if turn_stopped(self.turn):
+            return
+        if self.restore_leds:
+            self.sp.leds.set_phase(LED_AUDIO_OUT)
+        if not (audio_data and self.sp._spiele_datei_bytes(clean, audio_data, self.rec)):
+            print("⚠️  TTS (Datei) ausgefallen → Piper fallback")
             tmp_wav = piper_synth(clean)
             if tmp_wav:
                 self.rec.add_file(clean, tmp_wav)
@@ -1080,6 +1112,11 @@ class ReplyStreamSession:
         if self._strom is not None:
             self._strom.schliessen()
         self._strom_abwarten()
+        if self._spieler is not None:
+            self._spiel_q.put(None)
+            self._spieler.join()
+            self._rechner.shutdown(wait=True)
+            self._spieler = self._rechner = None
         if self._lock_gehalten:
             self._lock_gehalten = False
             tts_lock.release()
