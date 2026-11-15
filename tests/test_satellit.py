@@ -13,8 +13,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from voice_assistant.audio import satellit as satellit_mod  # noqa: E402
 from voice_assistant.audio.satellit import SatellitQuelle, SatellitSenke  # noqa: E402
-from voice_assistant.config import FOLLOWUP_BEEP_PATH  # noqa: E402
+from voice_assistant.config import FOLLOWUP_BEEP_PATH, MIKRO_ZU_BEEP_PATH  # noqa: E402
 from voice_assistant.state import (  # noqa: E402
     STATE_FOLLOWUP,
     STATE_LISTENING,
@@ -23,6 +24,18 @@ from voice_assistant.state import (  # noqa: E402
     STATE_RECORDING,
     STATE_WAITING,
 )
+
+
+_ORIG_VORLAUF = satellit_mod._mit_vorlauf
+
+
+def setUpModule():
+    # Die Weiche-Tests pruefen Pfade; die Stille davor prueft VorlaufTest.
+    satellit_mod._mit_vorlauf = lambda path: None
+
+
+def tearDownModule():
+    satellit_mod._mit_vorlauf = _ORIG_VORLAUF
 
 
 class FakeHaupt:
@@ -169,6 +182,114 @@ class VerwaisteSessionTest(unittest.TestCase):
         handy.oeffnen()
         _schritt(quelle, STATE_WAITING)
         self.assertEqual(handy.beendet, 2)
+
+
+class MikroZuTonTest(unittest.TestCase):
+    """Ava hat keinen Ring: das Schliessen des Mikrofons muss hoerbar sein."""
+
+    def _bauen(self):
+        haupt, handy = FakeHaupt(), FakeClient()
+        zu: list[str] = []
+        quelle = SatellitQuelle(haupt, {"jochen": handy}, zu.append)
+        return handy, quelle, zu
+
+    def test_ende_der_aufnahme_meldet_mikro_zu(self):
+        handy, quelle, zu = self._bauen()
+        handy.oeffnen()
+        _schritt(quelle, STATE_LISTENING)
+        _schritt(quelle, STATE_RECORDING)
+        self.assertEqual(zu, [])
+        _schritt(quelle, STATE_PROCESSING)
+        self.assertEqual(zu, ["jochen"])
+        _schritt(quelle, STATE_WAITING)
+        self.assertEqual(zu, ["jochen"], "nur einmal je Schliessen")
+
+    def test_followup_ohne_sprache_meldet_mikro_zu(self):
+        handy, quelle, zu = self._bauen()
+        handy.oeffnen()
+        _schritt(quelle, STATE_LISTENING)
+        _schritt(quelle, STATE_RECORDING)
+        _schritt(quelle, STATE_PROCESSING)
+        _schritt(quelle, STATE_PAUSE)
+        handy.oeffnen("")
+        _schritt(quelle, STATE_FOLLOWUP)
+        _schritt(quelle, STATE_RECORDING)     # Follow-up -> Aufnahme: bleibt offen
+        self.assertEqual(zu, ["jochen"])
+        _schritt(quelle, STATE_PAUSE)          # 10 s ohne Sprache
+        self.assertEqual(zu, ["jochen", "jochen"])
+
+    def test_ruf_waehrend_eines_haupt_turns_ohne_ton(self):
+        handy, quelle, zu = self._bauen()
+        _schritt(quelle, STATE_LISTENING)
+        _schritt(quelle, STATE_RECORDING)
+        handy.oeffnen()
+        _schritt(quelle, STATE_RECORDING)
+        _schritt(quelle, STATE_PROCESSING)
+        self.assertEqual(handy.beendet, 1)
+        self.assertEqual(zu, [])
+
+    def test_ton_spielt_aufs_geraet_und_nur_wenn_eingeschaltet(self):
+        senke = FakeSenke()
+        mikro_zu = satellit_mod._mikro_zu_ton({"jochen": senke, "aus": FakeSenke()}, {"jochen"})
+        mikro_zu("jochen")
+        mikro_zu("aus")
+        for t in [t for t in __import__("threading").enumerate() if t.name.startswith("mikro-zu-")]:
+            t.join(2)
+        self.assertEqual(senke.gespielt, [(MIKRO_ZU_BEEP_PATH, False)])
+
+
+class VorlaufTest(unittest.TestCase):
+    """Kurze Klaenge bekommen Stille davor (Bluetooth verschluckt den Anfang)."""
+
+    def _wav(self, sekunden, rate=16000):
+        import tempfile
+        import wave
+        fd, p = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        with wave.open(p, "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(rate)
+            wf.writeframes(np.full(int(rate * sekunden), 1000, dtype=np.int16).tobytes())
+        self.addCleanup(os.unlink, p)
+        return p
+
+    def test_kurzer_klang_bekommt_stille_davor(self):
+        import wave
+        kopie = _ORIG_VORLAUF(self._wav(0.07))
+        self.assertIsNotNone(kopie)
+        self.addCleanup(os.unlink, kopie)
+        with wave.open(kopie) as wf:
+            x = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+        vorlauf = int(16000 * satellit_mod._VORLAUF_S)
+        self.assertEqual(len(x), vorlauf + int(16000 * 0.07))
+        self.assertFalse(x[:vorlauf].any())
+        self.assertTrue((x[vorlauf:] == 1000).all())
+
+    def test_langer_satz_bleibt_wie_er_ist(self):
+        self.assertIsNone(_ORIG_VORLAUF(self._wav(2.0)))
+
+    def test_kopie_wird_nach_dem_abspielen_geloescht(self):
+        satellit_mod._mit_vorlauf = _ORIG_VORLAUF
+        self.addCleanup(setattr, satellit_mod, "_mit_vorlauf", lambda path: None)
+        senke = FakeSenke()
+        satellit_mod._spielen(senke, self._wav(0.1))
+        (pfad, _), = senke.gespielt
+        self.assertIn("vorlauf_", pfad)
+        self.assertFalse(os.path.exists(pfad))
+
+
+class HinweisTest(unittest.TestCase):
+    def test_ohne_musik_raum_nur_der_geraete_hinweis(self):
+        from voice_assistant.config import LocaleConfig, SatellitConfig
+        h = satellit_mod.hinweis_fuer("jochen", [SatellitConfig("jochen", "h")], LocaleConfig())
+        self.assertIn('Handy "jochen"', h)
+        self.assertNotIn("Musik", h)
+
+    def test_musik_raum_kommt_in_den_hinweis(self):
+        from voice_assistant.config import LocaleConfig, SatellitConfig
+        sat = SatellitConfig("jochen", "h", musik_raum="handy_jochen")
+        h = satellit_mod.hinweis_fuer("jochen", [sat], LocaleConfig())
+        self.assertIn('Handy "jochen"', h)
+        self.assertIn('Raum "handy_jochen"', h)
 
 
 class AnsageGehtDorthinTest(unittest.TestCase):

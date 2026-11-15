@@ -69,6 +69,17 @@ class SatellitConfig:
     encryption_key: str = ""
     volume: float = 1.0
     http_port: int = 18801
+    # Kurzer fallender Ton, wenn das Mikrofon des Geraets zugeht (Ende der
+    # Aufnahme, Follow-up ohne Sprache). Ava hat keinen Ring; ohne Ton hoert
+    # man nur das Oeffnen (ihr Wakeword-Pling), nie das Schliessen.
+    mikro_zu_ton: bool = True
+    # Raum der Musik-Bridge, der zum Player auf diesem Geraet gehoert (z. B.
+    # Squeezelite auf dem Handy). Leer = kein Musik-Hinweis an den Brain.
+    musik_raum: str = ""
+    # Stream dieses Raums fuer den Medien-Player des Geraets (Ava). Gesetzt:
+    # Gaston startet/stoppt ihn dort nach dem Raumzustand der Bridge
+    # (audio/satellit_musik.py). Leer = Musik kommt anders aufs Geraet.
+    musik_stream: str = ""
 
 
 # Geht seit 2026-10-24 als "instructions" an /v1/responses (openclaw_instructions),
@@ -166,6 +177,15 @@ _DEFAULT_UNKLAR_HINWEIS = (
     "sonst frag kurz nach.]"
 )
 
+# Am Handy-Satelliten geht ein unklarer Schaltbefehl ohne Rückfrage an den
+# Brain (Jochen 2026-11-15): „Mach bitte etwas lauter“ meinte die Musik auf
+# dem Handy, die Rückfrage „was ich schalten soll“ führte ins Leere.
+_DEFAULT_SATELLIT_UNKLAR_HINWEIS = (
+    "[Hinweis zur Aufnahme: Der schnelle Schaltweg konnte diesen Satz nicht "
+    "sicher zuordnen; geschaltet wurde nichts. Grund: {grund}. Entscheide "
+    "selbst, was gemeint ist, und führe es aus; sonst frag kurz nach.]"
+)
+
 # Rollo-Befehl ohne Ziel, aber mit passender Gewohnheit
 # (services/gewohnheiten.py): statt der Rückfrage des Aktuators schaltet der
 # Brain die gewohnte Gruppe und sagt sie an (Jochen 2026-10-31). Der letzte
@@ -190,6 +210,12 @@ _DEFAULT_SATELLIT_HINWEIS = (
     "[Diese Spracheingabe kam über das Handy \"{name}\", das persönliche Gerät "
     "von {name}, nicht über das feste Mikrofon im Raum.]"
 )
+# Nur mit satelliten[].musik_raum. Anlass 2026-11-15: "spiel mir die Playlist
+# Baden" vom Handy lief auf dem Kachelofen, dem Standard-Raum der Bridge.
+_DEFAULT_SATELLIT_MUSIK_HINWEIS = (
+    "[Musik zu dieser Eingabe gehört aufs Handy selbst: Raum \"{raum}\" der "
+    "Musik-Werkzeuge, solange kein anderer Raum genannt wird.]"
+)
 
 
 @dataclass
@@ -205,8 +231,10 @@ class LocaleConfig:
     openclaw_voice_erinnerung: str = _DEFAULT_VOICE_ERINNERUNG
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
+    satellit_unklar_hinweis: str = _DEFAULT_SATELLIT_UNKLAR_HINWEIS
     gewohnheit_hinweis: str = _DEFAULT_GEWOHNHEIT_HINWEIS
     satellit_hinweis: str = _DEFAULT_SATELLIT_HINWEIS
+    satellit_musik_hinweis: str = _DEFAULT_SATELLIT_MUSIK_HINWEIS
     thinking_phrases: list = field(default_factory=lambda: [
         "Einen Moment bitte.",
         "Ich schaue kurz nach.",
@@ -219,6 +247,9 @@ class LocaleConfig:
         # replace statt format: Transkripte dürfen geschweifte Klammern enthalten
         return (self.unklar_hinweis.replace("{erst}", erst or "")
                 .replace("{grund}", grund or "unbekannt"))
+
+    def satellit_unklar_hinweis_fuer(self, grund: str | None) -> str:
+        return self.satellit_unklar_hinweis.replace("{grund}", grund or "unbekannt")
 
     def gewohnheit_hinweis_fuer(self, g, name: str) -> str:
         werte = {"name": name, "gruppe": g.gruppe, "treffer": g.treffer,
@@ -1105,6 +1136,9 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
             encryption_key=str(sat_raw.get("encryption_key", "") or ""),
             volume=float(sat_raw.get("volume", 1.0)),
             http_port=int(sat_raw.get("http_port", 18801 + i)),
+            mikro_zu_ton=bool(sat_raw.get("mikro_zu_ton", True)),
+            musik_raum=str(sat_raw.get("musik_raum", "") or ""),
+            musik_stream=str(sat_raw.get("musik_stream", "") or ""),
         ))
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---
@@ -1298,7 +1332,10 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         openclaw_voice_erinnerung=str(locale_raw.get("openclaw_voice_erinnerung", _dloc.openclaw_voice_erinnerung)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
+        satellit_musik_hinweis=str(locale_raw.get("satellit_musik_hinweis", _dloc.satellit_musik_hinweis)),
         unklar_hinweis=str(locale_raw.get("unklar_hinweis", _dloc.unklar_hinweis)),
+        satellit_unklar_hinweis=str(locale_raw.get("satellit_unklar_hinweis",
+                                                   _dloc.satellit_unklar_hinweis)),
         gewohnheit_hinweis=str(locale_raw.get("gewohnheit_hinweis", _dloc.gewohnheit_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
@@ -1442,6 +1479,8 @@ FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
 # steigenden Follow-up-Beep hoerbar unterscheidet — "ich habe aufgehoert"
 # gegen "ich hoere jetzt zu".
 ABORT_BEEP_PATH = os.path.join(WORKSPACE, "abort_beep.wav")
+# Satelliten ohne Ring (Ava): "Mikrofon ist zu", ein einzelner fallender Gleitton
+MIKRO_ZU_BEEP_PATH = os.path.join(WORKSPACE, "mikro_zu_beep.wav")
 # Küchentimer: Zustand (überlebt Neustarts) und Klingelton für den Lautsprecher
 TIMER_STATE_PATH = os.path.join(WORKSPACE, "timer.json")
 TIMER_KLINGEL_PATH = os.path.join(WORKSPACE, "timer_klingel.wav")

@@ -25,6 +25,24 @@ bis sie wieder im Leerlauf ist. Ansagen gehen an das Geraet des letzten Turns
 (``ziel``), auch spaetere von aussen (``voice_speak_text``, Timer) — bis ein
 Turn vom Haupt-Mikrofon kommt oder der Satellit die Verbindung verliert.
 
+**Ein Ton, wenn das Mikrofon zugeht** (``mikro_zu_ton``, seit 2026-11-15).
+Ava hat keinen Ring: man hoert ihr Pling, wenn sie zuhoert, aber nicht, wann
+sie wieder aufhoert — weder nach der Aufnahme noch, wenn ein Follow-up ohne
+Sprache endet (Jochen nach dem ersten Bad-Abend). Wann zu ist, entscheiden
+wir (``sitzung_beenden``), also spielen wir genau dort einen kurzen fallenden
+Ton aufs Geraet. Er laeuft in einem eigenen Faden unter ``tts_lock``, damit
+die Hauptschleife nicht wartet und er sich nicht mit der Bestaetigung
+ueberlagert; die kommt dadurch um die Tonlaenge plus Avas Ansage-Ueberhang
+(gemessen 0,2–0,5 s) spaeter. Sessions, die ohne Turn geschlossen werden
+(Ruf waehrend eines anderen Turns), bekommen keinen Ton.
+
+**Kurze Klaenge bekommen Stille davor** (``_VORLAUF_S``, 2026-11-15). Erster
+Test mit dem Handy am Echo per Bluetooth: der Plop (70 ms) und der
+Follow-up-Beep (0,3 s) wurden gespielt (Ava meldete das Ende), waren aber
+nicht zu hoeren, ganze Saetze schon. Vermutung, nicht gemessen: die
+Bluetooth-Strecke schlaeft in der Stille ein und verschluckt beim Aufwachen
+den Anfang. Darum geht alles unter ``_KURZ_S`` mit Stille davor ans Geraet.
+
 Ein Satellit ist ortsungebunden (Jochen, 2026-10-13: "wo ich bin, muss ich dann
 ggf. sagen"). Es gibt deshalb keinen Raum dazu.
 """
@@ -32,15 +50,26 @@ ggf. sagen"). Es gibt deshalb keinen Raum dazu.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
+import threading
+import wave
+from typing import Callable
 
 import numpy as np
 
 from voice_assistant.audio.respeaker import RespeakerClient, RespeakerSink, get_client
-from voice_assistant.config import FOLLOWUP_BEEP_PATH, RespeakerAudio, SatellitConfig
+from voice_assistant.config import (
+    FOLLOWUP_BEEP_PATH,
+    MIKRO_ZU_BEEP_PATH,
+    RespeakerAudio,
+    SatellitConfig,
+)
 from voice_assistant.state import (
     STATE_FOLLOWUP,
     STATE_LISTENING,
     STATE_RECORDING,
+    tts_lock,
 )
 
 log = logging.getLogger(__name__)
@@ -67,9 +96,12 @@ class SatellitQuelle:
     ``read_chunk()`` und im Leerlauf ``satellit_trigger()``.
     """
 
-    def __init__(self, haupt, clients: dict[str, RespeakerClient]) -> None:
+    def __init__(self, haupt, clients: dict[str, RespeakerClient],
+                 mikro_zu: Callable[[str], None] | None = None) -> None:
         self._haupt = haupt
         self._clients = clients
+        # Wird mit dem Geraetenamen gerufen, wenn das Mikrofon eines Turns zugeht.
+        self._mikro_zu = mikro_zu
         self._zustand = STATE_LISTENING
         # Geraet, dem der laufende Turn gehoert (None = Haupt-Mikrofon).
         self.aktiv: str | None = None
@@ -91,6 +123,8 @@ class SatellitQuelle:
         if self.aktiv is not None:
             if alt in _AUFNAHME and state not in _AUFNAHME:
                 self._clients[self.aktiv].sitzung_beenden()
+                if self._mikro_zu is not None:
+                    self._mikro_zu(self.aktiv)
             if state == STATE_LISTENING:
                 log.info("Satellit %s: Turn vorbei", self.aktiv)
                 self.aktiv = None
@@ -166,6 +200,47 @@ class SatellitQuelle:
         self._haupt.close()
 
 
+# Siehe Modul-Docstring: kurze Klaenge mit Stille davor ans Geraet.
+_KURZ_S = 1.0
+_VORLAUF_S = 0.5
+
+
+def _mit_vorlauf(path: str) -> str | None:
+    """Kopie von path mit _VORLAUF_S Stille davor, wenn er kuerzer als
+    _KURZ_S ist; sonst (oder bei Fehlern) None. Der Aufrufer loescht sie."""
+    try:
+        with wave.open(path, "rb") as wf:
+            params = wf.getparams()
+            rate = wf.getframerate()
+            daten = wf.readframes(wf.getnframes())
+        rahmen = params.nchannels * params.sampwidth
+        if not rate or len(daten) / rahmen / rate >= _KURZ_S:
+            return None
+        fd, ziel = tempfile.mkstemp(suffix=".wav", prefix="vorlauf_")
+        os.close(fd)
+        with wave.open(ziel, "wb") as wf:
+            wf.setnchannels(params.nchannels)
+            wf.setsampwidth(params.sampwidth)
+            wf.setframerate(rate)
+            wf.writeframes(b"\0" * (int(rate * _VORLAUF_S) * rahmen) + daten)
+        return ziel
+    except Exception as exc:
+        log.warning("Vorlauf fuer %s: %s", path, exc)
+        return None
+
+
+def _spielen(senke: RespeakerSink, path: str, mikro_danach: bool = False) -> None:
+    kopie = _mit_vorlauf(path)
+    try:
+        senke.play_wav(kopie or path, mikro_danach=mikro_danach)
+    finally:
+        if kopie:
+            try:
+                os.unlink(kopie)
+            except OSError:
+                pass
+
+
 class SatellitSenke:
     """AudioSink: spielt beim Geraet des letzten Turns, sonst beim Haupt-Geraet."""
 
@@ -183,7 +258,7 @@ class SatellitSenke:
         # Mikrofon dafuer erst geoeffnet werden — das tut die Ansage selbst
         # (start_conversation), nur waehrend eines Turns dieses Geraets.
         mikro = path == FOLLOWUP_BEEP_PATH and self._quelle.aktiv == name
-        self._senken[name].play_wav(path, mikro_danach=mikro)
+        _spielen(self._senken[name], path, mikro_danach=mikro)
 
     def strom_oeffnen(self, bei_ende):
         """Strom nur beim Haupt-Geraet; ein Satellit spielt ueber die
@@ -209,6 +284,17 @@ class SatellitSenke:
                 fn()
 
 
+def hinweis_fuer(name: str, satelliten: list[SatellitConfig], locale) -> str:
+    """Hinweis an den Brain fuer einen Turn dieses Geraets ("" = keiner)."""
+    teile = []
+    if locale.satellit_hinweis:
+        teile.append(locale.satellit_hinweis.replace("{name}", name))
+    sat = next((s for s in satelliten if s.name == name), None)
+    if sat is not None and sat.musik_raum and locale.satellit_musik_hinweis:
+        teile.append(locale.satellit_musik_hinweis.replace("{raum}", sat.musik_raum))
+    return " ".join(teile)
+
+
 def mit_satelliten(satelliten: list[SatellitConfig], source, sink):
     """Haupt-Quelle/-Senke um Satelliten erweitern; ohne Satelliten unveraendert."""
     if not satelliten:
@@ -220,5 +306,22 @@ def mit_satelliten(satelliten: list[SatellitConfig], source, sink):
         clients[sat.name] = get_client(cfg)
         senken[sat.name] = RespeakerSink(cfg)
         print(f"📱 Satellit {sat.name}: {sat.host}:{sat.port} (Ansagen über :{sat.http_port})")
-    quelle = SatellitQuelle(source, clients)
+    mit_ton = {sat.name for sat in satelliten if sat.mikro_zu_ton}
+    quelle = SatellitQuelle(source, clients, _mikro_zu_ton(senken, mit_ton))
     return quelle, SatellitSenke(sink, quelle, senken)
+
+
+def _mikro_zu_ton(senken: dict[str, RespeakerSink], namen: set[str]):
+    """Rueckruf fuer SatellitQuelle: Ton "Mikro zu" im eigenen Faden."""
+    def spielen(name: str) -> None:
+        with tts_lock:
+            try:
+                _spielen(senken[name], MIKRO_ZU_BEEP_PATH)
+            except Exception as exc:
+                log.warning("Satellit %s: Mikro-zu-Ton fehlgeschlagen: %s", name, exc)
+
+    def mikro_zu(name: str) -> None:
+        if name in namen:
+            threading.Thread(target=spielen, args=(name,), daemon=True,
+                             name=f"mikro-zu-{name}").start()
+    return mikro_zu

@@ -274,13 +274,14 @@ class SitzungTest(unittest.TestCase):
     def test_ohne_strom_dateien_wie_bisher(self):
         senke = FakeSenke(geht=False)
         sitz = self._sitzung(senke)
-        orig = tts.ReplySpeaker._play_speaches_sentence
-        tts.ReplySpeaker._play_speaches_sentence = lambda self, s, recorder=None: True
+        orig = (tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes)
+        tts.ReplySpeaker._synth_datei = lambda self, s: b"wav"
+        tts.ReplySpeaker._spiele_datei_bytes = lambda self, s, d, r=None: True
         try:
             sitz.feed("Satz.")
+            sitz.end()
         finally:
-            tts.ReplySpeaker._play_speaches_sentence = orig
-        sitz.end()
+            tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes = orig
         self.assertFalse(tts_lock.locked())
 
     def test_speaches_weg_piper_in_den_strom(self):
@@ -301,6 +302,126 @@ class SitzungTest(unittest.TestCase):
             if os.path.exists(pfad):
                 os.unlink(pfad)
         self.assertEqual(senke.stroeme[0][0].audio_bytes, len(zu_48k_stereo(_ton(0.2, 22050), 22050, 1)))
+        self.assertFalse(tts_lock.locked())
+
+
+class BestaetigungAmStueckTest(unittest.TestCase):
+    """Am Handy (Datei-Weg) lief die Bestaetigung im Wechsel mit der Antwort,
+    weil jeder Satz tts_lock freigab; ihr letzter Satz kam nach dem Turn-Ende
+    (2026-11-15). speak() haelt den Lock jetzt ueber alle Saetze."""
+
+    def test_bestaetigung_wird_nicht_von_der_antwort_unterbrochen(self):
+        senke = FakeSenke(geht=False)
+        # Satellit: strom_oeffnen gibt es, liefert aber keinen Strom.
+        sp = tts.ReplySpeaker(FakeTts(), senke.play_wav, FakeLeds(),
+                              strom_oeffnen=lambda bei_ende: None,
+                              antwort_tts=FakeTts(model="cosyvoice3"))
+        gespielt: list[str] = []
+
+        def spielen(self_, satz, daten, recorder=None):
+            gespielt.append(satz)
+            time.sleep(0.03)
+            return True
+
+        orig = (tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes)
+        tts.ReplySpeaker._synth_datei = lambda self_, s: b"wav"
+        tts.ReplySpeaker._spiele_datei_bytes = spielen
+        try:
+            a = threading.Thread(target=sp.speak, args=("Eins. Zwei. Drei.",),
+                                 kwargs={"restore_leds": False})
+            a.start()
+            time.sleep(0.01)
+            sitz = sp.stream_session(restore_leds=True, turn=None)
+            sitz.feed("Antwort A.")
+            sitz.feed("Antwort B.")
+            sitz.end()
+            a.join(3)
+        finally:
+            tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes = orig
+        bestaetigung = [i for i, x in enumerate(gespielt) if not x.startswith("Antwort")]
+        self.assertEqual(bestaetigung, [0, 1, 2], gespielt)
+        self.assertFalse(tts_lock.locked())
+
+
+class VorausrechnenTest(unittest.TestCase):
+    """Datei-Weg: der naechste Satz rechnet, waehrend der vorige spielt.
+    Am Handy lag vorher die ganze Rechenzeit als Pause zwischen den Saetzen."""
+
+    def _lauf(self, ganz):
+        senke = FakeSenke(geht=False)
+        sp = tts.ReplySpeaker(FakeTts(), senke.play_wav, FakeLeds(),
+                              strom_oeffnen=lambda bei_ende: None,
+                              antwort_tts=FakeTts(model="cosyvoice3"))
+        ereignisse: list[tuple[str, str, float]] = []
+        t0 = time.monotonic()
+
+        def rechnen(self_, satz):
+            ereignisse.append(("rechnet", satz, time.monotonic() - t0))
+            time.sleep(0.1)
+            return b"wav"
+
+        def spielen(self_, satz, daten, recorder=None):
+            ereignisse.append(("spielt", satz, time.monotonic() - t0))
+            time.sleep(0.2)
+            ereignisse.append(("fertig", satz, time.monotonic() - t0))
+            return True
+
+        orig = (tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes)
+        tts.ReplySpeaker._synth_datei = rechnen
+        tts.ReplySpeaker._spiele_datei_bytes = spielen
+        try:
+            if ganz:
+                sp.speak("Eins. Zwei. Drei.", restore_leds=False)
+            else:
+                sitz = sp.stream_session(restore_leds=True, turn=None)
+                for satz in ("Eins.", "Zwei.", "Drei."):
+                    sitz.feed(satz)
+                self.assertTrue(sitz.end())
+        finally:
+            tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes = orig
+        self.assertFalse(tts_lock.locked())
+        return ereignisse
+
+    def _pruefen(self, ereignisse):
+        gespielt = [s for art, s, _ in ereignisse if art == "spielt"]
+        self.assertEqual(gespielt, ["Eins.", "Zwei.", "Drei."], "Reihenfolge bleibt")
+        zeit = {(art, s): t for art, s, t in ereignisse}
+        self.assertLess(zeit[("rechnet", "Zwei.")], zeit[("fertig", "Eins.")],
+                        "Satz 2 rechnet schon, waehrend Satz 1 spielt")
+        # Ohne Vorausrechnen laege zwischen den Saetzen die Rechenzeit (0,1 s).
+        self.assertLess(zeit[("spielt", "Zwei.")] - zeit[("fertig", "Eins.")], 0.05)
+
+    def test_antwort_saetze(self):
+        self._pruefen(self._lauf(ganz=False))
+
+    def test_bestaetigung(self):
+        self._pruefen(self._lauf(ganz=True))
+
+    def test_abbruch_spielt_nichts_mehr(self):
+        senke = FakeSenke(geht=False)
+        sp = tts.ReplySpeaker(FakeTts(), senke.play_wav, FakeLeds(),
+                              strom_oeffnen=lambda bei_ende: None,
+                              antwort_tts=FakeTts(model="cosyvoice3"))
+        from voice_assistant.state import turn_control
+        nr = turn_control.begin()
+        gespielt: list[str] = []
+
+        def spielen(self_, satz, daten, recorder=None):
+            gespielt.append(satz)
+            turn_control.cancel("test")
+            return True
+
+        orig = (tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes)
+        tts.ReplySpeaker._synth_datei = lambda self_, s: b"wav"
+        tts.ReplySpeaker._spiele_datei_bytes = spielen
+        try:
+            sitz = sp.stream_session(restore_leds=True, turn=nr)
+            sitz.feed("Eins.")
+            sitz.feed("Zwei.")
+            sitz.end()
+        finally:
+            tts.ReplySpeaker._synth_datei, tts.ReplySpeaker._spiele_datei_bytes = orig
+        self.assertEqual(gespielt, ["Eins."])
         self.assertFalse(tts_lock.locked())
 
 

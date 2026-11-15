@@ -17,13 +17,16 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import queue
 import wave
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable
 
 from voice_assistant.audio.strom import RATE as STROM_RATE, zu_48k_stereo
 from voice_assistant.services import aussprache
 from voice_assistant.config import (
     ABORT_BEEP_PATH,
+    MIKRO_ZU_BEEP_PATH,
     FOLLOWUP_BEEP_PATH,
     LAST_REPLY_TXT,
     LAST_REPLY_WAV,
@@ -207,7 +210,10 @@ _ABBREVS_SPLIT = re.compile(
     r"(?:"
     r"z\.\s*B\.|d\.\s*h\.|u\.\s*a\.|o\.\s*ä\.|"
     r"bzw\.|ca\.|usw\.|etc\.|ggf\.|evtl\.|inkl\.|"
-    r"max\.|min\.|Nr\.|Dr\.|Prof\.|Mio\.|Mrd\.|Tel\.|Str\.|vs\.|Abs\."
+    r"max\.|min\.|Nr\.|Dr\.|Prof\.|Mio\.|Mrd\.|Tel\.|Str\.|vs\.|Abs\.|"
+    # Englische Titel in Interpreten-Namen („Mr. President“ wurde am Handy
+    # zwei Sätze mit Lücke dazwischen, 2026-11-15)
+    r"Mr\.|Mrs\.|Ms\.|Jr\.|Sr\.|St\.|Hr\.|Fr\."
     r")\s",
     re.IGNORECASE,
 )
@@ -563,6 +569,40 @@ def prerender_abort_beep() -> None:
         print(f"⚠️  Abbruch-Beep fehlgeschlagen: {e}")
 
 
+def prerender_mikro_zu_beep() -> None:
+    """Ein kurzer, harter "umgekehrter Plop": "das Mikrofon ist jetzt zu".
+
+    Fuer Satelliten ohne Ring (Ava auf dem Handy, Jochen 2026-11-15: man hoert
+    nur, wann zugehoert wird, nicht wann das Mikro wieder zu ist). Ein Plop
+    (Blase) springt in der Tonhoehe nach oben; dieser stuerzt in 70 ms
+    exponentiell von 1400 auf 300 Hz, mit hartem Einsatz und schnellem
+    Abklingen (Jochen: "etwas haerter, schnell, wie ein umgekehrter Plop").
+    Gegen die anderen Toene abgesetzt: der Follow-up-Beep ist ein steigender
+    Einzelton ("ich hoere zu"), der Abbruch-Beep zwei getrennte fallende Toene
+    ("mitten im Satz aufgehoert").
+    """
+    import wave as _wave
+    import numpy as np
+
+    rate = 16000
+    n = int(rate * 0.07)
+    t = np.arange(n) / rate
+    hz = 1400 * (300 / 1400) ** (t / t[-1])          # exponentiell fallend
+    phase = 2 * np.pi * np.cumsum(hz) / rate
+    huelle = np.minimum(t / 0.002, 1.0) * np.exp(-t / 0.025)
+    huelle[-int(rate * 0.005):] *= np.linspace(1, 0, int(rate * 0.005))  # kein Knacks am Ende
+    samples = (np.sin(phase) * huelle * 20000).astype(np.int16)
+    try:
+        with _wave.open(MIKRO_ZU_BEEP_PATH, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes(samples.tobytes())
+        print(f"✅ Mikro-zu-Ton erzeugt: {MIKRO_ZU_BEEP_PATH}")
+    except Exception as e:
+        print(f"⚠️  Mikro-zu-Ton fehlgeschlagen: {e}")
+
+
 def prerender_ja(text: str = "Ja?", out_path: str = PIPER_OUT) -> None:
     """Pre-renders the wakeword acknowledgement with Piper.
 
@@ -729,15 +769,22 @@ class ReplySpeaker:
         return [k for k in kandidaten if k.state.tts_ok()]
 
     def _play_speaches_sentence(self, sentence: str, recorder: ReplyRecorder | None = None) -> bool:
-        # Datei-Weg (Satelliten, Senke ohne Strom): erst der Antwort-Dienst,
-        # wenn er dran ist, dann speaches — dieselbe Reihenfolge wie im Strom.
-        audio_data = None
+        audio_data = self._synth_datei(sentence)
+        if not audio_data:
+            return False
+        return self._spiele_datei_bytes(sentence, audio_data, recorder)
+
+    def _synth_datei(self, sentence: str) -> bytes | None:
+        """Datei-Weg (Satelliten, Senke ohne Strom): erst der Antwort-Dienst,
+        wenn er dran ist, dann speaches — dieselbe Reihenfolge wie im Strom."""
         for dienst in self.strom_kandidaten():
             audio_data = dienst.synth(sentence)
             if audio_data:
-                break
-        if not audio_data:
-            return False
+                return audio_data
+        return None
+
+    def _spiele_datei_bytes(self, sentence: str, audio_data: bytes,
+                            recorder: ReplyRecorder | None = None) -> bool:
         if recorder:
             recorder.add_wav_bytes(sentence, audio_data)
         tmp_wav: str | None = None
@@ -777,12 +824,14 @@ class ReplySpeaker:
             if not clean.strip():
                 return
             print(f"🔊 Speaking: '{clean}'")
-            sitz = self.stream_session(restore_leds=restore_leds, turn=turn)
-            for satz in split_into_sentences(clean):
-                if turn_stopped(turn):
-                    break
-                sitz.feed(satz, bereinigt=True)
-            sitz.end()
+            sitz = ReplyStreamSession(self, restore_leds, turn, ganz=True)
+            try:
+                for satz in split_into_sentences(clean):
+                    if turn_stopped(turn):
+                        break
+                    sitz.feed(satz, bereinigt=True)
+            finally:
+                sitz.end()
             return
         with tts_lock:
             # Zweite Pruefung INNERHALB des Locks, und die ist der eigentliche
@@ -858,10 +907,18 @@ class ReplyStreamSession:
     end() einmal am Schluss. Jeder Satz wird hier verbalisiert (clean_for_tts) —
     der Stream-Buffer liefert Rohsätze."""
 
-    def __init__(self, sp: "ReplySpeaker", restore_leds: bool, turn: int | None = None) -> None:
+    def __init__(self, sp: "ReplySpeaker", restore_leds: bool, turn: int | None = None,
+                 ganz: bool = False) -> None:
         self.sp = sp
         self.restore_leds = restore_leds
         self.turn = turn
+        # ganz (aus speak(): Bestaetigung, Quittung, Ansage): auf dem Datei-Weg
+        # tts_lock vom ersten Satz bis end() halten. Satzweise freigegeben lief
+        # am Handy die Bestaetigung im Wechsel mit der Antwort, ihr letzter Satz
+        # nach dem Turn-Ende, und dessen end() liess den Ring auf "Denken"
+        # stehen (2026-11-15, Ava). Der Strom-Weg haelt den Lock ohnehin.
+        self.ganz = ganz
+        self._lock_gehalten = False
         self.spoke = False
         self._led_set = False
         self._first = True
@@ -873,6 +930,14 @@ class ReplyStreamSession:
         # Satz einen neuen.
         self._strom = None
         self._strom_ende: threading.Event | None = None
+        # Datei-Weg mit Vorausrechnen (2026-11-15, Ava): feed() stellt den
+        # Satz nur ein; ein Rechen-Faden synthetisiert der Reihe nach, ein
+        # Spiel-Faden spielt der Reihe nach. So rechnet der naechste Satz,
+        # waehrend der vorige am Handy laeuft (vorher je Satz Rechenzeit plus
+        # Abholen als Pause, ~3 s vor einem 6-s-Satz). end() wartet alles ab.
+        self._rechner: ThreadPoolExecutor | None = None
+        self._spiel_q: "queue.Queue[tuple[str, Future] | None]" = queue.Queue()
+        self._spieler: threading.Thread | None = None
 
     def _strom_abwarten(self) -> None:
         if self._strom_ende is not None:
@@ -885,6 +950,10 @@ class ReplyStreamSession:
         None = Datei-Weg; "stop" = Turn abgebrochen."""
         if self._strom is not None and self._strom.beginnen():
             return self._strom
+        if self._lock_gehalten:
+            # Datei-Weg schon gewaehlt und tts_lock in unserer Hand: ein
+            # zweites acquire() hier waere eine Selbstblockade.
+            return None
         self._strom_abwarten()
         if self.sp.strom_oeffnen is None:
             return None
@@ -976,41 +1045,69 @@ class ReplyStreamSession:
             finally:
                 strom.beenden()
             return
-        with tts_lock:
-            # Zweite Pruefung im Lock — siehe ReplySpeaker.speak(). Genau hier
-            # ist ein abgebrochener Satz durchgekommen: feed() hatte die
-            # Pruefung oben schon passiert und hing dann am Lock, den die
-            # Bestaetigung hielt.
-            if turn_stopped(self.turn):
+        if self.ganz and not self._lock_gehalten:
+            tts_lock.acquire()
+            self._lock_gehalten = True
+        if self._rechner is None:
+            self._rechner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts-voraus")
+            self._spieler = threading.Thread(target=self._spielen, daemon=True, name="tts-datei")
+            self._spieler.start()
+        self._spiel_q.put((clean, self._rechner.submit(self._rechnen, clean)))
+
+    def _rechnen(self, clean: str) -> bytes | None:
+        if turn_stopped(self.turn) or not self.sp.speaches.state.tts_ok():
+            return None
+        try:
+            return self.sp._synth_datei(clean)
+        except Exception as e:
+            print(f"⚠️  TTS (Datei) fehlgeschlagen: {e}")
+            return None
+
+    def _spielen(self) -> None:
+        while True:
+            eintrag = self._spiel_q.get()
+            if eintrag is None:
                 return
-            if not self._led_set:
-                self.sp.leds.set_phase(
-                    LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW
-                )
-                self._led_set = True
-            print(f"🔊 Sentence (stream): '{clean}'")
-            played = False
-            if self.sp.speaches.state.tts_ok():
-                if self.restore_leds:
-                    self.sp.leds.set_phase(LED_AUDIO_OUT)
-                ok = self.sp._play_speaches_sentence(clean, recorder=self.rec)
-                if not ok:
-                    print("⚠️  Speaches failed (stream) → Piper fallback")
-                    tmp_wav = piper_synth(clean)
-                    if tmp_wav:
-                        self.rec.add_file(clean, tmp_wav)
-                        self.sp.play_wav(tmp_wav)
-                        os.unlink(tmp_wav)
-                played = True
-            if not played:
-                if self.restore_leds:
-                    self.sp.leds.set_phase(LED_AUDIO_OUT)
-                tmp_wav = piper_synth(clean)
-                if tmp_wav:
-                    self.rec.add_file(clean, tmp_wav)
-                    self.sp.play_wav(tmp_wav)
-                    os.unlink(tmp_wav)
-            self.spoke = True
+            clean, fut = eintrag
+            try:
+                if self.ganz:
+                    self._satz_datei(clean, fut)   # Lock haelt feed()/end()
+                else:
+                    with tts_lock:
+                        self._satz_datei(clean, fut)
+            except Exception as e:
+                print(f"⚠️  Satz-Wiedergabe fehlgeschlagen: {e}")
+
+    def _satz_datei(self, clean: str, fut: Future) -> None:
+        """Ein Satz als Datei; der Aufrufer haelt tts_lock."""
+        from voice_assistant.services.leds import (
+            LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION,
+        )
+        # Zweite Pruefung im Lock — siehe ReplySpeaker.speak(). Genau hier
+        # ist ein abgebrochener Satz durchgekommen: feed() hatte die
+        # Pruefung oben schon passiert und hing dann am Lock, den die
+        # Bestaetigung hielt.
+        if turn_stopped(self.turn):
+            return
+        if not self._led_set:
+            self.sp.leds.set_phase(
+                LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW
+            )
+            self._led_set = True
+        print(f"🔊 Sentence (stream): '{clean}'")
+        audio_data = fut.result()        # meist schon fertig gerechnet
+        if turn_stopped(self.turn):
+            return
+        if self.restore_leds:
+            self.sp.leds.set_phase(LED_AUDIO_OUT)
+        if not (audio_data and self.sp._spiele_datei_bytes(clean, audio_data, self.rec)):
+            print("⚠️  TTS (Datei) ausgefallen → Piper fallback")
+            tmp_wav = piper_synth(clean)
+            if tmp_wav:
+                self.rec.add_file(clean, tmp_wav)
+                self.sp.play_wav(tmp_wav)
+                os.unlink(tmp_wav)
+        self.spoke = True
 
     def end(self) -> bool:
         """Gibt True zurück, wenn mindestens ein Satz gesprochen wurde."""
@@ -1018,6 +1115,14 @@ class ReplyStreamSession:
         if self._strom is not None:
             self._strom.schliessen()
         self._strom_abwarten()
+        if self._spieler is not None:
+            self._spiel_q.put(None)
+            self._spieler.join()
+            self._rechner.shutdown(wait=True)
+            self._spieler = self._rechner = None
+        if self._lock_gehalten:
+            self._lock_gehalten = False
+            tts_lock.release()
         self.rec.finalize()
         if not self.restore_leds:
             self.sp.leds.set_phase(LED_OPENCLAW)

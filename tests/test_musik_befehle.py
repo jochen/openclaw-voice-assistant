@@ -29,6 +29,18 @@ class MusikBefehleTest(unittest.TestCase):
         self.assertEqual(e.text, "Musik ist aus.")
         self.assertEqual(aufrufe, [("wohnzimmer/control", {"action": "stop", "source": "gaston"})])
 
+    def test_handy_turn_ohne_raum_geht_an_den_raum_des_handys(self):
+        # 2026-11-15: "mach bitte etwas lauter" am Handy wurde eine Rueckfrage
+        # des Schalt-Klassifikators statt lauter.
+        m, aufrufe = _bauen({"ok": True, "volume": 90})
+        m.ausfuehren(MusikBefehl(LAUTER), "handy_jochen")
+        self.assertEqual(aufrufe[0][0], "handy_jochen/control")
+
+    def test_handy_turn_mit_gesagtem_raum_geht_dorthin(self):
+        m, aufrufe = _bauen({"ok": True})
+        m.ausfuehren(MusikBefehl(STOP, "Küche"), "handy_jochen")
+        self.assertEqual(aufrufe[0][0], "kueche/control")
+
     def test_gesprochener_raum_ueber_den_namen(self):
         m, aufrufe = _bauen({"ok": True})
         m.ausfuehren(MusikBefehl(STOP, "Küche"))

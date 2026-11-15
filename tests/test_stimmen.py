@@ -280,6 +280,20 @@ class FesteSaetzeTest(_Basis):
             threading.Event().wait(0.05)
         self.assertIsNotNone(self.t.feste_datei("Okay.", nur_vorhanden=True))
 
+    def test_synth_rechnet_nichts_im_hintergrund_nach(self):
+        self.t.synth("Ein ganzer Satz, der nicht im Cache steht.")
+        n = len(_Cosy.anfragen)
+        threading.Event().wait(0.5)
+        self.assertEqual(len(_Cosy.anfragen), n, "kein Nachrechnen im Hintergrund")
+        self.assertFalse([t for t in threading.enumerate() if t.name == "feste-saetze"])
+
+    def test_synth_nimmt_vorhandenen_festen_satz(self):
+        pfad = self.t.feste_datei("Ja?")
+        n = len(_Cosy.anfragen)
+        with open(pfad, "rb") as f:
+            self.assertEqual(self.t.synth("Ja?"), f.read())
+        self.assertEqual(len(_Cosy.anfragen), n)
+
     def test_synth_am_stueck_fuer_den_datei_weg(self):
         daten = self.t.synth("Ein ganzer Satz.")
         self.assertEqual(daten[:4], b"RIFF")

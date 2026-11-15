@@ -408,6 +408,7 @@ satelliten:
     host: 192.168.1.50   # eine feste DHCP-Adresse hilft
     volume: 1.0
     http_port: 18801     # jedes Gerät braucht einen eigenen Port zum Abholen der Antworten
+    musik_raum: handy    # optional: Raum der Musik-Steuerung für den Player auf dem Handy
 ```
 
 Solange die App nicht läuft, ändert sich nichts, und der Assistent versucht
@@ -438,8 +439,13 @@ Was bei Ava anders ist als beim ReSpeaker (gemessen, nicht angenommen):
   Wakewort steckt nicht in der Aufnahme, deshalb sah jede Aufnahme
   „durchgesprochen“ aus. Wer Avas Weck-Ton abwartete, wurde nach einer Sekunde
   abgeschnitten.
+- **Kein Ring, also Töne.** Man hört Avas Weck-Ton, wenn sie zuhört, aber
+  nicht, wann das Mikrofon wieder zu ist. Deshalb spielt der Assistent einen
+  kurzen, harten, fallenden Ton (ein umgekehrter Plop) aufs Handy, sobald er
+  die Session schließt: am Ende der Aufnahme und wenn ein Follow-up ohne Sprache endet (`mikro_zu_ton`,
+  Standard an). Die Antwort kommt dadurch etwa eine halbe Sekunde später.
 - Aufnahme und Wiedergabe funktionieren auch bei gesperrtem Bildschirm.
-- Der Brain erfährt, dass die Eingabe vom Handy kam (`locale.satellit_hinweis`), und kann ein persönliches Handy so seinem Besitzer zuordnen, z. B. für eine Musik-Historie pro Person. Der `[Sprecher: …]` bleibt das Ergebnis der Messung.
+- Der Brain erfährt, dass die Eingabe vom Handy kam (`locale.satellit_hinweis`), und kann ein persönliches Handy so seinem Besitzer zuordnen, z. B. für eine Musik-Historie pro Person. Der `[Sprecher: …]` bleibt das Ergebnis der Messung. Mit `musik_raum` erfährt er außerdem, dass Musik zu dieser Eingabe aufs Handy gehört (`locale.satellit_musik_hinweis`), sofern kein anderer Raum genannt wird. Den Player auf dem Handy stellt eine eigene App (z. B. Squeezelite für LMS); das Handy kann den Ton per Bluetooth weitergeben.
 
 Noch offen: Die Schwellen der Sprechererkennung sind nur am ReSpeaker
 gemessen, und ein Handy-Mikrofon klingt anders. Während das Handy spricht,
@@ -473,7 +479,10 @@ Musikanlage stellt die Lautstärke nach `timeout_s` (30 s) ohne neues `duck`
 selbst wieder her. Ein längerer Turn erneuert deshalb alle 15 s, aber nur,
 wenn das erste `duck` wirklich etwas leiser gemacht hat. Sonst würde der
 Assistent Musik dämpfen, die er in diesem Turn gerade selbst gestartet hat.
-Turns von einem Satelliten (Handy) haben keinen Raum und dämpfen nichts.
+Ein Turn von einem Satelliten (Handy) dämpft nur den eigenen Musik-Raum des
+Satelliten (`satelliten[].musik_raum`, z. B. eine Player-App auf dem Handy);
+ohne den dämpft er nichts. Das Ducking des Handys selbst erreichte so einen
+Player im Test nicht, und Aufnahmen liefen in der Musik bis zum 30-s-Deckel.
 Hat ein Turn die Musik gestartet (beim Wakewort lief nichts, jetzt läuft etwas), öffnet sich kein Follow-up-Fenster: Es würde direkt in die Musik hineinhören. Wer noch etwas will, ruft das Wakewort, das dämpft sofort.
 Ansagen außerhalb eines Turns (`voice_speak_text`) dämpfen die Musik, solange
 sie laufen, außer sie gehen ans Handy. Der Küchentimer bewusst nicht: weder

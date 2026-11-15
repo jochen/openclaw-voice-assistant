@@ -348,8 +348,15 @@ class AntwortTts(SpeachesTts):
 
     def synth(self, text: str) -> bytes | None:
         """Wie SpeachesTts.synth (Datei-Weg, z. B. Satelliten), mit Stimme aus
-        dem Lager. Kurze feste Sätze kommen aus dem Cache."""
-        pfad = self.feste_datei(text, nur_vorhanden=True)
+        dem Lager. Kurze feste Sätze kommen aus dem Cache.
+
+        Nur nachschlagen, nicht nachrechnen: hier kommt JEDER Satz vorbei
+        (Antworten am Handy). Mit ``feste_datei(nur_vorhanden=True)`` ging
+        jeder Fehltreffer in ``vorbereiten`` — jeder Antwortsatz wurde im
+        Hintergrund bis zu fünfmal nachgerechnet, auf demselben Dienst, der
+        die Antwort rechnen sollte (2026-11-15: Bestätigung 23 s nach der
+        STT). Feste Sätze rechnen der Start und ``_fest`` in assistant.py vor."""
+        pfad = self._vorhanden(text)
         if pfad:
             with open(pfad, "rb") as f:
                 return f.read()
@@ -439,6 +446,15 @@ class AntwortTts(SpeachesTts):
                     os.unlink(alt)
         except OSError:
             pass
+
+    def _vorhanden(self, text: str) -> str | None:
+        """Pfad der gespeicherten Fassung in der aktuellen Stimme, sonst None
+        (rechnet nichts, stößt nichts an)."""
+        try:
+            pfad = self._cache_pfad(text, self.stimme_jetzt())
+        except OSError:
+            return None
+        return pfad if pfad and os.path.exists(pfad) else None
 
     def feste_datei(self, text: str, nur_vorhanden: bool = False,
                     name: str | None = None) -> str | None:

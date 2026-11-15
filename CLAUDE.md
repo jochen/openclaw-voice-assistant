@@ -142,6 +142,7 @@ voice_assistant/
     alsa.py              PyAudio + aplay
     respeaker.py         ESPHome Native API (ReSpeaker; mit satellit=True auch Ava)
     satellit.py          Handy-Satelliten: Turn gehört dem Gerät, das ihn auslöst
+    satellit_musik.py    Musik am Handy: Raum-Stream auf Avas Medien-Player
   wakeword/
     base.py              WakewordEngine Protocol
     openwakeword_engine.py
@@ -526,6 +527,47 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   „gar nicht so verkehrt“).
 - Ansagen gehen an das Gerät des letzten Turns (`ziel`), auch spätere von außen,
   bis das Haupt-Mikrofon (ReSpeaker, Wohnbereich) triggert oder das Handy weg ist.
+- **Ton „Mikro zu“ (`mikro_zu_ton`, seit 2026-11-15):** Ava hat keinen Ring,
+  man hörte nur das Öffnen (Jochen nach dem Bad). Beim Schließen der Session
+  im eigenen Turn (Aufnahme-Ende, Follow-up ohne Sprache) spielt ein eigener
+  Faden unter `tts_lock` einen „umgekehrten Plop“ aufs Handy (70 ms, 1400 → 300 Hz). Noch nicht im Bad
+  gehört; ob der Follow-up-Beep dort ankommt, ist ebenfalls ungeprüft.
+  Erster Test (Handy per Bluetooth am Echo): Plop und Beep gespielt, aber
+  nicht zu hören, Sätze schon. Seither geht alles unter 1 s mit 0,5 s Stille
+  davor ans Handy (`_VORLAUF_S`). Vermutung: die BT-Strecke verschluckt beim
+  Aufwachen den Anfang.
+- **Sätze als Dateien, vorausgerechnet (seit 2026-11-15).** Ava spielt keinen
+  Strom: eine WAV mit Platzhalter-Länge meldet nie ihr Ende (auch nicht nach
+  STOP), MP3/FLAC ohne Länge starten erst nach 5–7 s, nur eine WAV mit
+  richtiger Länge spielt beim Laden (~2 s Überhang). Deshalb bleibt es bei
+  Dateien, aber `ReplyStreamSession` rechnet auf dem Datei-Weg den nächsten
+  Satz, während der vorige spielt (Rechen- und Spiel-Faden). Die Bestätigung
+  (`speak()`, `ganz=True`) hält `tts_lock` vom ersten Satz bis `end()`;
+  satzweise freigegeben lief sie im Wechsel mit der Antwort und ließ den Ring
+  auf „Denken“ stehen.
+- **Musik aufs Handy (`satelliten[].musik_raum`, seit 2026-11-15):** „spiel die
+  Playlist Baden“ vom Handy lief auf dem Kachelofen. Mit `musik_raum` hängt
+  `hinweis_fuer` den `locale.satellit_musik_hinweis` an (Raum der Bridge, deren
+  Player auf dem Handy spielt). Den Raum legt die Bridge auf pi51 an.
+- **Musik über Avas Medien-Player (`satelliten[].musik_stream`, seit
+  2026-11-15):** Squeezelite auf dem Handy schaltete beim Pausieren die
+  Medienlautstärke stumm und Avas Sprache gleich mit (per adb belegt). Jetzt
+  spielt auf pi51 ein Player ohne Ton für `musik_raum`, sein Ton kommt als
+  Dauer-Stream, der bei Pause Stille liefert. `audio/satellit_musik.py` fragt
+  alle 2 s den Raumzustand der Bridge ab und gibt Ava die Stream-URL, wenn
+  der Raum spielt; STOP erst 30 s nach Stopp bzw. 10 min nach Pause (die
+  Pause ist auch das Dämpfen). Ob Ava zuhört, zählt der Stream-Server
+  (`<musik_stream>/clients`): Ava meldet den Zustand ihres Medien-Players
+  nicht, die erste Fassung schickte deshalb alle 16 s die URL neu (Aussetzer). **Drei Regler** (Jochen, nach einem
+  Missverständnis): Echo/BT für alles, Avas volume fest auf voll (ein Wert für
+  Sprache UND Musik, nie anfassen), Musikserver nur für die Musik — das
+  Verhältnis Musik:Sprache ist allein dessen Lautstärke. Ein Barge-in schickt
+  dem Satelliten deshalb kein Media-STOP (`RespeakerSink.stop`). Tests:
+  `tests/test_satellit_musik.py`.
+- **Unklar am Handy → Brain ohne Rückfrage (seit 2026-11-15):** „Mach bitte
+  etwas lauter“ (Musik am Handy) wurde zur Aktuator-Rückfrage „was ich
+  schalten soll“. Jetzt geht ein unklarer Schaltbefehl dort mit
+  `locale.satellit_unklar_hinweis` gleich an den Brain.
 
 Offen: Sprecher-Verifikation mit Handy-Mikro messen (Schwelle nur gegen den
 ReSpeaker gemessen; der erste Live-Turn erkannte jochen). Kein Barge-in,
@@ -542,7 +584,8 @@ den Turn eröffnet hat), die Aufrufe macht ein eigener Thread. Gedämpft wird
 schon bei „Wakeword detected“ (`vorab()`): der Turn beginnt erst, wenn die
 Treffer-Serie abreißt, gemessen 0,62–0,78 s später. Verwirft das Pegel-Gate
 den Ruf, gibt `verworfen()` sofort frei, sonst nach 3 s `_VORAB_FRIST`. Satelliten-Turns
-dämpfen nichts. **Während der Brain denkt, ist die Musik laut** (Jochen
+dämpfen nur ihren `musik_raum` (seit 2026-11-15: Avas Audiofokus erreichte
+Squeezelite nicht, Aufnahmen liefen bis zum 30-s-Deckel), ohne ihn nichts. **Während der Brain denkt, ist die Musik laut** (Jochen
 2026-10-18): in STATE_WAITING ohne Ausgabe (`tts_lock` frei) nach `_HALTEN`
 4 s unduck, zum nächsten Satz neu duck (Lebenszeichen nicht,
 `state.lebenszeichen`) — aber nur, wenn das
@@ -553,7 +596,11 @@ Bridge wurde mitten im Ducking neu gestartet, vergaß die alte Lautstärke und
 seither über Neustarts. Freigeben und eine Erneuerung, die die Bridge als
 erstes duck nimmt, stehen im Log. Erneuert wird (Lease 30 s, alle 15 s) nur, wenn das erste duck
 wirklich gedämpft hat, sonst würde Musik leise, die Gaston im selben Turn
-gestartet hat. Alle erhaltenen `lease_id`s werden am Ende freigegeben: ob
+gestartet hat. Bestellt der Brain im Turn neue Musik,
+antwortet die Bridge auf die Erneuerung mit `started_in_turn` (pausiert
+nicht, Lease weg; seit 2026-11-15): Gaston dämpft im Turn nicht mehr und
+schickt kein unduck, die Musik läuft ohne Stille durch. Ältere Bridges nehmen
+die Erneuerung als neues duck, dann gibt Gaston sofort frei. Alle erhaltenen `lease_id`s werden am Ende freigegeben: ob
 ein zweites duck eine neue Lease anlegt, war beim Bau nicht messbar (es lief
 keine Musik). Das Token liegt in einer Datei (`token_file`), nie in der
 config.yaml oder in Logs. Erster Test mit Musik (2026-10-13, Echo
@@ -574,7 +621,8 @@ den Aktuator, nicht über Node-RED, sondern ein fester Erkenner wie beim Timer
 (`services/musik_parser.py`), der an den control-Endpunkt der Bridge geht
 (`services/musik_befehle.py`, Vertrag im MemPalace `music-control`). Zweig in
 STATE_PROCESSING **vor** dem Stopp-Muster („Gaston, stopp, stopp die Musik
-bitte wieder.“ war dort ein Abbruch), nur Erst-Turn, nicht am Satelliten,
+bitte wieder.“ war dort ein Abbruch), nur Erst-Turn, am Satelliten nur mit
+`musik_raum` (dann ist das der Standard-Raum, seit 2026-11-15),
 nicht bei offener Timer-Rückfrage. Die Bedingung führt den Befehl schon aus;
 lehnt die Bridge ab, geht der Satz an den Brain. Ausnahme: spielt im
 Haupt-Raum nichts, aber in genau einem anderen, wirken stopp/Pause ohne

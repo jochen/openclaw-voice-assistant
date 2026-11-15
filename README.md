@@ -398,6 +398,7 @@ satelliten:
     host: 192.168.1.50   # a DHCP reservation helps
     volume: 1.0
     http_port: 18801     # each device needs its own port to fetch replies from
+    musik_raum: handy    # optional: music-control room of the player on the phone
 ```
 
 While the app is not running nothing changes, and the assistant keeps quietly
@@ -426,8 +427,13 @@ How Ava differs from the ReSpeaker (measured, not assumed):
   The wake word is not part of the recording, so every recording looked
   "spoken in one breath". Anyone who waited for Ava's wake sound was cut off
   after a second.
+- **No ring, so tones.** You hear Ava's wake sound when it starts listening,
+  but not when the microphone closes again. So the assistant plays a short,
+  hard, falling tone (a reversed plop) on the phone as soon as it closes the session: at the end of a
+  recording and when a follow-up ends without speech (`mikro_zu_ton`, on by
+  default). The reply arrives about half a second later because of it.
 - Recording and playback keep working with the screen locked.
-- The brain is told that the input came from the phone (`locale.satellit_hinweis`), so it can treat a personal phone as its owner, e.g. for a per-person play history. The `[Sprecher: …]` stays the measured result.
+- The brain is told that the input came from the phone (`locale.satellit_hinweis`), so it can treat a personal phone as its owner, e.g. for a per-person play history. The `[Sprecher: …]` stays the measured result. With `musik_raum` it is also told that music for this input belongs on the phone (`locale.satellit_musik_hinweis`) unless another room is named. The player on the phone is a separate app (e.g. Squeezelite for LMS); the phone can pass the sound on over Bluetooth.
 
 Not done yet: speaker recognition thresholds were measured on the ReSpeaker
 only, and a phone microphone sounds different. Barge-in has no audio on this
@@ -460,7 +466,10 @@ the bridge is unreachable, this is logged once. The music system restores the
 volume by itself after `timeout_s` (30 s) without a new `duck`, so a longer
 turn renews every 15 s, but only if the first `duck` actually lowered
 something. Otherwise the assistant would duck music it has just started in
-this very turn. Turns from a satellite (phone) have no room and duck nothing.
+this very turn. A turn from a satellite (phone) ducks only the satellite's own
+music room (`satelliten[].musik_raum`, e.g. a player app on the phone); without
+one it ducks nothing. The phone's own audio ducking did not reach such a player
+in our test, and recordings ran into the 30 s cap under the music.
 If a turn started the music (nothing played when the wake word came, something plays now), no follow-up window opens: it would listen straight into the music. Anyone who wants more says the wake word, which ducks at once.
 Announcements from outside a turn (`voice_speak_text`) duck the music while
 they play, unless they go to the phone. Kitchen timers deliberately don't:

@@ -40,5 +40,28 @@ class UnklarHinweisTest(unittest.TestCase):
         self.assertEqual(MAX_UNKLAR_ROUNDS, 1)
 
 
+class SatellitUnklarHinweisTest(unittest.TestCase):
+    """Am Handy geht unklar ohne Rückfrage an den Brain (2026-11-15)."""
+
+    def test_hinweis_traegt_grund(self):
+        h = LocaleConfig().satellit_unklar_hinweis_fuer("kein Ziel erkannt")
+        self.assertIn("kein Ziel erkannt", h)
+        self.assertNotIn("{grund}", h)
+        self.assertIn("unbekannt", LocaleConfig().satellit_unklar_hinweis_fuer(None))
+
+    def test_aus_der_config_ueberschreibbar(self):
+        p = _parse_profile("t", {"locale": {"satellit_unklar_hinweis": "[{grund}]"}})
+        self.assertEqual(p.locale.satellit_unklar_hinweis_fuer("x"), "[x]")
+
+    def test_zweig_in_assistant(self):
+        # Der Zweig steht in der Hauptschleife, die sich nicht einzeln
+        # aufrufen lässt: festhalten, dass Satelliten-Turns zum Brain gehen.
+        import inspect
+        from voice_assistant import assistant
+        src = inspect.getsource(assistant)
+        self.assertIn("or _satelliten_turn())", src)
+        self.assertIn("satellit_unklar_hinweis_fuer", src)
+
+
 if __name__ == "__main__":
     unittest.main()

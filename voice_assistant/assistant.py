@@ -17,7 +17,7 @@ import webrtcvad
 
 from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
-from voice_assistant.audio.satellit import mit_satelliten
+from voice_assistant.audio.satellit import hinweis_fuer, mit_satelliten
 from voice_assistant.config import (
     ACTUATOR_LOG_PATH,
     ACTUATOR_TOR_LOG_PATH,
@@ -99,6 +99,7 @@ from voice_assistant.services.tts import (
     SpeachesTts,
     ThinkingWorker,
     prerender_followup_beep,
+    prerender_mikro_zu_beep,
     prerender_ja,
     rerender_ja_speaches,
 )
@@ -645,6 +646,24 @@ def _make_audio(profile: Profile):
     return mit_satelliten(profile.satelliten, source, sink)
 
 
+def _start_satellit_musik(profile: Profile, musik_ducker) -> None:
+    """Je Satellit mit musik_raum + musik_stream: Gaston gibt dessen
+    Medien-Player den Raum-Stream (audio/satellit_musik.py). Braucht die
+    Bridge aus musik_ducking fuer den Raumzustand."""
+    from voice_assistant.audio.respeaker import get_client
+    from voice_assistant.audio.satellit import _respeaker_cfg
+    from voice_assistant.audio.satellit_musik import SatellitMusik
+    for sat in profile.satelliten:
+        if not (sat.musik_raum and sat.musik_stream):
+            continue
+        if musik_ducker is None:
+            print(f"⚠️  Satellit {sat.name}: musik_stream ohne musik_ducking (Bridge) — aus")
+            continue
+        SatellitMusik(sat.name, get_client(_respeaker_cfg(sat)), sat.musik_raum,
+                      sat.musik_stream, musik_ducker.raum_zustand).start()
+        print(f"📱 Satellit {sat.name}: Musik aus Raum {sat.musik_raum} über Avas Medien-Player")
+
+
 def _make_wakeword(profile: Profile, wakewords: list | None = None):
     """Wakeword-Engine fuer ein Profil.
 
@@ -1124,6 +1143,8 @@ def run() -> None:
     prerender_followup_beep()
     if profile.barge_in.enabled and profile.barge_in.beep:
         prerender_abort_beep()
+    if any(_sat.mikro_zu_ton for _sat in profile.satelliten):
+        prerender_mikro_zu_beep()
 
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)
@@ -1371,6 +1392,7 @@ def run() -> None:
     # --- Küchentimer (Zustand hier, Anzeige/Klingeln auf Senken) ---
     kuechentimer = _start_kuechentimer(profile, audio_sink)
     musik_ducker = _start_musik_ducking(profile)
+    _start_satellit_musik(profile, musik_ducker)
     mikro = _start_mikro(profile)
 
     # Lokale HTTP-Server (von OpenClaw-Tools angesprochen)
@@ -1753,6 +1775,9 @@ def run() -> None:
     # Transkript steht es nie, und es gibt keinen Wake-Clip.
     _satellit_zustand = getattr(audio_source, "zustand", None)
 
+    # Musik-Raum je Satellit (satelliten[].musik_raum): den daempft dessen Turn.
+    _sat_musik_raum = {s.name: s.musik_raum for s in profile.satelliten if s.musik_raum}
+
     def _satelliten_turn() -> bool:
         return getattr(audio_source, "aktiv", None) is not None
 
@@ -1812,7 +1837,8 @@ def run() -> None:
                 # Turn eroeffnet hat. tts_lock: wir sprechen (Denkpause sonst);
                 # ein Lebenszeichen zaehlt nicht, das darf in die Musik.
                 musik_ducker.zustand(state, _satelliten_turn(),
-                                     tts_lock.locked() and not lebenszeichen.is_set())
+                                     tts_lock.locked() and not lebenszeichen.is_set(),
+                                     raum=_sat_musik_raum.get(getattr(audio_source, "aktiv", None)))
             now = time.time()
             current_state[0] = state
             if rewind is not None:
@@ -2739,9 +2765,13 @@ def run() -> None:
                     elif (followup_round == 0 and not unklar_round and not war_bargein
                           and pending_timer is None
                           and musik_ducker is not None and musik_ducker.befehle is not None
-                          and not _satelliten_turn()
+                          and (not _satelliten_turn()
+                               or audio_source.aktiv in _sat_musik_raum)
                           and (musik_befehl := musik_parser.parse(text)) is not None
-                          and (musik_erg := musik_ducker.befehle.ausfuehren(musik_befehl))
+                          and (musik_erg := musik_ducker.befehle.ausfuehren(
+                              musik_befehl,
+                              _sat_musik_raum.get(audio_source.aktiv)
+                              if _satelliten_turn() else None))
                           is not None):
                         # --- Musik-Schnellweg: fester Erkenner, kein Modell ---
                         # Die Bedingung FUEHRT den Befehl schon aus: lehnt die
@@ -2749,8 +2779,10 @@ def run() -> None:
                         # ist sie False und der Satz geht weiter an den Brain.
                         # Vor dem Stopp-Muster: "Gaston, stopp, stopp die Musik
                         # bitte wieder." (Journal) ist dort ein Abbruch. Nur im
-                        # Erst-Turn, wie Timer und Aktuator; ein Handy-Turn hat
-                        # keinen Raum.
+                        # Erst-Turn, wie Timer und Aktuator. Ein Handy-Turn nur
+                        # mit musik_raum, und ohne gesagten Raum gilt der
+                        # (2026-11-15: "mach etwas lauter" am Handy ging an den
+                        # Schalt-Klassifikator und wurde eine Rueckfrage).
                         bargein_abgebrochen_audio = None
                         _save_last_recording(recorded_chunks)
                         _flush_endpoint(text, ausgang="musik")
@@ -3320,7 +3352,12 @@ def run() -> None:
                                           + (f"{gewohnheit.gruppe} ({gewohnheit.treffer}/"
                                              f"{gewohnheit.tage} Tage)" if gewohnheit else
                                              f"keine — {gw_grund}"))
-                            zum_brain = unklar_round >= MAX_UNKLAR_ROUNDS or gewohnheit is not None
+                            # Am Handy keine Rückfrage, gleich der Brain: dort
+                            # ist oft die Musik auf dem Handy gemeint („mach
+                            # etwas lauter“), die der Schaltweg nicht kennt
+                            # (Jochen 2026-11-15).
+                            zum_brain = (unklar_round >= MAX_UNKLAR_ROUNDS or gewohnheit is not None
+                                         or _satelliten_turn())
                             turn_epoch = time.time()
                             if not zum_brain:   # der Brain-Weg macht beides selbst
                                 _save_last_recording(recorded_chunks)
@@ -3388,6 +3425,9 @@ def run() -> None:
                                 namen = (digest.get(gewohnheit.gruppe) or {}).get("namen") or []
                                 unklar_an_brain = profile.locale.gewohnheit_hinweis_fuer(
                                     gewohnheit, namen[0] if namen else gewohnheit.gruppe)
+                            elif _satelliten_turn() and not unklar_erst_text:
+                                unklar_an_brain = profile.locale.satellit_unklar_hinweis_fuer(
+                                    unklar_grund)
                             else:
                                 # Auch die Antwort auf die Rückfrage ist unklar:
                                 # der Brain entscheidet, mit beiden Sätzen und
@@ -3416,6 +3456,8 @@ def run() -> None:
                                 verdict != VERDICT_UNKLAR or unklar_an_brain):
                             if gewohnheit is not None:
                                 print(f"[{now:.1f}s] 🔌 Aktuator: ohne Ziel, Gewohnheit {gewohnheit.id} → Brain (mit Hinweis)")
+                            elif unklar_an_brain and _satelliten_turn() and verdict == VERDICT_UNKLAR:
+                                print(f"[{now:.1f}s] 🔌 Aktuator: unklar am Handy → Brain (ohne Rückfrage)")
                             elif unklar_an_brain:
                                 print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage-Antwort ohne sicheren Befehl → Brain (mit erstem Satz)")
                             elif actuator is not None and actuator.ready and aktuator_gesperrt:
@@ -3479,9 +3521,10 @@ def run() -> None:
                                 hinweis = profile.locale.anrede_hinweis
                                 print(f"[{now:.1f}s] 🗯️  Wakewort fehlt im Transkript, Sprecher "
                                       f"{spk_label} → Hinweis an den Brain")
-                            if _satelliten_turn() and profile.locale.satellit_hinweis:
-                                geraet = profile.locale.satellit_hinweis.replace(
-                                    "{name}", audio_source.aktiv)
+                            geraet = (hinweis_fuer(audio_source.aktiv, profile.satelliten,
+                                                   profile.locale)
+                                      if _satelliten_turn() else "")
+                            if geraet:
                                 hinweis = f"{hinweis}\n\n{geraet}" if hinweis else geraet
                             _log_outcome("brain", transcript=text,
                                          **({"gewohnheit": gewohnheit.id} if gewohnheit is not None

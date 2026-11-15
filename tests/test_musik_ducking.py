@@ -25,6 +25,7 @@ class FakeBridge:
     def __init__(self, spielt=True) -> None:
         self.spielt = spielt
         self.aufrufe: list[tuple[str, dict]] = []
+        self.raeume: list[str] = []
         self._n = 0
         self.kaputt = False
 
@@ -33,6 +34,7 @@ class FakeBridge:
             raise OSError("connection refused")
         was = url.rsplit("/", 1)[1]
         self.aufrufe.append((was, body))
+        self.raeume.append(url.rsplit("/", 2)[1])
         if was == "duck":
             if not self.spielt:
                 return {"ducked": False, "reason": "not_playing"}
@@ -82,6 +84,34 @@ class WannGedaempftWirdTest(unittest.TestCase):
         d.zustand(STATE_LISTENING, True)
         _thread(d)
         self.assertEqual(bridge.aufrufe, [])
+
+    def test_satellit_mit_musik_raum_daempft_seinen_raum(self):
+        # 2026-11-15: Musik auf dem Handy (Squeezelite), Aufnahmen liefen bis
+        # zum Deckel, weil niemand sie leiser machte.
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, True, raum="handy_jochen")
+        _thread(d)
+        d._letztes_duck -= 16
+        _thread(d)
+        d.zustand(STATE_LISTENING, True, raum="handy_jochen")
+        _thread(d)
+        self.assertEqual(bridge.was(), [("duck", None), ("duck", "L1"), ("unduck", "gaston")])
+        self.assertEqual(bridge.raeume, ["handy_jochen"] * 3)
+
+    def test_nach_dem_handy_daempft_das_haupt_mikrofon_wieder_seinen_raum(self):
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, True, raum="handy_jochen")
+        _thread(d)
+        d.zustand(STATE_LISTENING, True)
+        _thread(d)
+        d.vorab()                    # Ruf am Haupt-Mikrofon
+        _thread(d)
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        d.zustand(STATE_LISTENING, False)
+        _thread(d)
+        self.assertEqual(bridge.raeume,
+                         ["handy_jochen", "handy_jochen", "wohnzimmer", "wohnzimmer"])
 
     def test_langer_turn_erneuert_mit_der_eigenen_lease(self):
         d, bridge = _bauen()
@@ -261,6 +291,54 @@ class BridgeNeustartTest(unittest.TestCase):
             d.zustand(STATE_LISTENING, False)
             _thread(d)
         self.assertEqual(len(cm.output), 2, cm.output)
+
+    def test_im_turn_neu_gestartete_musik_bleibt_laut(self):
+        """Erneuerung als neues duck: sofort frei, danach kein duck mehr im Turn."""
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        echt = bridge.post
+
+        def neues_lied(url, body):
+            antwort = echt(url, body)
+            if url.endswith("/duck"):
+                return {"ducked": True, "lease_id": "L9"}
+            return antwort
+        d._post = neues_lied
+        d._letztes_duck -= 16
+        with self.assertLogs("voice_assistant.services.musik_ducking", "WARNING"):
+            _thread(d)
+        self.assertEqual(bridge.was()[-1], ("unduck", "gaston"))
+        self.assertEqual(d._leases, [])
+        n = len(bridge.was())
+        d._letztes_duck -= 16
+        _thread(d)
+        self.assertEqual(len(bridge.was()), n, "nicht wieder gedaempft")
+
+    def test_started_in_turn_ohne_unduck_und_ohne_neues_duck(self):
+        """Bridge meldet started_in_turn: Lease aufgeben, kein unduck, kein duck mehr."""
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        echt = bridge.post
+
+        def bestellt(url, body):
+            antwort = echt(url, body)
+            if url.endswith("/duck"):
+                return {"ducked": False, "reason": "started_in_turn"}
+            return antwort
+        d._post = bestellt
+        d._letztes_duck -= 16
+        with self.assertNoLogs("voice_assistant.services.musik_ducking", "WARNING"):
+            _thread(d)
+            n = len(bridge.was())
+            d._letztes_duck -= 16
+            _thread(d)
+            d.zustand(STATE_LISTENING, False)
+            _thread(d)
+        self.assertEqual(d._leases, [])
+        self.assertEqual(len(bridge.was()), n, "weder duck noch unduck danach")
+        self.assertNotIn(("unduck", "gaston"), bridge.was())
 
     def test_normale_erneuerung_meldet_nichts(self):
         d, bridge = _bauen()
