@@ -315,6 +315,31 @@ class BridgeNeustartTest(unittest.TestCase):
         _thread(d)
         self.assertEqual(len(bridge.was()), n, "nicht wieder gedaempft")
 
+    def test_started_in_turn_ohne_unduck_und_ohne_neues_duck(self):
+        """Bridge meldet started_in_turn: Lease aufgeben, kein unduck, kein duck mehr."""
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        echt = bridge.post
+
+        def bestellt(url, body):
+            antwort = echt(url, body)
+            if url.endswith("/duck"):
+                return {"ducked": False, "reason": "started_in_turn"}
+            return antwort
+        d._post = bestellt
+        d._letztes_duck -= 16
+        with self.assertNoLogs("voice_assistant.services.musik_ducking", "WARNING"):
+            _thread(d)
+            n = len(bridge.was())
+            d._letztes_duck -= 16
+            _thread(d)
+            d.zustand(STATE_LISTENING, False)
+            _thread(d)
+        self.assertEqual(d._leases, [])
+        self.assertEqual(len(bridge.was()), n, "weder duck noch unduck danach")
+        self.assertNotIn(("unduck", "gaston"), bridge.was())
+
     def test_normale_erneuerung_meldet_nichts(self):
         d, bridge = _bauen()
         echt = bridge.post
