@@ -426,6 +426,11 @@ How Ava differs from the ReSpeaker (measured, not assumed):
   The wake word is not part of the recording, so every recording looked
   "spoken in one breath". Anyone who waited for Ava's wake sound was cut off
   after a second.
+- **No ring, so tones.** You hear Ava's wake sound when it starts listening,
+  but not when the microphone closes again. So the assistant plays a short,
+  hard, falling tone (a reversed plop) on the phone as soon as it closes the session: at the end of a
+  recording and when a follow-up ends without speech (`mikro_zu_ton`, on by
+  default). The reply arrives about half a second later because of it.
 - Recording and playback keep working with the screen locked.
 - The brain is told that the input came from the phone (`locale.satellit_hinweis`), so it can treat a personal phone as its owner, e.g. for a per-person play history. The `[Sprecher: …]` stays the measured result.
 

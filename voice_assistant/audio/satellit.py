@@ -25,6 +25,17 @@ bis sie wieder im Leerlauf ist. Ansagen gehen an das Geraet des letzten Turns
 (``ziel``), auch spaetere von aussen (``voice_speak_text``, Timer) — bis ein
 Turn vom Haupt-Mikrofon kommt oder der Satellit die Verbindung verliert.
 
+**Ein Ton, wenn das Mikrofon zugeht** (``mikro_zu_ton``, seit 2026-11-15).
+Ava hat keinen Ring: man hoert ihr Pling, wenn sie zuhoert, aber nicht, wann
+sie wieder aufhoert — weder nach der Aufnahme noch, wenn ein Follow-up ohne
+Sprache endet (Jochen nach dem ersten Bad-Abend). Wann zu ist, entscheiden
+wir (``sitzung_beenden``), also spielen wir genau dort einen kurzen fallenden
+Ton aufs Geraet. Er laeuft in einem eigenen Faden unter ``tts_lock``, damit
+die Hauptschleife nicht wartet und er sich nicht mit der Bestaetigung
+ueberlagert; die kommt dadurch um die Tonlaenge plus Avas Ansage-Ueberhang
+(gemessen 0,2–0,5 s) spaeter. Sessions, die ohne Turn geschlossen werden
+(Ruf waehrend eines anderen Turns), bekommen keinen Ton.
+
 Ein Satellit ist ortsungebunden (Jochen, 2026-10-13: "wo ich bin, muss ich dann
 ggf. sagen"). Es gibt deshalb keinen Raum dazu.
 """
@@ -32,15 +43,23 @@ ggf. sagen"). Es gibt deshalb keinen Raum dazu.
 from __future__ import annotations
 
 import logging
+import threading
+from typing import Callable
 
 import numpy as np
 
 from voice_assistant.audio.respeaker import RespeakerClient, RespeakerSink, get_client
-from voice_assistant.config import FOLLOWUP_BEEP_PATH, RespeakerAudio, SatellitConfig
+from voice_assistant.config import (
+    FOLLOWUP_BEEP_PATH,
+    MIKRO_ZU_BEEP_PATH,
+    RespeakerAudio,
+    SatellitConfig,
+)
 from voice_assistant.state import (
     STATE_FOLLOWUP,
     STATE_LISTENING,
     STATE_RECORDING,
+    tts_lock,
 )
 
 log = logging.getLogger(__name__)
@@ -67,9 +86,12 @@ class SatellitQuelle:
     ``read_chunk()`` und im Leerlauf ``satellit_trigger()``.
     """
 
-    def __init__(self, haupt, clients: dict[str, RespeakerClient]) -> None:
+    def __init__(self, haupt, clients: dict[str, RespeakerClient],
+                 mikro_zu: Callable[[str], None] | None = None) -> None:
         self._haupt = haupt
         self._clients = clients
+        # Wird mit dem Geraetenamen gerufen, wenn das Mikrofon eines Turns zugeht.
+        self._mikro_zu = mikro_zu
         self._zustand = STATE_LISTENING
         # Geraet, dem der laufende Turn gehoert (None = Haupt-Mikrofon).
         self.aktiv: str | None = None
@@ -91,6 +113,8 @@ class SatellitQuelle:
         if self.aktiv is not None:
             if alt in _AUFNAHME and state not in _AUFNAHME:
                 self._clients[self.aktiv].sitzung_beenden()
+                if self._mikro_zu is not None:
+                    self._mikro_zu(self.aktiv)
             if state == STATE_LISTENING:
                 log.info("Satellit %s: Turn vorbei", self.aktiv)
                 self.aktiv = None
@@ -220,5 +244,22 @@ def mit_satelliten(satelliten: list[SatellitConfig], source, sink):
         clients[sat.name] = get_client(cfg)
         senken[sat.name] = RespeakerSink(cfg)
         print(f"📱 Satellit {sat.name}: {sat.host}:{sat.port} (Ansagen über :{sat.http_port})")
-    quelle = SatellitQuelle(source, clients)
+    mit_ton = {sat.name for sat in satelliten if sat.mikro_zu_ton}
+    quelle = SatellitQuelle(source, clients, _mikro_zu_ton(senken, mit_ton))
     return quelle, SatellitSenke(sink, quelle, senken)
+
+
+def _mikro_zu_ton(senken: dict[str, RespeakerSink], namen: set[str]):
+    """Rueckruf fuer SatellitQuelle: Ton "Mikro zu" im eigenen Faden."""
+    def spielen(name: str) -> None:
+        with tts_lock:
+            try:
+                senken[name].play_wav(MIKRO_ZU_BEEP_PATH)
+            except Exception as exc:
+                log.warning("Satellit %s: Mikro-zu-Ton fehlgeschlagen: %s", name, exc)
+
+    def mikro_zu(name: str) -> None:
+        if name in namen:
+            threading.Thread(target=spielen, args=(name,), daemon=True,
+                             name=f"mikro-zu-{name}").start()
+    return mikro_zu

@@ -438,6 +438,11 @@ Was bei Ava anders ist als beim ReSpeaker (gemessen, nicht angenommen):
   Wakewort steckt nicht in der Aufnahme, deshalb sah jede Aufnahme
   „durchgesprochen“ aus. Wer Avas Weck-Ton abwartete, wurde nach einer Sekunde
   abgeschnitten.
+- **Kein Ring, also Töne.** Man hört Avas Weck-Ton, wenn sie zuhört, aber
+  nicht, wann das Mikrofon wieder zu ist. Deshalb spielt der Assistent einen
+  kurzen, harten, fallenden Ton (ein umgekehrter Plop) aufs Handy, sobald er
+  die Session schließt: am Ende der Aufnahme und wenn ein Follow-up ohne Sprache endet (`mikro_zu_ton`,
+  Standard an). Die Antwort kommt dadurch etwa eine halbe Sekunde später.
 - Aufnahme und Wiedergabe funktionieren auch bei gesperrtem Bildschirm.
 - Der Brain erfährt, dass die Eingabe vom Handy kam (`locale.satellit_hinweis`), und kann ein persönliches Handy so seinem Besitzer zuordnen, z. B. für eine Musik-Historie pro Person. Der `[Sprecher: …]` bleibt das Ergebnis der Messung.
 

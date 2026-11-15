@@ -99,6 +99,7 @@ from voice_assistant.services.tts import (
     SpeachesTts,
     ThinkingWorker,
     prerender_followup_beep,
+    prerender_mikro_zu_beep,
     prerender_ja,
     rerender_ja_speaches,
 )
@@ -1124,6 +1125,8 @@ def run() -> None:
     prerender_followup_beep()
     if profile.barge_in.enabled and profile.barge_in.beep:
         prerender_abort_beep()
+    if any(_sat.mikro_zu_ton for _sat in profile.satelliten):
+        prerender_mikro_zu_beep()
 
     # --- Wakeword + VAD ---
     wakeword = _make_wakeword(profile)

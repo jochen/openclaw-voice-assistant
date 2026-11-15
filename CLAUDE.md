@@ -526,6 +526,11 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   „gar nicht so verkehrt“).
 - Ansagen gehen an das Gerät des letzten Turns (`ziel`), auch spätere von außen,
   bis das Haupt-Mikrofon (ReSpeaker, Wohnbereich) triggert oder das Handy weg ist.
+- **Ton „Mikro zu“ (`mikro_zu_ton`, seit 2026-11-15):** Ava hat keinen Ring,
+  man hörte nur das Öffnen (Jochen nach dem Bad). Beim Schließen der Session
+  im eigenen Turn (Aufnahme-Ende, Follow-up ohne Sprache) spielt ein eigener
+  Faden unter `tts_lock` einen „umgekehrten Plop“ aufs Handy (70 ms, 1400 → 300 Hz). Noch nicht im Bad
+  gehört; ob der Follow-up-Beep dort ankommt, ist ebenfalls ungeprüft.
 
 Offen: Sprecher-Verifikation mit Handy-Mikro messen (Schwelle nur gegen den
 ReSpeaker gemessen; der erste Live-Turn erkannte jochen). Kein Barge-in,

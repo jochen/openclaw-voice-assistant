@@ -24,6 +24,7 @@ from voice_assistant.audio.strom import RATE as STROM_RATE, zu_48k_stereo
 from voice_assistant.services import aussprache
 from voice_assistant.config import (
     ABORT_BEEP_PATH,
+    MIKRO_ZU_BEEP_PATH,
     FOLLOWUP_BEEP_PATH,
     LAST_REPLY_TXT,
     LAST_REPLY_WAV,
@@ -561,6 +562,40 @@ def prerender_abort_beep() -> None:
         print(f"✅ Abbruch-Beep erzeugt: {ABORT_BEEP_PATH}")
     except Exception as e:
         print(f"⚠️  Abbruch-Beep fehlgeschlagen: {e}")
+
+
+def prerender_mikro_zu_beep() -> None:
+    """Ein kurzer, harter "umgekehrter Plop": "das Mikrofon ist jetzt zu".
+
+    Fuer Satelliten ohne Ring (Ava auf dem Handy, Jochen 2026-11-15: man hoert
+    nur, wann zugehoert wird, nicht wann das Mikro wieder zu ist). Ein Plop
+    (Blase) springt in der Tonhoehe nach oben; dieser stuerzt in 70 ms
+    exponentiell von 1400 auf 300 Hz, mit hartem Einsatz und schnellem
+    Abklingen (Jochen: "etwas haerter, schnell, wie ein umgekehrter Plop").
+    Gegen die anderen Toene abgesetzt: der Follow-up-Beep ist ein steigender
+    Einzelton ("ich hoere zu"), der Abbruch-Beep zwei getrennte fallende Toene
+    ("mitten im Satz aufgehoert").
+    """
+    import wave as _wave
+    import numpy as np
+
+    rate = 16000
+    n = int(rate * 0.07)
+    t = np.arange(n) / rate
+    hz = 1400 * (300 / 1400) ** (t / t[-1])          # exponentiell fallend
+    phase = 2 * np.pi * np.cumsum(hz) / rate
+    huelle = np.minimum(t / 0.002, 1.0) * np.exp(-t / 0.025)
+    huelle[-int(rate * 0.005):] *= np.linspace(1, 0, int(rate * 0.005))  # kein Knacks am Ende
+    samples = (np.sin(phase) * huelle * 20000).astype(np.int16)
+    try:
+        with _wave.open(MIKRO_ZU_BEEP_PATH, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes(samples.tobytes())
+        print(f"✅ Mikro-zu-Ton erzeugt: {MIKRO_ZU_BEEP_PATH}")
+    except Exception as e:
+        print(f"⚠️  Mikro-zu-Ton fehlgeschlagen: {e}")
 
 
 def prerender_ja(text: str = "Ja?", out_path: str = PIPER_OUT) -> None:

@@ -69,6 +69,10 @@ class SatellitConfig:
     encryption_key: str = ""
     volume: float = 1.0
     http_port: int = 18801
+    # Kurzer fallender Ton, wenn das Mikrofon des Geraets zugeht (Ende der
+    # Aufnahme, Follow-up ohne Sprache). Ava hat keinen Ring; ohne Ton hoert
+    # man nur das Oeffnen (ihr Wakeword-Pling), nie das Schliessen.
+    mikro_zu_ton: bool = True
 
 
 # Geht seit 2026-10-24 als "instructions" an /v1/responses (openclaw_instructions),
@@ -1105,6 +1109,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
             encryption_key=str(sat_raw.get("encryption_key", "") or ""),
             volume=float(sat_raw.get("volume", 1.0)),
             http_port=int(sat_raw.get("http_port", 18801 + i)),
+            mikro_zu_ton=bool(sat_raw.get("mikro_zu_ton", True)),
         ))
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---
@@ -1442,6 +1447,8 @@ FOLLOWUP_BEEP_PATH = os.path.join(WORKSPACE, "followup_beep.wav")
 # steigenden Follow-up-Beep hoerbar unterscheidet — "ich habe aufgehoert"
 # gegen "ich hoere jetzt zu".
 ABORT_BEEP_PATH = os.path.join(WORKSPACE, "abort_beep.wav")
+# Satelliten ohne Ring (Ava): "Mikrofon ist zu", ein einzelner fallender Gleitton
+MIKRO_ZU_BEEP_PATH = os.path.join(WORKSPACE, "mikro_zu_beep.wav")
 # Küchentimer: Zustand (überlebt Neustarts) und Klingelton für den Lautsprecher
 TIMER_STATE_PATH = os.path.join(WORKSPACE, "timer.json")
 TIMER_KLINGEL_PATH = os.path.join(WORKSPACE, "timer_klingel.wav")

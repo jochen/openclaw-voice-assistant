@@ -13,8 +13,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from voice_assistant.audio import satellit as satellit_mod  # noqa: E402
 from voice_assistant.audio.satellit import SatellitQuelle, SatellitSenke  # noqa: E402
-from voice_assistant.config import FOLLOWUP_BEEP_PATH  # noqa: E402
+from voice_assistant.config import FOLLOWUP_BEEP_PATH, MIKRO_ZU_BEEP_PATH  # noqa: E402
 from voice_assistant.state import (  # noqa: E402
     STATE_FOLLOWUP,
     STATE_LISTENING,
@@ -169,6 +170,60 @@ class VerwaisteSessionTest(unittest.TestCase):
         handy.oeffnen()
         _schritt(quelle, STATE_WAITING)
         self.assertEqual(handy.beendet, 2)
+
+
+class MikroZuTonTest(unittest.TestCase):
+    """Ava hat keinen Ring: das Schliessen des Mikrofons muss hoerbar sein."""
+
+    def _bauen(self):
+        haupt, handy = FakeHaupt(), FakeClient()
+        zu: list[str] = []
+        quelle = SatellitQuelle(haupt, {"jochen": handy}, zu.append)
+        return handy, quelle, zu
+
+    def test_ende_der_aufnahme_meldet_mikro_zu(self):
+        handy, quelle, zu = self._bauen()
+        handy.oeffnen()
+        _schritt(quelle, STATE_LISTENING)
+        _schritt(quelle, STATE_RECORDING)
+        self.assertEqual(zu, [])
+        _schritt(quelle, STATE_PROCESSING)
+        self.assertEqual(zu, ["jochen"])
+        _schritt(quelle, STATE_WAITING)
+        self.assertEqual(zu, ["jochen"], "nur einmal je Schliessen")
+
+    def test_followup_ohne_sprache_meldet_mikro_zu(self):
+        handy, quelle, zu = self._bauen()
+        handy.oeffnen()
+        _schritt(quelle, STATE_LISTENING)
+        _schritt(quelle, STATE_RECORDING)
+        _schritt(quelle, STATE_PROCESSING)
+        _schritt(quelle, STATE_PAUSE)
+        handy.oeffnen("")
+        _schritt(quelle, STATE_FOLLOWUP)
+        _schritt(quelle, STATE_RECORDING)     # Follow-up -> Aufnahme: bleibt offen
+        self.assertEqual(zu, ["jochen"])
+        _schritt(quelle, STATE_PAUSE)          # 10 s ohne Sprache
+        self.assertEqual(zu, ["jochen", "jochen"])
+
+    def test_ruf_waehrend_eines_haupt_turns_ohne_ton(self):
+        handy, quelle, zu = self._bauen()
+        _schritt(quelle, STATE_LISTENING)
+        _schritt(quelle, STATE_RECORDING)
+        handy.oeffnen()
+        _schritt(quelle, STATE_RECORDING)
+        _schritt(quelle, STATE_PROCESSING)
+        self.assertEqual(handy.beendet, 1)
+        self.assertEqual(zu, [])
+
+    def test_ton_spielt_aufs_geraet_und_nur_wenn_eingeschaltet(self):
+        senke = FakeSenke()
+        mikro_zu = satellit_mod._mikro_zu_ton({"jochen": senke, "aus": FakeSenke()}, {"jochen"})
+        mikro_zu("jochen")
+        mikro_zu("aus")
+        for t in [t for t in __import__("threading").enumerate() if t.name.startswith("mikro-zu-")]:
+            t.join(2)
+        self.assertEqual(senke.gespielt, [(MIKRO_ZU_BEEP_PATH, False)])
 
 
 class AnsageGehtDorthinTest(unittest.TestCase):
