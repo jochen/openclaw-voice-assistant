@@ -36,6 +36,13 @@ ueberlagert; die kommt dadurch um die Tonlaenge plus Avas Ansage-Ueberhang
 (gemessen 0,2–0,5 s) spaeter. Sessions, die ohne Turn geschlossen werden
 (Ruf waehrend eines anderen Turns), bekommen keinen Ton.
 
+**Kurze Klaenge bekommen Stille davor** (``_VORLAUF_S``, 2026-11-15). Erster
+Test mit dem Handy am Echo per Bluetooth: der Plop (70 ms) und der
+Follow-up-Beep (0,3 s) wurden gespielt (Ava meldete das Ende), waren aber
+nicht zu hoeren, ganze Saetze schon. Vermutung, nicht gemessen: die
+Bluetooth-Strecke schlaeft in der Stille ein und verschluckt beim Aufwachen
+den Anfang. Darum geht alles unter ``_KURZ_S`` mit Stille davor ans Geraet.
+
 Ein Satellit ist ortsungebunden (Jochen, 2026-10-13: "wo ich bin, muss ich dann
 ggf. sagen"). Es gibt deshalb keinen Raum dazu.
 """
@@ -43,7 +50,10 @@ ggf. sagen"). Es gibt deshalb keinen Raum dazu.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import threading
+import wave
 from typing import Callable
 
 import numpy as np
@@ -190,6 +200,47 @@ class SatellitQuelle:
         self._haupt.close()
 
 
+# Siehe Modul-Docstring: kurze Klaenge mit Stille davor ans Geraet.
+_KURZ_S = 1.0
+_VORLAUF_S = 0.5
+
+
+def _mit_vorlauf(path: str) -> str | None:
+    """Kopie von path mit _VORLAUF_S Stille davor, wenn er kuerzer als
+    _KURZ_S ist; sonst (oder bei Fehlern) None. Der Aufrufer loescht sie."""
+    try:
+        with wave.open(path, "rb") as wf:
+            params = wf.getparams()
+            rate = wf.getframerate()
+            daten = wf.readframes(wf.getnframes())
+        rahmen = params.nchannels * params.sampwidth
+        if not rate or len(daten) / rahmen / rate >= _KURZ_S:
+            return None
+        fd, ziel = tempfile.mkstemp(suffix=".wav", prefix="vorlauf_")
+        os.close(fd)
+        with wave.open(ziel, "wb") as wf:
+            wf.setnchannels(params.nchannels)
+            wf.setsampwidth(params.sampwidth)
+            wf.setframerate(rate)
+            wf.writeframes(b"\0" * (int(rate * _VORLAUF_S) * rahmen) + daten)
+        return ziel
+    except Exception as exc:
+        log.warning("Vorlauf fuer %s: %s", path, exc)
+        return None
+
+
+def _spielen(senke: RespeakerSink, path: str, mikro_danach: bool = False) -> None:
+    kopie = _mit_vorlauf(path)
+    try:
+        senke.play_wav(kopie or path, mikro_danach=mikro_danach)
+    finally:
+        if kopie:
+            try:
+                os.unlink(kopie)
+            except OSError:
+                pass
+
+
 class SatellitSenke:
     """AudioSink: spielt beim Geraet des letzten Turns, sonst beim Haupt-Geraet."""
 
@@ -207,7 +258,7 @@ class SatellitSenke:
         # Mikrofon dafuer erst geoeffnet werden — das tut die Ansage selbst
         # (start_conversation), nur waehrend eines Turns dieses Geraets.
         mikro = path == FOLLOWUP_BEEP_PATH and self._quelle.aktiv == name
-        self._senken[name].play_wav(path, mikro_danach=mikro)
+        _spielen(self._senken[name], path, mikro_danach=mikro)
 
     def strom_oeffnen(self, bei_ende):
         """Strom nur beim Haupt-Geraet; ein Satellit spielt ueber die
@@ -254,7 +305,7 @@ def _mikro_zu_ton(senken: dict[str, RespeakerSink], namen: set[str]):
     def spielen(name: str) -> None:
         with tts_lock:
             try:
-                senken[name].play_wav(MIKRO_ZU_BEEP_PATH)
+                _spielen(senken[name], MIKRO_ZU_BEEP_PATH)
             except Exception as exc:
                 log.warning("Satellit %s: Mikro-zu-Ton fehlgeschlagen: %s", name, exc)
 

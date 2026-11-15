@@ -531,6 +531,10 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   im eigenen Turn (Aufnahme-Ende, Follow-up ohne Sprache) spielt ein eigener
   Faden unter `tts_lock` einen „umgekehrten Plop“ aufs Handy (70 ms, 1400 → 300 Hz). Noch nicht im Bad
   gehört; ob der Follow-up-Beep dort ankommt, ist ebenfalls ungeprüft.
+  Erster Test (Handy per Bluetooth am Echo): Plop und Beep gespielt, aber
+  nicht zu hören, Sätze schon. Seither geht alles unter 1 s mit 0,5 s Stille
+  davor ans Handy (`_VORLAUF_S`). Vermutung: die BT-Strecke verschluckt beim
+  Aufwachen den Anfang.
 - **Sätze als Dateien, vorausgerechnet (seit 2026-11-15).** Ava spielt keinen
   Strom: eine WAV mit Platzhalter-Länge meldet nie ihr Ende (auch nicht nach
   STOP), MP3/FLAC ohne Länge starten erst nach 5–7 s, nur eine WAV mit

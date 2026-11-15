@@ -26,6 +26,18 @@ from voice_assistant.state import (  # noqa: E402
 )
 
 
+_ORIG_VORLAUF = satellit_mod._mit_vorlauf
+
+
+def setUpModule():
+    # Die Weiche-Tests pruefen Pfade; die Stille davor prueft VorlaufTest.
+    satellit_mod._mit_vorlauf = lambda path: None
+
+
+def tearDownModule():
+    satellit_mod._mit_vorlauf = _ORIG_VORLAUF
+
+
 class FakeHaupt:
     def __init__(self) -> None:
         self.flushes = 0
@@ -224,6 +236,45 @@ class MikroZuTonTest(unittest.TestCase):
         for t in [t for t in __import__("threading").enumerate() if t.name.startswith("mikro-zu-")]:
             t.join(2)
         self.assertEqual(senke.gespielt, [(MIKRO_ZU_BEEP_PATH, False)])
+
+
+class VorlaufTest(unittest.TestCase):
+    """Kurze Klaenge bekommen Stille davor (Bluetooth verschluckt den Anfang)."""
+
+    def _wav(self, sekunden, rate=16000):
+        import tempfile
+        import wave
+        fd, p = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        with wave.open(p, "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(rate)
+            wf.writeframes(np.full(int(rate * sekunden), 1000, dtype=np.int16).tobytes())
+        self.addCleanup(os.unlink, p)
+        return p
+
+    def test_kurzer_klang_bekommt_stille_davor(self):
+        import wave
+        kopie = _ORIG_VORLAUF(self._wav(0.07))
+        self.assertIsNotNone(kopie)
+        self.addCleanup(os.unlink, kopie)
+        with wave.open(kopie) as wf:
+            x = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+        vorlauf = int(16000 * satellit_mod._VORLAUF_S)
+        self.assertEqual(len(x), vorlauf + int(16000 * 0.07))
+        self.assertFalse(x[:vorlauf].any())
+        self.assertTrue((x[vorlauf:] == 1000).all())
+
+    def test_langer_satz_bleibt_wie_er_ist(self):
+        self.assertIsNone(_ORIG_VORLAUF(self._wav(2.0)))
+
+    def test_kopie_wird_nach_dem_abspielen_geloescht(self):
+        satellit_mod._mit_vorlauf = _ORIG_VORLAUF
+        self.addCleanup(setattr, satellit_mod, "_mit_vorlauf", lambda path: None)
+        senke = FakeSenke()
+        satellit_mod._spielen(senke, self._wav(0.1))
+        (pfad, _), = senke.gespielt
+        self.assertIn("vorlauf_", pfad)
+        self.assertFalse(os.path.exists(pfad))
 
 
 class AnsageGehtDorthinTest(unittest.TestCase):
