@@ -556,7 +556,9 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   Dauer-Stream, der bei Pause Stille liefert. `audio/satellit_musik.py` fragt
   alle 2 s den Raumzustand der Bridge ab und gibt Ava die Stream-URL, wenn
   der Raum spielt; STOP erst 30 s nach Stopp bzw. 10 min nach Pause (die
-  Pause ist auch das Dämpfen). **Drei Regler** (Jochen, nach einem
+  Pause ist auch das Dämpfen). Ob Ava zuhört, zählt der Stream-Server
+  (`<musik_stream>/clients`): Ava meldet den Zustand ihres Medien-Players
+  nicht, die erste Fassung schickte deshalb alle 16 s die URL neu (Aussetzer). **Drei Regler** (Jochen, nach einem
   Missverständnis): Echo/BT für alles, Avas volume fest auf voll (ein Wert für
   Sprache UND Musik, nie anfassen), Musikserver nur für die Musik — das
   Verhältnis Musik:Sprache ist allein dessen Lautstärke. Ein Barge-in schickt

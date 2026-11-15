@@ -9,15 +9,13 @@ import os
 import sys
 import unittest
 
-import aioesphomeapi
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from voice_assistant.audio import satellit_musik as sm  # noqa: E402
 from voice_assistant.audio.satellit_musik import SatellitMusik  # noqa: E402
 
-PLAYING = aioesphomeapi.MediaPlayerState.PLAYING
-IDLE = aioesphomeapi.MediaPlayerState.IDLE
+PLAYING = 1   # Hoerer am Stream
+IDLE = 0
 URL = "http://musik.example:8770/handy"
 
 
@@ -29,9 +27,6 @@ class FakeClient:
 
     def verbunden(self):
         return self.verbunden_
-
-    def player_zustand(self):
-        return self.zustand
 
     def musik_url(self, url):
         self.befehle.append(f"url {url}")
@@ -55,7 +50,8 @@ class SchrittTest(unittest.TestCase):
         self.uhr = Uhr()
         self.raum = "play"
         self.m = SatellitMusik("jochen", self.client, "handy_jochen", URL,
-                               lambda r: self.raum, uhr=self.uhr)
+                               lambda r: self.raum, hoerer=lambda: self.client.zustand,
+                               uhr=self.uhr)
 
     def test_raum_spielt_ava_still_startet_stream(self):
         self.assertEqual(self.m.schritt(), "start")
@@ -114,6 +110,14 @@ class SchrittTest(unittest.TestCase):
     def test_bridge_weg_aendert_nichts(self):
         self.client.zustand = PLAYING
         self.raum = None
+        self.uhr.t += 10_000
+        self.assertIsNone(self.m.schritt())
+        self.assertEqual(self.client.befehle, [])
+
+    def test_stream_server_weg_aendert_nichts(self):
+        self.client.zustand = None
+        self.assertIsNone(self.m.schritt())
+        self.raum = "stop"
         self.uhr.t += 10_000
         self.assertIsNone(self.m.schritt())
         self.assertEqual(self.client.befehle, [])

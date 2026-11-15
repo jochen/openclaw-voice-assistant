@@ -549,11 +549,6 @@ class RespeakerClient:
         nicht der Sprach-Player (audio/satellit_musik.py)."""
         return self._player_command(media_url=url)
 
-    def player_zustand(self):
-        """Letzter gemeldeter Zustand des Media-Players (None = unbekannt)."""
-        with self._player_cv:
-            return self._player_state
-
     # Zustaende, die "der Player gibt gerade Ton aus" bedeuten.
     #
     # Gemessen am 2026-09-20 gegen die echte Hardware: eine Ansage ueber
