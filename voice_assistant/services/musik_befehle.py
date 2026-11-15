@@ -85,10 +85,15 @@ class MusikBefehle:
         self._post = post or self._http_post
         self._get = get or self._http_get
 
-    def ausfuehren(self, befehl: MusikBefehl) -> MusikErgebnis | None:
-        """None = nicht erledigt, der Satz gehoert dem Brain."""
+    def ausfuehren(self, befehl: MusikBefehl,
+                   standard_raum: str | None = None) -> MusikErgebnis | None:
+        """None = nicht erledigt, der Satz gehoert dem Brain.
+
+        standard_raum: Raum ohne gesprochene Raumangabe, sonst der Haupt-Raum
+        (Handy-Turn: der musik_raum des Satelliten)."""
         t0 = time.monotonic()
-        raum = self._raum if befehl.raum is None else self._raum_von(befehl.raum)
+        raum = ((standard_raum or self._raum) if befehl.raum is None
+                else self._raum_von(befehl.raum))
         if raum is None:
             return None
         antwort = self._senden(raum, befehl.aktion)

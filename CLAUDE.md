@@ -548,6 +548,10 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   Playlist Baden“ vom Handy lief auf dem Kachelofen. Mit `musik_raum` hängt
   `hinweis_fuer` den `locale.satellit_musik_hinweis` an (Raum der Bridge, deren
   Player Squeezelite auf dem Handy ist). Den Raum legt die Bridge auf pi51 an.
+- **Unklar am Handy → Brain ohne Rückfrage (seit 2026-11-15):** „Mach bitte
+  etwas lauter“ (Musik am Handy) wurde zur Aktuator-Rückfrage „was ich
+  schalten soll“. Jetzt geht ein unklarer Schaltbefehl dort mit
+  `locale.satellit_unklar_hinweis` gleich an den Brain.
 
 Offen: Sprecher-Verifikation mit Handy-Mikro messen (Schwelle nur gegen den
 ReSpeaker gemessen; der erste Live-Turn erkannte jochen). Kein Barge-in,
@@ -597,7 +601,8 @@ den Aktuator, nicht über Node-RED, sondern ein fester Erkenner wie beim Timer
 (`services/musik_parser.py`), der an den control-Endpunkt der Bridge geht
 (`services/musik_befehle.py`, Vertrag im MemPalace `music-control`). Zweig in
 STATE_PROCESSING **vor** dem Stopp-Muster („Gaston, stopp, stopp die Musik
-bitte wieder.“ war dort ein Abbruch), nur Erst-Turn, nicht am Satelliten,
+bitte wieder.“ war dort ein Abbruch), nur Erst-Turn, am Satelliten nur mit
+`musik_raum` (dann ist das der Standard-Raum, seit 2026-11-15),
 nicht bei offener Timer-Rückfrage. Die Bedingung führt den Befehl schon aus;
 lehnt die Bridge ab, geht der Satz an den Brain. Ausnahme: spielt im
 Haupt-Raum nichts, aber in genau einem anderen, wirken stopp/Pause ohne

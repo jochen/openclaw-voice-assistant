@@ -2746,9 +2746,13 @@ def run() -> None:
                     elif (followup_round == 0 and not unklar_round and not war_bargein
                           and pending_timer is None
                           and musik_ducker is not None and musik_ducker.befehle is not None
-                          and not _satelliten_turn()
+                          and (not _satelliten_turn()
+                               or audio_source.aktiv in _sat_musik_raum)
                           and (musik_befehl := musik_parser.parse(text)) is not None
-                          and (musik_erg := musik_ducker.befehle.ausfuehren(musik_befehl))
+                          and (musik_erg := musik_ducker.befehle.ausfuehren(
+                              musik_befehl,
+                              _sat_musik_raum.get(audio_source.aktiv)
+                              if _satelliten_turn() else None))
                           is not None):
                         # --- Musik-Schnellweg: fester Erkenner, kein Modell ---
                         # Die Bedingung FUEHRT den Befehl schon aus: lehnt die
@@ -2756,8 +2760,10 @@ def run() -> None:
                         # ist sie False und der Satz geht weiter an den Brain.
                         # Vor dem Stopp-Muster: "Gaston, stopp, stopp die Musik
                         # bitte wieder." (Journal) ist dort ein Abbruch. Nur im
-                        # Erst-Turn, wie Timer und Aktuator; ein Handy-Turn hat
-                        # keinen Raum.
+                        # Erst-Turn, wie Timer und Aktuator. Ein Handy-Turn nur
+                        # mit musik_raum, und ohne gesagten Raum gilt der
+                        # (2026-11-15: "mach etwas lauter" am Handy ging an den
+                        # Schalt-Klassifikator und wurde eine Rueckfrage).
                         bargein_abgebrochen_audio = None
                         _save_last_recording(recorded_chunks)
                         _flush_endpoint(text, ausgang="musik")
@@ -3327,7 +3333,12 @@ def run() -> None:
                                           + (f"{gewohnheit.gruppe} ({gewohnheit.treffer}/"
                                              f"{gewohnheit.tage} Tage)" if gewohnheit else
                                              f"keine — {gw_grund}"))
-                            zum_brain = unklar_round >= MAX_UNKLAR_ROUNDS or gewohnheit is not None
+                            # Am Handy keine Rückfrage, gleich der Brain: dort
+                            # ist oft die Musik auf dem Handy gemeint („mach
+                            # etwas lauter“), die der Schaltweg nicht kennt
+                            # (Jochen 2026-11-15).
+                            zum_brain = (unklar_round >= MAX_UNKLAR_ROUNDS or gewohnheit is not None
+                                         or _satelliten_turn())
                             turn_epoch = time.time()
                             if not zum_brain:   # der Brain-Weg macht beides selbst
                                 _save_last_recording(recorded_chunks)
@@ -3395,6 +3406,9 @@ def run() -> None:
                                 namen = (digest.get(gewohnheit.gruppe) or {}).get("namen") or []
                                 unklar_an_brain = profile.locale.gewohnheit_hinweis_fuer(
                                     gewohnheit, namen[0] if namen else gewohnheit.gruppe)
+                            elif _satelliten_turn() and not unklar_erst_text:
+                                unklar_an_brain = profile.locale.satellit_unklar_hinweis_fuer(
+                                    unklar_grund)
                             else:
                                 # Auch die Antwort auf die Rückfrage ist unklar:
                                 # der Brain entscheidet, mit beiden Sätzen und
@@ -3423,6 +3437,8 @@ def run() -> None:
                                 verdict != VERDICT_UNKLAR or unklar_an_brain):
                             if gewohnheit is not None:
                                 print(f"[{now:.1f}s] 🔌 Aktuator: ohne Ziel, Gewohnheit {gewohnheit.id} → Brain (mit Hinweis)")
+                            elif unklar_an_brain and _satelliten_turn() and verdict == VERDICT_UNKLAR:
+                                print(f"[{now:.1f}s] 🔌 Aktuator: unklar am Handy → Brain (ohne Rückfrage)")
                             elif unklar_an_brain:
                                 print(f"[{now:.1f}s] 🔌 Aktuator: Rückfrage-Antwort ohne sicheren Befehl → Brain (mit erstem Satz)")
                             elif actuator is not None and actuator.ready and aktuator_gesperrt:

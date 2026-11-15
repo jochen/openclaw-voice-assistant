@@ -173,6 +173,15 @@ _DEFAULT_UNKLAR_HINWEIS = (
     "sonst frag kurz nach.]"
 )
 
+# Am Handy-Satelliten geht ein unklarer Schaltbefehl ohne Rückfrage an den
+# Brain (Jochen 2026-11-15): „Mach bitte etwas lauter“ meinte die Musik auf
+# dem Handy, die Rückfrage „was ich schalten soll“ führte ins Leere.
+_DEFAULT_SATELLIT_UNKLAR_HINWEIS = (
+    "[Hinweis zur Aufnahme: Der schnelle Schaltweg konnte diesen Satz nicht "
+    "sicher zuordnen; geschaltet wurde nichts. Grund: {grund}. Entscheide "
+    "selbst, was gemeint ist, und führe es aus; sonst frag kurz nach.]"
+)
+
 # Rollo-Befehl ohne Ziel, aber mit passender Gewohnheit
 # (services/gewohnheiten.py): statt der Rückfrage des Aktuators schaltet der
 # Brain die gewohnte Gruppe und sagt sie an (Jochen 2026-10-31). Der letzte
@@ -218,6 +227,7 @@ class LocaleConfig:
     openclaw_voice_erinnerung: str = _DEFAULT_VOICE_ERINNERUNG
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
+    satellit_unklar_hinweis: str = _DEFAULT_SATELLIT_UNKLAR_HINWEIS
     gewohnheit_hinweis: str = _DEFAULT_GEWOHNHEIT_HINWEIS
     satellit_hinweis: str = _DEFAULT_SATELLIT_HINWEIS
     satellit_musik_hinweis: str = _DEFAULT_SATELLIT_MUSIK_HINWEIS
@@ -233,6 +243,9 @@ class LocaleConfig:
         # replace statt format: Transkripte dürfen geschweifte Klammern enthalten
         return (self.unklar_hinweis.replace("{erst}", erst or "")
                 .replace("{grund}", grund or "unbekannt"))
+
+    def satellit_unklar_hinweis_fuer(self, grund: str | None) -> str:
+        return self.satellit_unklar_hinweis.replace("{grund}", grund or "unbekannt")
 
     def gewohnheit_hinweis_fuer(self, g, name: str) -> str:
         werte = {"name": name, "gruppe": g.gruppe, "treffer": g.treffer,
@@ -1316,6 +1329,8 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
         satellit_musik_hinweis=str(locale_raw.get("satellit_musik_hinweis", _dloc.satellit_musik_hinweis)),
         unklar_hinweis=str(locale_raw.get("unklar_hinweis", _dloc.unklar_hinweis)),
+        satellit_unklar_hinweis=str(locale_raw.get("satellit_unklar_hinweis",
+                                                   _dloc.satellit_unklar_hinweis)),
         gewohnheit_hinweis=str(locale_raw.get("gewohnheit_hinweis", _dloc.gewohnheit_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),
     )
