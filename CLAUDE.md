@@ -596,7 +596,11 @@ Bridge wurde mitten im Ducking neu gestartet, vergaß die alte Lautstärke und
 seither über Neustarts. Freigeben und eine Erneuerung, die die Bridge als
 erstes duck nimmt, stehen im Log. Erneuert wird (Lease 30 s, alle 15 s) nur, wenn das erste duck
 wirklich gedämpft hat, sonst würde Musik leise, die Gaston im selben Turn
-gestartet hat. Alle erhaltenen `lease_id`s werden am Ende freigegeben: ob
+gestartet hat. Bestellt der Brain im Turn neue Musik,
+antwortet die Bridge auf die Erneuerung mit `started_in_turn` (pausiert
+nicht, Lease weg; seit 2026-11-15): Gaston dämpft im Turn nicht mehr und
+schickt kein unduck, die Musik läuft ohne Stille durch. Ältere Bridges nehmen
+die Erneuerung als neues duck, dann gibt Gaston sofort frei. Alle erhaltenen `lease_id`s werden am Ende freigegeben: ob
 ein zweites duck eine neue Lease anlegt, war beim Bau nicht messbar (es lief
 keine Musik). Das Token liegt in einer Datei (`token_file`), nie in der
 config.yaml oder in Logs. Erster Test mit Musik (2026-10-13, Echo
