@@ -304,6 +304,43 @@ class SitzungTest(unittest.TestCase):
         self.assertFalse(tts_lock.locked())
 
 
+class BestaetigungAmStueckTest(unittest.TestCase):
+    """Am Handy (Datei-Weg) lief die Bestaetigung im Wechsel mit der Antwort,
+    weil jeder Satz tts_lock freigab; ihr letzter Satz kam nach dem Turn-Ende
+    (2026-11-15). speak() haelt den Lock jetzt ueber alle Saetze."""
+
+    def test_bestaetigung_wird_nicht_von_der_antwort_unterbrochen(self):
+        senke = FakeSenke(geht=False)
+        # Satellit: strom_oeffnen gibt es, liefert aber keinen Strom.
+        sp = tts.ReplySpeaker(FakeTts(), senke.play_wav, FakeLeds(),
+                              strom_oeffnen=lambda bei_ende: None,
+                              antwort_tts=FakeTts(model="cosyvoice3"))
+        gespielt: list[str] = []
+
+        def spielen(self_, satz, recorder=None):
+            gespielt.append(satz)
+            time.sleep(0.03)
+            return True
+
+        orig = tts.ReplySpeaker._play_speaches_sentence
+        tts.ReplySpeaker._play_speaches_sentence = spielen
+        try:
+            a = threading.Thread(target=sp.speak, args=("Eins. Zwei. Drei.",),
+                                 kwargs={"restore_leds": False})
+            a.start()
+            time.sleep(0.01)
+            sitz = sp.stream_session(restore_leds=True, turn=None)
+            sitz.feed("Antwort A.")
+            sitz.feed("Antwort B.")
+            sitz.end()
+            a.join(3)
+        finally:
+            tts.ReplySpeaker._play_speaches_sentence = orig
+        bestaetigung = [i for i, x in enumerate(gespielt) if not x.startswith("Antwort")]
+        self.assertEqual(bestaetigung, [0, 1, 2], gespielt)
+        self.assertFalse(tts_lock.locked())
+
+
 class AntwortDienstTest(unittest.TestCase):
     """antwort_tts (CosyVoice im Fablab) zuerst, Rueckfall speaches."""
 

@@ -812,12 +812,14 @@ class ReplySpeaker:
             if not clean.strip():
                 return
             print(f"🔊 Speaking: '{clean}'")
-            sitz = self.stream_session(restore_leds=restore_leds, turn=turn)
-            for satz in split_into_sentences(clean):
-                if turn_stopped(turn):
-                    break
-                sitz.feed(satz, bereinigt=True)
-            sitz.end()
+            sitz = ReplyStreamSession(self, restore_leds, turn, ganz=True)
+            try:
+                for satz in split_into_sentences(clean):
+                    if turn_stopped(turn):
+                        break
+                    sitz.feed(satz, bereinigt=True)
+            finally:
+                sitz.end()
             return
         with tts_lock:
             # Zweite Pruefung INNERHALB des Locks, und die ist der eigentliche
@@ -893,10 +895,18 @@ class ReplyStreamSession:
     end() einmal am Schluss. Jeder Satz wird hier verbalisiert (clean_for_tts) —
     der Stream-Buffer liefert Rohsätze."""
 
-    def __init__(self, sp: "ReplySpeaker", restore_leds: bool, turn: int | None = None) -> None:
+    def __init__(self, sp: "ReplySpeaker", restore_leds: bool, turn: int | None = None,
+                 ganz: bool = False) -> None:
         self.sp = sp
         self.restore_leds = restore_leds
         self.turn = turn
+        # ganz (aus speak(): Bestaetigung, Quittung, Ansage): auf dem Datei-Weg
+        # tts_lock vom ersten Satz bis end() halten. Satzweise freigegeben lief
+        # am Handy die Bestaetigung im Wechsel mit der Antwort, ihr letzter Satz
+        # nach dem Turn-Ende, und dessen end() liess den Ring auf "Denken"
+        # stehen (2026-11-15, Ava). Der Strom-Weg haelt den Lock ohnehin.
+        self.ganz = ganz
+        self._lock_gehalten = False
         self.spoke = False
         self._led_set = False
         self._first = True
@@ -920,6 +930,10 @@ class ReplyStreamSession:
         None = Datei-Weg; "stop" = Turn abgebrochen."""
         if self._strom is not None and self._strom.beginnen():
             return self._strom
+        if self._lock_gehalten:
+            # Datei-Weg schon gewaehlt und tts_lock in unserer Hand: ein
+            # zweites acquire() hier waere eine Selbstblockade.
+            return None
         self._strom_abwarten()
         if self.sp.strom_oeffnen is None:
             return None
@@ -1011,41 +1025,54 @@ class ReplyStreamSession:
             finally:
                 strom.beenden()
             return
+        if self.ganz:
+            if not self._lock_gehalten:
+                tts_lock.acquire()
+                self._lock_gehalten = True
+            self._satz_datei(clean)
+            return
         with tts_lock:
-            # Zweite Pruefung im Lock — siehe ReplySpeaker.speak(). Genau hier
-            # ist ein abgebrochener Satz durchgekommen: feed() hatte die
-            # Pruefung oben schon passiert und hing dann am Lock, den die
-            # Bestaetigung hielt.
-            if turn_stopped(self.turn):
-                return
-            if not self._led_set:
-                self.sp.leds.set_phase(
-                    LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW
-                )
-                self._led_set = True
-            print(f"🔊 Sentence (stream): '{clean}'")
-            played = False
-            if self.sp.speaches.state.tts_ok():
-                if self.restore_leds:
-                    self.sp.leds.set_phase(LED_AUDIO_OUT)
-                ok = self.sp._play_speaches_sentence(clean, recorder=self.rec)
-                if not ok:
-                    print("⚠️  Speaches failed (stream) → Piper fallback")
-                    tmp_wav = piper_synth(clean)
-                    if tmp_wav:
-                        self.rec.add_file(clean, tmp_wav)
-                        self.sp.play_wav(tmp_wav)
-                        os.unlink(tmp_wav)
-                played = True
-            if not played:
-                if self.restore_leds:
-                    self.sp.leds.set_phase(LED_AUDIO_OUT)
+            self._satz_datei(clean)
+
+    def _satz_datei(self, clean: str) -> None:
+        """Ein Satz als Datei; der Aufrufer haelt tts_lock."""
+        from voice_assistant.services.leds import (
+            LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION,
+        )
+        # Zweite Pruefung im Lock — siehe ReplySpeaker.speak(). Genau hier
+        # ist ein abgebrochener Satz durchgekommen: feed() hatte die
+        # Pruefung oben schon passiert und hing dann am Lock, den die
+        # Bestaetigung hielt.
+        if turn_stopped(self.turn):
+            return
+        if not self._led_set:
+            self.sp.leds.set_phase(
+                LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW
+            )
+            self._led_set = True
+        print(f"🔊 Sentence (stream): '{clean}'")
+        played = False
+        if self.sp.speaches.state.tts_ok():
+            if self.restore_leds:
+                self.sp.leds.set_phase(LED_AUDIO_OUT)
+            ok = self.sp._play_speaches_sentence(clean, recorder=self.rec)
+            if not ok:
+                print("⚠️  Speaches failed (stream) → Piper fallback")
                 tmp_wav = piper_synth(clean)
                 if tmp_wav:
                     self.rec.add_file(clean, tmp_wav)
                     self.sp.play_wav(tmp_wav)
                     os.unlink(tmp_wav)
-            self.spoke = True
+            played = True
+        if not played:
+            if self.restore_leds:
+                self.sp.leds.set_phase(LED_AUDIO_OUT)
+            tmp_wav = piper_synth(clean)
+            if tmp_wav:
+                self.rec.add_file(clean, tmp_wav)
+                self.sp.play_wav(tmp_wav)
+                os.unlink(tmp_wav)
+        self.spoke = True
 
     def end(self) -> bool:
         """Gibt True zurück, wenn mindestens ein Satz gesprochen wurde."""
@@ -1053,6 +1080,9 @@ class ReplyStreamSession:
         if self._strom is not None:
             self._strom.schliessen()
         self._strom_abwarten()
+        if self._lock_gehalten:
+            self._lock_gehalten = False
+            tts_lock.release()
         self.rec.finalize()
         if not self.restore_leds:
             self.sp.leds.set_phase(LED_OPENCLAW)
