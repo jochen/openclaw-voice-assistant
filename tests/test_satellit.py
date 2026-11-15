@@ -277,6 +277,21 @@ class VorlaufTest(unittest.TestCase):
         self.assertFalse(os.path.exists(pfad))
 
 
+class HinweisTest(unittest.TestCase):
+    def test_ohne_musik_raum_nur_der_geraete_hinweis(self):
+        from voice_assistant.config import LocaleConfig, SatellitConfig
+        h = satellit_mod.hinweis_fuer("jochen", [SatellitConfig("jochen", "h")], LocaleConfig())
+        self.assertIn('Handy "jochen"', h)
+        self.assertNotIn("Musik", h)
+
+    def test_musik_raum_kommt_in_den_hinweis(self):
+        from voice_assistant.config import LocaleConfig, SatellitConfig
+        sat = SatellitConfig("jochen", "h", musik_raum="handy_jochen")
+        h = satellit_mod.hinweis_fuer("jochen", [sat], LocaleConfig())
+        self.assertIn('Handy "jochen"', h)
+        self.assertIn('Raum "handy_jochen"', h)
+
+
 class AnsageGehtDorthinTest(unittest.TestCase):
     def test_ohne_satelliten_turn_spielt_das_haupt_geraet(self):
         haupt, _, quelle, senke, senke_handy = _bauen()

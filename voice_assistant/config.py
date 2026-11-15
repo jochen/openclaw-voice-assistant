@@ -73,6 +73,9 @@ class SatellitConfig:
     # Aufnahme, Follow-up ohne Sprache). Ava hat keinen Ring; ohne Ton hoert
     # man nur das Oeffnen (ihr Wakeword-Pling), nie das Schliessen.
     mikro_zu_ton: bool = True
+    # Raum der Musik-Bridge, der zum Player auf diesem Geraet gehoert (z. B.
+    # Squeezelite auf dem Handy). Leer = kein Musik-Hinweis an den Brain.
+    musik_raum: str = ""
 
 
 # Geht seit 2026-10-24 als "instructions" an /v1/responses (openclaw_instructions),
@@ -194,6 +197,12 @@ _DEFAULT_SATELLIT_HINWEIS = (
     "[Diese Spracheingabe kam über das Handy \"{name}\", das persönliche Gerät "
     "von {name}, nicht über das feste Mikrofon im Raum.]"
 )
+# Nur mit satelliten[].musik_raum. Anlass 2026-11-15: "spiel mir die Playlist
+# Baden" vom Handy lief auf dem Kachelofen, dem Standard-Raum der Bridge.
+_DEFAULT_SATELLIT_MUSIK_HINWEIS = (
+    "[Musik zu dieser Eingabe gehört aufs Handy selbst: Raum \"{raum}\" der "
+    "Musik-Werkzeuge, solange kein anderer Raum genannt wird.]"
+)
 
 
 @dataclass
@@ -211,6 +220,7 @@ class LocaleConfig:
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
     gewohnheit_hinweis: str = _DEFAULT_GEWOHNHEIT_HINWEIS
     satellit_hinweis: str = _DEFAULT_SATELLIT_HINWEIS
+    satellit_musik_hinweis: str = _DEFAULT_SATELLIT_MUSIK_HINWEIS
     thinking_phrases: list = field(default_factory=lambda: [
         "Einen Moment bitte.",
         "Ich schaue kurz nach.",
@@ -1110,6 +1120,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
             volume=float(sat_raw.get("volume", 1.0)),
             http_port=int(sat_raw.get("http_port", 18801 + i)),
             mikro_zu_ton=bool(sat_raw.get("mikro_zu_ton", True)),
+            musik_raum=str(sat_raw.get("musik_raum", "") or ""),
         ))
 
     # --- LEDs: neues Schema + Rückwärtskompatibilität für wled_host ---
@@ -1303,6 +1314,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         openclaw_voice_erinnerung=str(locale_raw.get("openclaw_voice_erinnerung", _dloc.openclaw_voice_erinnerung)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
+        satellit_musik_hinweis=str(locale_raw.get("satellit_musik_hinweis", _dloc.satellit_musik_hinweis)),
         unklar_hinweis=str(locale_raw.get("unklar_hinweis", _dloc.unklar_hinweis)),
         gewohnheit_hinweis=str(locale_raw.get("gewohnheit_hinweis", _dloc.gewohnheit_hinweis)),
         thinking_phrases=list(locale_raw.get("thinking_phrases", _dloc.thinking_phrases)),

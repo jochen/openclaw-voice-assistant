@@ -398,6 +398,7 @@ satelliten:
     host: 192.168.1.50   # a DHCP reservation helps
     volume: 1.0
     http_port: 18801     # each device needs its own port to fetch replies from
+    musik_raum: handy    # optional: music-control room of the player on the phone
 ```
 
 While the app is not running nothing changes, and the assistant keeps quietly
@@ -432,7 +433,7 @@ How Ava differs from the ReSpeaker (measured, not assumed):
   recording and when a follow-up ends without speech (`mikro_zu_ton`, on by
   default). The reply arrives about half a second later because of it.
 - Recording and playback keep working with the screen locked.
-- The brain is told that the input came from the phone (`locale.satellit_hinweis`), so it can treat a personal phone as its owner, e.g. for a per-person play history. The `[Sprecher: …]` stays the measured result.
+- The brain is told that the input came from the phone (`locale.satellit_hinweis`), so it can treat a personal phone as its owner, e.g. for a per-person play history. The `[Sprecher: …]` stays the measured result. With `musik_raum` it is also told that music for this input belongs on the phone (`locale.satellit_musik_hinweis`) unless another room is named. The player on the phone is a separate app (e.g. Squeezelite for LMS); the phone can pass the sound on over Bluetooth.
 
 Not done yet: speaker recognition thresholds were measured on the ReSpeaker
 only, and a phone microphone sounds different. Barge-in has no audio on this

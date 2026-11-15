@@ -17,7 +17,7 @@ import webrtcvad
 
 from voice_assistant.audio.alsa import AlsaSink, AlsaSource
 from voice_assistant.audio.respeaker import RespeakerSink, RespeakerSource
-from voice_assistant.audio.satellit import mit_satelliten
+from voice_assistant.audio.satellit import hinweis_fuer, mit_satelliten
 from voice_assistant.config import (
     ACTUATOR_LOG_PATH,
     ACTUATOR_TOR_LOG_PATH,
@@ -3482,9 +3482,10 @@ def run() -> None:
                                 hinweis = profile.locale.anrede_hinweis
                                 print(f"[{now:.1f}s] 🗯️  Wakewort fehlt im Transkript, Sprecher "
                                       f"{spk_label} → Hinweis an den Brain")
-                            if _satelliten_turn() and profile.locale.satellit_hinweis:
-                                geraet = profile.locale.satellit_hinweis.replace(
-                                    "{name}", audio_source.aktiv)
+                            geraet = (hinweis_fuer(audio_source.aktiv, profile.satelliten,
+                                                   profile.locale)
+                                      if _satelliten_turn() else "")
+                            if geraet:
                                 hinweis = f"{hinweis}\n\n{geraet}" if hinweis else geraet
                             _log_outcome("brain", transcript=text,
                                          **({"gewohnheit": gewohnheit.id} if gewohnheit is not None

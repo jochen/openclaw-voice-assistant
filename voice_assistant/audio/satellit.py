@@ -284,6 +284,17 @@ class SatellitSenke:
                 fn()
 
 
+def hinweis_fuer(name: str, satelliten: list[SatellitConfig], locale) -> str:
+    """Hinweis an den Brain fuer einen Turn dieses Geraets ("" = keiner)."""
+    teile = []
+    if locale.satellit_hinweis:
+        teile.append(locale.satellit_hinweis.replace("{name}", name))
+    sat = next((s for s in satelliten if s.name == name), None)
+    if sat is not None and sat.musik_raum and locale.satellit_musik_hinweis:
+        teile.append(locale.satellit_musik_hinweis.replace("{raum}", sat.musik_raum))
+    return " ".join(teile)
+
+
 def mit_satelliten(satelliten: list[SatellitConfig], source, sink):
     """Haupt-Quelle/-Senke um Satelliten erweitern; ohne Satelliten unveraendert."""
     if not satelliten:

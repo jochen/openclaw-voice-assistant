@@ -408,6 +408,7 @@ satelliten:
     host: 192.168.1.50   # eine feste DHCP-Adresse hilft
     volume: 1.0
     http_port: 18801     # jedes Gerät braucht einen eigenen Port zum Abholen der Antworten
+    musik_raum: handy    # optional: Raum der Musik-Steuerung für den Player auf dem Handy
 ```
 
 Solange die App nicht läuft, ändert sich nichts, und der Assistent versucht
@@ -444,7 +445,7 @@ Was bei Ava anders ist als beim ReSpeaker (gemessen, nicht angenommen):
   die Session schließt: am Ende der Aufnahme und wenn ein Follow-up ohne Sprache endet (`mikro_zu_ton`,
   Standard an). Die Antwort kommt dadurch etwa eine halbe Sekunde später.
 - Aufnahme und Wiedergabe funktionieren auch bei gesperrtem Bildschirm.
-- Der Brain erfährt, dass die Eingabe vom Handy kam (`locale.satellit_hinweis`), und kann ein persönliches Handy so seinem Besitzer zuordnen, z. B. für eine Musik-Historie pro Person. Der `[Sprecher: …]` bleibt das Ergebnis der Messung.
+- Der Brain erfährt, dass die Eingabe vom Handy kam (`locale.satellit_hinweis`), und kann ein persönliches Handy so seinem Besitzer zuordnen, z. B. für eine Musik-Historie pro Person. Der `[Sprecher: …]` bleibt das Ergebnis der Messung. Mit `musik_raum` erfährt er außerdem, dass Musik zu dieser Eingabe aufs Handy gehört (`locale.satellit_musik_hinweis`), sofern kein anderer Raum genannt wird. Den Player auf dem Handy stellt eine eigene App (z. B. Squeezelite für LMS); das Handy kann den Ton per Bluetooth weitergeben.
 
 Noch offen: Die Schwellen der Sprechererkennung sind nur am ReSpeaker
 gemessen, und ein Handy-Mikrofon klingt anders. Während das Handy spricht,

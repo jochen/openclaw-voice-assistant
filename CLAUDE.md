@@ -544,6 +544,10 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
   (`speak()`, `ganz=True`) hält `tts_lock` vom ersten Satz bis `end()`;
   satzweise freigegeben lief sie im Wechsel mit der Antwort und ließ den Ring
   auf „Denken“ stehen.
+- **Musik aufs Handy (`satelliten[].musik_raum`, seit 2026-11-15):** „spiel die
+  Playlist Baden“ vom Handy lief auf dem Kachelofen. Mit `musik_raum` hängt
+  `hinweis_fuer` den `locale.satellit_musik_hinweis` an (Raum der Bridge, deren
+  Player Squeezelite auf dem Handy ist). Den Raum legt die Bridge auf pi51 an.
 
 Offen: Sprecher-Verifikation mit Handy-Mikro messen (Schwelle nur gegen den
 ReSpeaker gemessen; der erste Live-Turn erkannte jochen). Kein Barge-in,
