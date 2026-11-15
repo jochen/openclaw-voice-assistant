@@ -210,7 +210,10 @@ _ABBREVS_SPLIT = re.compile(
     r"(?:"
     r"z\.\s*B\.|d\.\s*h\.|u\.\s*a\.|o\.\s*ä\.|"
     r"bzw\.|ca\.|usw\.|etc\.|ggf\.|evtl\.|inkl\.|"
-    r"max\.|min\.|Nr\.|Dr\.|Prof\.|Mio\.|Mrd\.|Tel\.|Str\.|vs\.|Abs\."
+    r"max\.|min\.|Nr\.|Dr\.|Prof\.|Mio\.|Mrd\.|Tel\.|Str\.|vs\.|Abs\.|"
+    # Englische Titel in Interpreten-Namen („Mr. President“ wurde am Handy
+    # zwei Sätze mit Lücke dazwischen, 2026-11-15)
+    r"Mr\.|Mrs\.|Ms\.|Jr\.|Sr\.|St\.|Hr\.|Fr\."
     r")\s",
     re.IGNORECASE,
 )
