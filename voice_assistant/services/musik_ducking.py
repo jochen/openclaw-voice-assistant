@@ -287,6 +287,15 @@ class MusikDucker:
                 # Lautstaerke als die alte (previous_volume).
                 log.warning("Musik %s: Erneuerung als neues duck, previous_volume=%s",
                             self._duck_raum, antwort.get("previous_volume"))
+                # Meist hat der Brain im Turn neue Musik gestartet (die Bridge
+                # verwirft dabei die Lease). Die bleibt laut wie nach einer
+                # Denkpause: sofort frei, im Turn nicht wieder daempfen.
+                # Anlass 2026-11-15 18:33 (Bad): neues Lied pausiert bis zum
+                # Turn-Ende + 5 s Resume, ~17 s Stille.
+                self._leases.append(str(antwort["lease_id"]))
+                self._turn_gedaempft = False
+                self._freigeben("Musik im Turn neu gestartet")
+                return
             lease = str(antwort["lease_id"])
             if lease not in self._leases:
                 self._leases.append(lease)

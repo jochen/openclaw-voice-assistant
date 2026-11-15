@@ -292,6 +292,29 @@ class BridgeNeustartTest(unittest.TestCase):
             _thread(d)
         self.assertEqual(len(cm.output), 2, cm.output)
 
+    def test_im_turn_neu_gestartete_musik_bleibt_laut(self):
+        """Erneuerung als neues duck: sofort frei, danach kein duck mehr im Turn."""
+        d, bridge = _bauen()
+        d.zustand(STATE_RECORDING, False)
+        _thread(d)
+        echt = bridge.post
+
+        def neues_lied(url, body):
+            antwort = echt(url, body)
+            if url.endswith("/duck"):
+                return {"ducked": True, "lease_id": "L9"}
+            return antwort
+        d._post = neues_lied
+        d._letztes_duck -= 16
+        with self.assertLogs("voice_assistant.services.musik_ducking", "WARNING"):
+            _thread(d)
+        self.assertEqual(bridge.was()[-1], ("unduck", "gaston"))
+        self.assertEqual(d._leases, [])
+        n = len(bridge.was())
+        d._letztes_duck -= 16
+        _thread(d)
+        self.assertEqual(len(bridge.was()), n, "nicht wieder gedaempft")
+
     def test_normale_erneuerung_meldet_nichts(self):
         d, bridge = _bauen()
         echt = bridge.post
