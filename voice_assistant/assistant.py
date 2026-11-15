@@ -1756,6 +1756,9 @@ def run() -> None:
     # Transkript steht es nie, und es gibt keinen Wake-Clip.
     _satellit_zustand = getattr(audio_source, "zustand", None)
 
+    # Musik-Raum je Satellit (satelliten[].musik_raum): den daempft dessen Turn.
+    _sat_musik_raum = {s.name: s.musik_raum for s in profile.satelliten if s.musik_raum}
+
     def _satelliten_turn() -> bool:
         return getattr(audio_source, "aktiv", None) is not None
 
@@ -1815,7 +1818,8 @@ def run() -> None:
                 # Turn eroeffnet hat. tts_lock: wir sprechen (Denkpause sonst);
                 # ein Lebenszeichen zaehlt nicht, das darf in die Musik.
                 musik_ducker.zustand(state, _satelliten_turn(),
-                                     tts_lock.locked() and not lebenszeichen.is_set())
+                                     tts_lock.locked() and not lebenszeichen.is_set(),
+                                     raum=_sat_musik_raum.get(getattr(audio_source, "aktiv", None)))
             now = time.time()
             current_state[0] = state
             if rewind is not None:

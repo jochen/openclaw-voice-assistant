@@ -564,7 +564,8 @@ den Turn eröffnet hat), die Aufrufe macht ein eigener Thread. Gedämpft wird
 schon bei „Wakeword detected“ (`vorab()`): der Turn beginnt erst, wenn die
 Treffer-Serie abreißt, gemessen 0,62–0,78 s später. Verwirft das Pegel-Gate
 den Ruf, gibt `verworfen()` sofort frei, sonst nach 3 s `_VORAB_FRIST`. Satelliten-Turns
-dämpfen nichts. **Während der Brain denkt, ist die Musik laut** (Jochen
+dämpfen nur ihren `musik_raum` (seit 2026-11-15: Avas Audiofokus erreichte
+Squeezelite nicht, Aufnahmen liefen bis zum 30-s-Deckel), ohne ihn nichts. **Während der Brain denkt, ist die Musik laut** (Jochen
 2026-10-18): in STATE_WAITING ohne Ausgabe (`tts_lock` frei) nach `_HALTEN`
 4 s unduck, zum nächsten Satz neu duck (Lebenszeichen nicht,
 `state.lebenszeichen`) — aber nur, wenn das

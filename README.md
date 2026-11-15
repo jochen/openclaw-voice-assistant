@@ -466,7 +466,10 @@ the bridge is unreachable, this is logged once. The music system restores the
 volume by itself after `timeout_s` (30 s) without a new `duck`, so a longer
 turn renews every 15 s, but only if the first `duck` actually lowered
 something. Otherwise the assistant would duck music it has just started in
-this very turn. Turns from a satellite (phone) have no room and duck nothing.
+this very turn. A turn from a satellite (phone) ducks only the satellite's own
+music room (`satelliten[].musik_raum`, e.g. a player app on the phone); without
+one it ducks nothing. The phone's own audio ducking did not reach such a player
+in our test, and recordings ran into the 30 s cap under the music.
 If a turn started the music (nothing played when the wake word came, something plays now), no follow-up window opens: it would listen straight into the music. Anyone who wants more says the wake word, which ducks at once.
 Announcements from outside a turn (`voice_speak_text`) duck the music while
 they play, unless they go to the phone. Kitchen timers deliberately don't:

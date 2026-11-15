@@ -36,8 +36,11 @@ Regeln:
 - **Ansagen von aussen** (``voice_speak_text``) daempfen ebenfalls, solange sie
   laufen (``ansage()``). Der Timer nicht (Jochen, 2026-10-13): weder sein
   Klingeln noch „Der Timer ist abgelaufen“.
-- **Nur Turns des Haupt-Mikrofons.** Ein Satelliten-Turn (Handy) hat keinen
-  Raum (audio/satellit.py) und daempft nichts.
+- **Satelliten-Turns daempfen ihren eigenen Raum** (``raum`` in
+  ``zustand()``, aus ``satelliten[].musik_raum``), sonst nichts. Anlass
+  2026-11-15: Musik ueber Squeezelite auf dem Handy, Avas eigenes Ducking
+  (Android-Audiofokus) erreichte sie nicht, und die Aufnahmen liefen in der
+  Musik bis zum 30-s-Deckel. Ein Satellit ohne ``musik_raum`` daempft nichts.
 - **Erneuert wird nur, was das erste duck tatsaechlich gedaempft hat.** Lief
   beim Ruf keine Musik, bleibt es dabei — sonst wuerde die Musik gedaempft,
   die Gaston in diesem Turn gerade selbst gestartet hat.
@@ -92,6 +95,10 @@ class MusikDucker:
         self._url = url.rstrip("/")
         self._token = token
         self._raum = raum
+        # Raum des laufenden Turns (Haupt-Raum oder der des Satelliten) und
+        # der Raum, in dem die aktuelle Daempfung liegt (Erneuern, Freigeben).
+        self._turn_raum = raum
+        self._duck_raum = raum
         self._level = level
         self._lease_s = lease_s
         self._erneuern_s = erneuern_s
@@ -125,6 +132,8 @@ class MusikDucker:
         """Wakewort ueber der Schwelle (Haupt-Mikrofon), der Turn folgt gleich."""
         if self._zustand == STATE_LISTENING:
             self._vorab_seit = time.monotonic()
+            with self._cv:
+                self._turn_raum = self._raum
             self._setze(True)
 
     def verworfen(self) -> None:
@@ -133,10 +142,13 @@ class MusikDucker:
             self._vorab_seit = None
             self._setze(False)
 
-    def zustand(self, state: int, satellit: bool, spricht: bool = False) -> None:
+    def zustand(self, state: int, satellit: bool, spricht: bool = False,
+                raum: str | None = None) -> None:
         """Einmal je Schleifendurchlauf; entscheidet nur, ruft nichts auf.
 
         spricht: tts_lock gehalten (wir synthetisieren oder spielen gerade).
+        raum: bei einem Satelliten-Turn der Musik-Raum des Geraets (None =
+        der Satellit daempft nichts).
         """
         alt, self._zustand = self._zustand, state
         jetzt = time.monotonic()
@@ -156,7 +168,9 @@ class MusikDucker:
                 self.verworfen()
             return
         self._vorab_seit = None
-        if alt == STATE_LISTENING and not satellit:
+        if alt == STATE_LISTENING and (not satellit or raum):
+            with self._cv:
+                self._turn_raum = raum if satellit else self._raum
             self._setze(True)
 
     @contextlib.contextmanager
@@ -220,6 +234,9 @@ class MusikDucker:
         if wunsch:
             faellig = time.monotonic() - self._letztes_duck >= self._erneuern_s
             if erstes and neu:
+                if not self._leases:
+                    with self._cv:
+                        self._duck_raum = self._turn_raum
                 self._duck()
                 self._turn_gedaempft = bool(self._leases)
                 self._lief_beim_ruf = self.spielende_raeume()
@@ -246,8 +263,8 @@ class MusikDucker:
         antwort = self._aufruf("unduck", {"source": _QUELLE})
         if leases and antwort and antwort.get("reason") == "not_ducked":
             log.warning("Musik %s: die Bridge kannte unsere Lease nicht mehr "
-                        "— Musik bleibt womoeglich leise", self._raum)
-        log.info("Musik %s freigegeben (%s, %.0f ms): %s", self._raum, anlass,
+                        "— Musik bleibt womoeglich leise", self._duck_raum)
+        log.info("Musik %s freigegeben (%s, %.0f ms): %s", self._duck_raum, anlass,
                  (time.monotonic() - t0) * 1000, antwort)
 
     def _duck(self) -> None:
@@ -269,15 +286,15 @@ class MusikDucker:
                 # war weg, und sie merkt sich jetzt womoeglich die GEDAEMPFTE
                 # Lautstaerke als die alte (previous_volume).
                 log.warning("Musik %s: Erneuerung als neues duck, previous_volume=%s",
-                            self._raum, antwort.get("previous_volume"))
+                            self._duck_raum, antwort.get("previous_volume"))
             lease = str(antwort["lease_id"])
             if lease not in self._leases:
                 self._leases.append(lease)
             if erstes:
-                log.info("Musik %s gedaempft (%.0f ms)", self._raum,
+                log.info("Musik %s gedaempft (%.0f ms)", self._duck_raum,
                          (time.monotonic() - t0) * 1000)
         elif not self._leases:
-            log.debug("Musik %s nicht gedaempft: %s", self._raum, antwort.get("reason"))
+            log.debug("Musik %s nicht gedaempft: %s", self._duck_raum, antwort.get("reason"))
 
     def spielende_raeume(self, timeout: float | None = None) -> set[str] | None:
         """Raeume, in denen gerade Musik laeuft; None, wenn die Bridge nicht antwortet."""
@@ -302,7 +319,7 @@ class MusikDucker:
 
     def _aufruf(self, was: str, body: dict) -> dict | None:
         try:
-            antwort = self._post(f"{self._url}/api/v1/rooms/{self._raum}/{was}", body)
+            antwort = self._post(f"{self._url}/api/v1/rooms/{self._duck_raum}/{was}", body)
         except Exception as exc:
             # Musik-Bridge weg darf nie stoeren: einmal melden, dann still.
             if not self._fehler_gemeldet:
