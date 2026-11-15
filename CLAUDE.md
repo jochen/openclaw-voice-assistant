@@ -626,7 +626,7 @@ bitte wieder.“ war dort ein Abbruch), nur Erst-Turn, am Satelliten nur mit
 nicht bei offener Timer-Rückfrage. Die Bedingung führt den Befehl schon aus;
 lehnt die Bridge ab, geht der Satz an den Brain. Ausnahme: spielt im
 Haupt-Raum nichts, aber in genau einem anderen, wirken stopp/Pause ohne
-gesagten Raum dort (pi51-Vorschlag, Jochen). Log: `musik_turns.log`.
+gesagten Raum dort (Vorschlag der Bridge-Seite, Jochen). Log: `musik_turns.log`.
 **Regeländerungen nur gegen `tools/musik_parser_test.py`** (Vorlagen
 `data/musik/de_saetze.jsonl`, echte Sätze privat in
 `testsets/musik_steuerung/`), FALSCH muss 0 bleiben. Echte Befehle gibt es

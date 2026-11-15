@@ -15,7 +15,7 @@ spielenden Player, next/previous nur, wenn genau einer spielt (Bridge
 2026-10-18).
 
 **Spielt im Raum nichts, aber in genau einem anderen**, wirken „stopp“ und
-„Pause“ dort (Vorschlag pi51, Jochen 2026-10-18: „gute Idee“), aber nur ohne
+„Pause“ dort (Vorschlag der Bridge-Seite, Jochen 2026-10-18: „gute Idee“), aber nur ohne
 gesprochenen Raum. Die Bridge waehlt das nicht selbst, sie nennt die anderen
 Raeume in ``playing_in``. Fuer alles andere (weiter, naechstes, lauter)
 bleibt es beim Brain: wer dort etwas will, sagt den Raum.
