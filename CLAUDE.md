@@ -548,11 +548,11 @@ Gemessen 2026-10-13, steht ausführlich im Modul-Docstring:
 - **Musik aufs Handy (`satelliten[].musik_raum`, seit 2026-11-15):** „spiel die
   Playlist Baden“ vom Handy lief auf dem Kachelofen. Mit `musik_raum` hängt
   `hinweis_fuer` den `locale.satellit_musik_hinweis` an (Raum der Bridge, deren
-  Player auf dem Handy spielt). Den Raum legt die Bridge auf pi51 an.
+  Player auf dem Handy spielt). Den Raum legt die Bridge auf dem Musik-Rechner an.
 - **Musik über Avas Medien-Player (`satelliten[].musik_stream`, seit
   2026-11-15):** Squeezelite auf dem Handy schaltete beim Pausieren die
   Medienlautstärke stumm und Avas Sprache gleich mit (per adb belegt). Jetzt
-  spielt auf pi51 ein Player ohne Ton für `musik_raum`, sein Ton kommt als
+  spielt auf dem Musik-Rechner ein Player ohne Ton für `musik_raum`, sein Ton kommt als
   Dauer-Stream, der bei Pause Stille liefert. `audio/satellit_musik.py` fragt
   alle 2 s den Raumzustand der Bridge ab und gibt Ava die Stream-URL, wenn
   der Raum spielt; STOP erst 30 s nach Stopp bzw. 10 min nach Pause (die
