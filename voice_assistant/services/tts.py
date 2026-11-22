@@ -1175,8 +1175,12 @@ class ReplyStreamSession:
                     break
                 pause_rest = self._pause_rest(strom)
                 tempo = puffer.tempo_gemessen() or sch.tempo
-                if freigeben(puffer.gepuffert_s, strom.vorsprung_s() + pause_rest,
-                             max(dauer_s, puffer.gepuffert_s), tempo):
+                t_schub, s_schub = puffer.letzter_schub()
+                gepuffert = puffer.gepuffert_s
+                # solange der Satz nicht fertig ist, kommt mindestens noch ein Schub
+                dauer = max(dauer_s, gepuffert + min(s_schub * sch.wachstum, sch.schub_max))
+                if freigeben(time.monotonic(), strom.vorsprung_s() + pause_rest, gepuffert,
+                             t_schub, s_schub, dauer, tempo, sch.wachstum, sch.schub_max):
                     break
                 puffer.warten(0.05)
             if turn_stopped(self.turn):
@@ -1187,11 +1191,16 @@ class ReplyStreamSession:
             if pause_rest > 0:
                 strom.schreiben(bytes(int(STROM_BYTES_JE_S * pause_rest) // 4 * 4))
             geschrieben: list[bytes] = []
-            luecken = 0
+            # Aufgefuellte Stille des Stroms zwischen erstem und letztem Block
+            # dieses Satzes = Aussetzer im Satz (der Strom fuellt nur, wenn alles
+            # Geschriebene gespielt ist). Gemessen, nicht geschaetzt.
+            aufgefuellt_vorher: float | None = None
             index = 0
             while True:
                 bloecke, fertig = puffer.ab(index)
                 for block in bloecke:
+                    if aufgefuellt_vorher is None:
+                        aufgefuellt_vorher = strom.aufgefuellt_s
                     if turn_stopped(self.turn) or not strom.schreiben(block):
                         puffer.abbrechen()
                         return
@@ -1200,23 +1209,20 @@ class ReplyStreamSession:
                 if fertig and not bloecke:
                     break
                 if not bloecke:
-                    if geschrieben and strom.erstes_audio is not None and strom.vorsprung_s() <= 0.05:
-                        # Spielkopf holt ein: der Strom fuellt mitten im Satz auf.
-                        # Erst zaehlen, wenn der Player abgeholt hat — davor meldet
-                        # der Strom keinen Vorsprung (Fehlalarm im Lab 2026-11-22).
-                        luecken += 1
                     puffer.warten(0.05)
+            im_satz = strom.aufgefuellt_s - aufgefuellt_vorher if aufgefuellt_vorher is not None else 0.0
             if geschrieben:
                 pcm = b"".join(geschrieben)
                 self.rec.add_pcm(clean, pcm, (2, 2, STROM_RATE))
                 self.spoke = True
                 audio_s = len(pcm) / STROM_BYTES_JE_S
                 tempo_satz = puffer.tempo_gemessen()
-                sch.lernen(len(clean), audio_s, tempo_satz)
+                schuebe = [round(x, 2) for _, x in puffer.schuebe]
+                sch.lernen(len(clean), audio_s, tempo_satz, puffer.wachstum_gemessen(), puffer.schub_max())
                 print(f"   ↳ {puffer.dienst or '?'} · geplant: {gewartet:.2f} s gewartet, "
                       f"{audio_s:.1f} s Audio (geschätzt {dauer_s:.1f}), Tempo "
-                      f"{tempo_satz if tempo_satz else 0:.2f}"
-                      + (f", ⚠️ {luecken}× aufgefüllt" if luecken else ""))
+                      f"{tempo_satz if tempo_satz else 0:.2f}, Schübe {schuebe}"
+                      + (f", ⚠️ {im_satz * 1000:.0f} ms im Satz aufgefüllt" if im_satz > 0.001 else ""))
             self._pos_nach_satz = strom.position_s()
         finally:
             strom.beenden()

@@ -35,17 +35,26 @@ def _block(pegel: int, sekunden: float = BLOCK_S) -> bytes:
 
 class RegelTest(unittest.TestCase):
     def test_ohne_audio_nie(self):
-        self.assertFalse(freigeben(0.0, 10.0, 1.0, 5.0))
+        self.assertFalse(freigeben(0.0, 10.0, 0.0, None, 0.0, 1.0, 5.0))
 
     def test_schneller_dienst_sofort(self):
-        self.assertTrue(freigeben(0.05, 0.0, 10.0, 1.2))
+        self.assertTrue(freigeben(0.0, 0.0, 0.5, 0.0, 0.5, 4.0, 10.0))
 
-    def test_langsamer_dienst_wartet_auf_vorlauf(self):
-        # Tempo 0,8, Satz 5 s: es fehlen (1-0,8)*5 + 0,2 = 1,2 s Vorlauf
-        self.assertFalse(freigeben(1.0, 0.0, 5.0, 0.8))
-        self.assertTrue(freigeben(1.2, 0.0, 5.0, 0.8))
-        # was vor dem Satz noch spielt, zählt mit (zu 80 %)
-        self.assertTrue(freigeben(0.4, 1.0, 5.0, 0.8))
+    def test_gleichmaessig_wie_vorher(self):
+        # Wachstum 1, kleine Schübe ≈ gleichmäßiger Fluss: Tempo 0,8, Satz 5 s
+        args = dict(letzter_schub_t=0.0, letzter_schub_s=0.05, dauer_s=5.0, tempo=0.8,
+                    wachstum=1.0, schub_max_s=0.05, reserve_s=0.2)
+        self.assertFalse(freigeben(0.0, 0.0, 1.0, **args))
+        self.assertTrue(freigeben(0.0, 0.0, 1.3, **args))
+
+    def test_grosser_schub_verlangt_mehr_vorrat(self):
+        # 1 s gepuffert, nächster Schub 2 s bei Tempo 0,8 kommt erst nach 2,5 s
+        self.assertFalse(freigeben(0.0, 0.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
+        # mit 2 s Rest im Strom davor reicht es
+        self.assertTrue(freigeben(0.0, 2.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
+
+    def test_alles_da_sofort(self):
+        self.assertTrue(freigeben(0.0, 0.0, 3.0, 0.0, 1.0, 3.0, 0.5))
 
 
 class SchaetzerTest(unittest.TestCase):
@@ -60,18 +69,23 @@ class SchaetzerTest(unittest.TestCase):
 
 
 class PufferTest(unittest.TestCase):
-    def test_tempo_erst_ab_einer_sekunde_und_ohne_ersten_block(self):
+    def test_schuebe_und_tempo(self):
         uhr = [100.0]
         p = SatzPuffer("Satz.", BYTES_JE_S, uhr=lambda: uhr[0])
-        p.dazu(_block(1, 0.5))                 # erster Block zählt nicht mit
+        p.dazu(_block(1, 0.25))
+        uhr[0] += 0.01
+        p.dazu(_block(1, 0.25))               # dicht dahinter: derselbe Schub
+        self.assertEqual(len(p.schuebe), 1)
+        self.assertIsNone(p.tempo_gemessen(), "erst ab dem zweiten Schub")
         uhr[0] += 1.0
-        p.dazu(_block(1, 0.5))
-        self.assertIsNone(p.tempo_gemessen(), "erst 0,5 s nach dem ersten Block")
-        uhr[0] += 1.0
-        p.dazu(_block(1, 0.6))
-        self.assertAlmostEqual(p.tempo_gemessen(), 1.1 / 2.0, places=3)
-        self.assertFalse(p.fertig)
-        self.assertTrue(p.unterwegs.is_set())
+        p.dazu(_block(1, 1.0))
+        uhr[0] += 2.0
+        p.dazu(_block(1, 2.0))
+        self.assertEqual([round(x, 2) for _, x in p.schuebe], [0.5, 1.0, 2.0])
+        self.assertAlmostEqual(p.tempo_gemessen(), 3.0 / 3.0, places=3)
+        self.assertAlmostEqual(p.wachstum_gemessen(), 2.0, places=3)
+        self.assertAlmostEqual(p.schub_max(), 2.0, places=3)
+        self.assertEqual(p.letzter_schub()[1], 2.0)
 
     def test_ab_und_ende(self):
         p = SatzPuffer("Satz.", BYTES_JE_S)
@@ -103,6 +117,30 @@ class LangsamerDienst:
             for _ in range(n):
                 time.sleep(BLOCK_S / self.tempo)
                 yield _block(self.pegel[text])
+
+
+class SchubDienst(LangsamerDienst):
+    """Wie CosyVoice: ein Satz kommt in verdoppelnden Schüben (erst nichts,
+    dann ein ganzer Abschnitt auf einmal), im Mittel mit tempo."""
+
+    def __init__(self, tempo: float, laengen: dict[str, float], erster_s: float = 0.1,
+                 schub_max_s: float = 0.8) -> None:
+        super().__init__(tempo, laengen)
+        self.erster_s = erster_s
+        self.schub_max_s = schub_max_s
+
+    def synth_strom(self, text):
+        self.angefragt.append((text, time.monotonic()))
+        with self._nacheinander:
+            rest = self.laengen[text]
+            schub = self.erster_s
+            while rest > 1e-6:
+                schub = min(schub, rest)
+                time.sleep(schub / self.tempo)
+                for _ in range(int(round(schub / BLOCK_S))):
+                    yield _block(self.pegel[text])
+                rest -= schub
+                schub = min(2 * schub, self.schub_max_s)
 
 
 def _abschnitte(daten: bytes) -> list[tuple[int, float, float]]:
@@ -163,6 +201,19 @@ class AblaufTest(unittest.TestCase):
         finally:
             builtins.print = orig
         self.assertFalse([z for z in ausgabe if "aufgefüllt" in z], ausgabe)
+
+    def test_schuebe_wie_cosyvoice_ohne_aussetzer(self):
+        # Verhältnisse wie beim echten Dienst: Schübe 0,5 / 1 / 2 s, Tempo 0,8,
+        # Textlänge passt zur Schätzung (35 Zeichen ≈ 3,5 s). Ein Planer, der
+        # nur das mittlere Tempo kennt, gibt nach dem zweiten Schub frei und
+        # läuft vor dem dritten rund 1 s leer (live gehört 2026-11-22).
+        laengen = {"Ein Satz mit gut drei Sekunden Ton.": 3.5}
+        teile, _, dienst = self._lauf(SchubDienst(0.8, laengen, erster_s=0.5, schub_max_s=2.0),
+                                      planer=True, pause=0.2)
+        self.assertEqual([p for p, _, _ in teile], list(dienst.pegel.values()),
+                         f"jeder Satz am Stück trotz Schüben: {teile}")
+        for (_, a, b), dauer in zip(teile, laengen.values()):
+            self.assertAlmostEqual(b - a, dauer, delta=0.011)
 
     def test_ohne_planer_reisst_der_satz_auf(self):
         laengen = {"Eins.": 0.5, "Zwei ist länger.": 0.8}

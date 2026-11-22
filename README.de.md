@@ -378,7 +378,11 @@ lange wartet), und ein Schreiber gibt jeden Satz erst in den Strom, wenn er
 ohne Leerlauf durchspielen kann — geschätzt aus dem schon Gepufferten, dem,
 was davor noch spielt, der erwarteten Länge (Zeichen × Sekunden je Zeichen)
 und dem Tempo des Dienstes (Audio-Sekunden je Sekunde, je Satz gemessen und
-über die Antworten gemittelt; `antwort_tempo` ist der Startwert). Bis dahin
+über die Antworten gemittelt; `antwort_tempo` ist der Startwert). Dienste wie
+CosyVoice liefern einen Satz in wachsenden Schüben (0,5, 1, 2, 4 s Audio auf
+einmal, dazwischen nichts), deshalb fasst der Planer ankommende Blöcke zu
+Schüben zusammen, lernt, wie sie wachsen, und spielt die fehlenden durch: vor
+jedem erwarteten Schub muss noch genug gepuffert sein. Bis dahin
 füllt der Strom wie immer mit Stille, aus dem Warten wird eine Pause vor dem
 Satz. Zwischen zwei Sätzen liegt immer mindestens `satz_pause_s` (Standard
 0,35 s) — in einer Hörprobe war das **verständlicher als durchgesprochen**,

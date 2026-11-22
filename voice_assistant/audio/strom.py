@@ -92,6 +92,9 @@ class WiedergabeStrom:
         self.beschaeftigt = False
         self.gesendet_bytes = 0
         self.audio_bytes = 0
+        # vom Strom selbst nachgeschobene Stille (Spielkopf holte das
+        # Geschriebene ein). Der Satz-Planer misst daran echte Aussetzer.
+        self.aufgefuellt_bytes = 0
         self.erstes_audio: float | None = None   # Uhrzeit des ersten gesendeten Audio-Bytes
         self.letzte_daten: float = uhr()
         self.abgeholt = threading.Event()        # der Player hat die Adresse geholt
@@ -166,6 +169,11 @@ class WiedergabeStrom:
             geschrieben = (self.gesendet_bytes + sum(len(b) for b in self._puffer)) / BYTES_JE_S
             return max(0.0, geschrieben - spielkopf)
 
+    @property
+    def aufgefuellt_s(self) -> float:
+        with self._cv:
+            return self.aufgefuellt_bytes / BYTES_JE_S
+
     def ende_geschaetzt(self) -> float | None:
         """Uhrzeit, zu der der Player das Gesendete fertig gespielt haben sollte."""
         if self.erstes_audio is None:
@@ -217,6 +225,8 @@ class WiedergabeStrom:
                     self.gesendet_bytes += len(stueck)
                     if ist_audio:
                         self.audio_bytes += len(stueck)
+                    else:
+                        self.aufgefuellt_bytes += len(stueck)
         except (BrokenPipeError, ConnectionResetError, OSError):
             self.abbrechen()
         finally:

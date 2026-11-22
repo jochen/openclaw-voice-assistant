@@ -371,7 +371,11 @@ each sentence into the stream only once it can play through without running
 dry — estimated from what is already buffered, how much is still playing
 before it, the expected length (characters × seconds per character) and the
 service's tempo (audio seconds per second, measured per sentence and averaged
-across replies; `antwort_tempo` is the starting value). Until then the stream
+across replies; `antwort_tempo` is the starting value). Services like
+CosyVoice deliver a sentence in growing bursts (0.5, 1, 2, 4 s of audio at
+once, nothing in between), so the planner groups arriving blocks into bursts,
+learns how they grow and plays the missing ones through: before each
+expected burst there must still be enough buffered audio. Until then the stream
 fills with silence, as it always does, so the wait becomes a pause before the
 sentence. There is always at least `satz_pause_s` (default 0.35 s) between
 two sentences — in a listening test this was **clearer than speaking

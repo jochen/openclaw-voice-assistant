@@ -1091,8 +1091,17 @@ erst an, wenn der vorige Satz erstes Audio hat (`unterwegs`) — höchstens eine
 voraus; sonst wartet eine Anfrage beim Dienst bis zum Timeout auf dessen LLM.
 Ein Schreiber-Faden (`_planer_schreiben`) nimmt die Sätze der Reihe nach, holt
 den Strom (`_strom_holen`, tts_lock wie bisher) und wartet, bis `freigeben()`
-sagt, dass der Satz ohne Leerlauf durchspielt: gepuffert + tempo·vorsprung ≥
-(1−tempo)·dauer + 0,2 s (konstantes Tempo, knappste Stelle = Satzende).
+sagt, dass der Satz ohne Leerlauf durchspielt. **Schübe:** CosyVoice liefert
+einen Satz in wachsenden Schüben (0,5/1/2/4 s Audio auf einmal,
+`token_hop_len` verdoppelt sich); die erste Fassung rechnete mit gleichmäßigem
+Tempo, gab nach dem zweiten Schub frei und lief vor dem großen dritten leer —
+Jochen hörte im ersten Live-Test kurze Aussetzer, das Journal meldete nichts.
+Jetzt fasst `SatzPuffer` Blöcke mit < 0,15 s Abstand zu Schüben zusammen,
+`Schaetzer` lernt Wachstum (Start 2) und Schub-Maximum (Start 4 s), und
+`freigeben()` spielt die fehlenden Schübe durch (nächster = min(Wachstum ×
+letzter, Max), Ankunft + Größe/Tempo): vor jedem muss Gepuffertes + 0,3 s
+Reserve reichen (der Strom füllt schon unter 0,15 s Vorsprung auf). Solange
+der Satz nicht fertig ist, rechnet er mit mindestens einem weiteren Schub.
 `vorsprung` = was im Strom noch vor dem Spielkopf liegt (`strom.vorsprung_s()`)
 plus noch zu schreibende Pause; `dauer` = Zeichen × gelernte s/Zeichen
 (Start 0,10); `tempo` = gemessen ab 1 s Audio, sonst gelernter Mittelwert
@@ -1101,8 +1110,11 @@ Danach Mindestpause (`satz_pause_s`, vom Strom schon aufgefüllte Stille seit
 dem letzten Satz zählt mit, `strom.position_s()`), dann der Satz. `end()`
 wartet den Schreiber ab. Kann die Senke keinen Strom, wird der fertige Satz als
 WAV über den Datei-Weg gespielt (`_planer_datei`). Journal je Satz:
-`↳ modell/stimme · geplant: X s gewartet, Y s Audio (geschätzt Z), Tempo T`,
-und `⚠️ n× aufgefüllt`, falls der Strom im Satz doch Stille einschieben musste.
+`↳ modell/stimme · geplant: X s gewartet, Y s Audio (geschätzt Z), Tempo T,
+Schübe [...]` und `⚠️ N ms im Satz aufgefüllt` — **gemessen** am neuen Zähler
+`WiedergabeStrom.aufgefuellt_bytes` zwischen erstem und letztem Block des Satzes
+(die erste Fassung schätzte mit einer Schwelle von 0,05 s und übersah die
+50-ms-Stücke, die der Strom schon unter 0,15 s Vorsprung einschiebt).
 
 Hörprobe 2026-11-22 (gerechnet aus gemessenen Zeiten des Dienstes): naiv 12
 Aussetzer im Satz; mit Planer keine, Pausen an den Satzgrenzen. Jochen: „mit
@@ -1112,8 +1124,9 @@ Mindestpause auch bei schnellem Dienst. `antwort_tts_timeout` (Default 8 s)
 für Dienste, bei denen eine Anfrage in einer Schlange wartet. Default aus.
 Tests: `tests/test_satz_planer.py` (Regel, Schätzer, Puffer; Ablauf mit echtem
 Strom und je Satz eigenem Pegel: langsamer Dienst → jeder Satz am Stück,
-Pausen ≥ Mindestpause; Gegenprobe ohne Planer reißt auf; schneller Dienst →
-nur Mindestpause).
+Pausen ≥ Mindestpause; Schub-Dienst wie CosyVoice (0,5/1/2 s, Tempo 0,8) →
+am Stück — dieser Test scheitert gegen die erste Fassung; Gegenprobe ohne
+Planer reißt auf; schneller Dienst → nur Mindestpause).
 
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 
