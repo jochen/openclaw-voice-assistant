@@ -52,11 +52,16 @@ STANDARD_SCHUB_MAX_S = 4.0
 # schiebt schon unter 0,15 s Vorsprung Stille ein (audio/strom.py), dazu
 # Netz-Schwankung.
 RESERVE_S = 0.3
+# Dazu je Sekunde des erwarteten Schubs: späte, große Schübe kommen langsamer
+# als das bisherige Tempo, weil der Flow je Abschnitt den ganzen bisherigen Satz
+# neu rechnet. Gehört 2026-11-22: ein erwarteter 3,84-s-Schub kam ~0,6 s zu spät.
+RESERVE_JE_SCHUB = 0.15
 
 
 def freigeben(jetzt: float, vorsprung_s: float, gepuffert_s: float, letzter_schub_t: float | None,
               letzter_schub_s: float, dauer_s: float, tempo: float, wachstum: float = STANDARD_WACHSTUM,
-              schub_max_s: float = STANDARD_SCHUB_MAX_S, reserve_s: float = RESERVE_S) -> bool:
+              schub_max_s: float = STANDARD_SCHUB_MAX_S, reserve_s: float = RESERVE_S,
+              reserve_je_schub: float = RESERVE_JE_SCHUB) -> bool:
     """Darf ein Satz jetzt in den Strom, ohne mitten drin leerzulaufen?
 
     jetzt: Uhrzeit. vorsprung_s: was vor dem Satz noch abgespielt wird (Rest
@@ -67,8 +72,9 @@ def freigeben(jetzt: float, vorsprung_s: float, gepuffert_s: float, letzter_schu
 
     Die fehlenden Schübe werden durchgespielt: der nächste ist
     min(wachstum × letzter, schub_max) groß und kommt Größe/tempo nach dem
-    vorigen. Vor jedem muss das bis dahin Gepufferte noch reserve_s länger
-    reichen, als bis zu seiner Ankunft vergeht.
+    vorigen. Vor jedem muss das bis dahin Gepufferte noch
+    reserve_s + reserve_je_schub × Schubgröße länger reichen, als bis zu seiner
+    Ankunft vergeht.
     """
     if gepuffert_s <= 0 or letzter_schub_t is None:
         return False
@@ -81,7 +87,7 @@ def freigeben(jetzt: float, vorsprung_s: float, gepuffert_s: float, letzter_schu
     while rest > 1e-6:
         schub = min(max(schub * wachstum, schub), schub_max_s, rest)
         ankunft += schub / tempo
-        if start + vorrat < ankunft + reserve_s:
+        if start + vorrat < ankunft + reserve_s + reserve_je_schub * schub:
             return False
         vorrat += schub
         rest -= schub

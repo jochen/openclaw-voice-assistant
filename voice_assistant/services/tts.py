@@ -1232,11 +1232,12 @@ class ReplyStreamSession:
                 self.spoke = True
                 audio_s = len(pcm) / STROM_BYTES_JE_S
                 tempo_satz = puffer.tempo_gemessen()
-                schuebe = [round(x, 2) for _, x in puffer.schuebe]
+                t0_schub = puffer.schuebe[0][0] if puffer.schuebe else 0.0
+                schuebe = [f"{x:.2f}@{t - t0_schub:.1f}" for t, x in puffer.schuebe]
                 sch.lernen(len(clean), audio_s, tempo_satz, puffer.wachstum_gemessen(), puffer.schub_max())
                 print(f"   ↳ {puffer.dienst or '?'} · geplant: {gewartet:.2f} s gewartet, "
                       f"{audio_s:.1f} s Audio (geschätzt {dauer_s:.1f}), Tempo "
-                      f"{tempo_satz if tempo_satz else 0:.2f}, Schübe {schuebe}"
+                      f"{tempo_satz if tempo_satz else 0:.2f}, Schübe {' '.join(schuebe)}"
                       + (f", ⚠️ {im_satz * 1000:.0f} ms im Satz aufgefüllt" if im_satz > 0.001 else ""))
             self._pos_nach_satz = strom.position_s()
         finally:

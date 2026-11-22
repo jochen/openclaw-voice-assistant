@@ -38,7 +38,9 @@ class RegelTest(unittest.TestCase):
         self.assertFalse(freigeben(0.0, 10.0, 0.0, None, 0.0, 1.0, 5.0))
 
     def test_schneller_dienst_sofort(self):
-        self.assertTrue(freigeben(0.0, 0.0, 0.5, 0.0, 0.5, 4.0, 10.0))
+        # Tempo 10: sobald die Reserve (0,3 s + 15 % des nächsten Schubs) da ist
+        self.assertTrue(freigeben(0.0, 0.0, 0.7, 0.0, 0.7, 4.0, 10.0))
+        self.assertFalse(freigeben(0.0, 0.0, 0.3, 0.0, 0.3, 4.0, 10.0))
 
     def test_gleichmaessig_wie_vorher(self):
         # Wachstum 1, kleine Schübe ≈ gleichmäßiger Fluss: Tempo 0,8, Satz 5 s
@@ -50,8 +52,11 @@ class RegelTest(unittest.TestCase):
     def test_grosser_schub_verlangt_mehr_vorrat(self):
         # 1 s gepuffert, nächster Schub 2 s bei Tempo 0,8 kommt erst nach 2,5 s
         self.assertFalse(freigeben(0.0, 0.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
-        # mit 2 s Rest im Strom davor reicht es
-        self.assertTrue(freigeben(0.0, 2.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
+        # mit 2 s Rest im Strom davor reicht es nur ohne schubabhängige Reserve
+        self.assertTrue(freigeben(0.0, 2.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3, 0.0))
+        # mit 15 % der Schubgröße (2 s → +0,3 s) braucht es 2,5 s davor
+        self.assertFalse(freigeben(0.0, 2.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
+        self.assertTrue(freigeben(0.0, 2.5, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
 
     def test_alles_da_sofort(self):
         self.assertTrue(freigeben(0.0, 0.0, 3.0, 0.0, 1.0, 3.0, 0.5))
