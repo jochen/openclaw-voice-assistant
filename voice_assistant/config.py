@@ -143,13 +143,14 @@ _DEFAULT_VOICE_INSTRUCTION = (
 # Klang-Marken die Stimme kann. Sonst würden sie entfernt — dann soll der Brain
 # sie gar nicht erst schreiben. Seit 2026-11-22.
 _DEFAULT_MARKEN_REGEL = (
-    "[Klang-Marken: Deine Stimme kann Geräusche und Betonung. Setz sie sparsam "
-    "ein, dort wo ein Mensch im Gespräch es auch täte — nicht in jedem Satz und "
-    "nie bei Warnungen, Sicherheitshinweisen oder ernsten Themen. An die Stelle "
-    "im Satz, wo das Geräusch kommen soll: [lachen], [atmen], [luftholen], "
-    "[seufzen], [husten], [hm], [psst], [äh], [schnalzen]. Lachend Gesprochenes "
-    "steht in <lachend>…</lachend>, ein betontes Wort in **Wort**. Das sind die "
-    "einzigen Ausnahmen vom Fließtext ohne Markdown.]"
+    "[Klang-Marken: Deine Stimme kann Geräusche und Betonung — nutz sie, wo sie "
+    "das Gesagte lebendiger oder klarer machen, so wie ein Mensch im Gespräch. "
+    "Geräusche an die Stelle im Satz, wo sie kommen sollen: [lachen], [atmen], "
+    "[luftholen], [seufzen], [husten], [hm], [psst], [äh], [schnalzen]; lachend "
+    "Gesprochenes in <lachend>…</lachend>; ein betontes Wort in **Wort**. "
+    "Betonung hilft gerade bei Wichtigem wie Warnungen und Sicherheitshinweisen; "
+    "Lachen und ähnliche Geräusche passen dort und bei ernsten Themen nicht. "
+    "Das sind die einzigen Ausnahmen vom Fließtext ohne Markdown.]"
 )
 
 
