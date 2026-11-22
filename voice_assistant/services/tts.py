@@ -24,6 +24,7 @@ from typing import Callable
 
 from voice_assistant.audio.strom import BYTES_JE_S as STROM_BYTES_JE_S, RATE as STROM_RATE, zu_48k_stereo
 from voice_assistant.services.satz_planer import SatzPuffer, Schaetzer, freigeben
+from voice_assistant.services import tts_marken
 from voice_assistant.services import aussprache
 from voice_assistant.config import (
     ABORT_BEEP_PATH,
@@ -190,6 +191,9 @@ def _apply_verbalization(text: str) -> str:
 # Text-Aufbereitung
 # ---------------------------------------------------------------------------
 def clean_for_tts(text: str) -> str:
+    # 0. Klang-Marken ([lachen], **Wort** …) vor dem Zeichenfilter schuetzen
+    #    (services/tts_marken.py); der Dienst setzt sie um oder entfernt sie.
+    text = tts_marken.schuetzen(text)
     # 1. Markdown entfernen
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
@@ -201,7 +205,7 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"\n+", " ", text)
     # 2. Verbalisierung (Abkürzungen, Zahlen, Zeiten, Ordinalia)
     text = _apply_verbalization(text)
-    return text.strip()
+    return tts_marken.wiederherstellen(text)
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +317,7 @@ FREMDE_MODELLE: set[str] = set()
 
 class SpeachesTts:
     def __init__(self, state: SpeachesState, base: str, model: str, voice: str,
-                 fest: bool = False, timeout: float = SPEACHES_TIMEOUT) -> None:
+                 fest: bool = False, timeout: float = SPEACHES_TIMEOUT, marken: bool = False) -> None:
         """fest=True: Modell und Stimme immer aus dem Konstruktor, nicht aus
         voice_state (fuer den Antwort-Dienst, der die Piper-Stimmen nicht
         kennt). timeout: kurz fuer einen Dienst auf einem anderen Rechner —
@@ -324,6 +328,9 @@ class SpeachesTts:
         self.voice = voice
         self.fest = fest
         self.timeout = timeout
+        # Klang-Marken (services/tts_marken.py) an den Dienst geben, sonst entfernen.
+        # Nur fuer einen Antwort-Dienst mit CosyVoice3 (Profil tts_marken).
+        self.marken = marken
 
     def _parameter(self, text: str) -> tuple[str, str, float, str]:
         from voice_assistant.state import voice_state
@@ -332,6 +339,7 @@ class SpeachesTts:
         model = (vm or self.model) if eigen else self.model
         voice = (vv or self.voice) if eigen else self.voice
         speed = vsp if vsp else 1.0
+        text = tts_marken.fuer_cosyvoice(text) if self.marken else tts_marken.entfernen(text)
         # Problemwoerter als [[Phoneme]] (services/aussprache.py). Erst HIER,
         # nach clean_for_tts — das entfernt eckige Klammern.
         return model, voice, speed, aussprache.fuer_piper(text, model)
@@ -495,7 +503,7 @@ class SpeachesTts:
 # ---------------------------------------------------------------------------
 def piper_synth(text: str, model: str = PIPER_MODEL) -> str | None:
     """Rendert Text in eine WAV-Datei mit Piper und gibt den Pfad zurück."""
-    text = aussprache.fuer_piper(text, "piper")
+    text = aussprache.fuer_piper(tts_marken.entfernen(text), "piper")
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             tmp_wav = f.name
@@ -673,7 +681,7 @@ class ReplyRecorder:
             print("⚠️  last-reply buffer: Sample-Rate-Mismatch, Teil verworfen")
             return
         if text and text.strip():
-            self._texts.append(text.strip())
+            self._texts.append(tts_marken.entfernen(text))
         self._frames.append(frames)
 
     def add_pcm(self, text: str, pcm: bytes, params: tuple[int, int, int]) -> None:
@@ -686,7 +694,7 @@ class ReplyRecorder:
             print("⚠️  last-reply buffer: Sample-Rate-Mismatch, Teil verworfen")
             return
         if text and text.strip():
-            self._texts.append(text.strip())
+            self._texts.append(tts_marken.entfernen(text))
         self._frames.append(pcm)
 
     def add_file(self, text: str, path: str) -> None:
@@ -1168,7 +1176,7 @@ class ReplyStreamSession:
                 self.sp.leds.set_phase(LED_AUDIO_OUT)
             print(f"🔊 Sentence (Strom, geplant): '{clean}'")
             t_warte = time.monotonic()
-            dauer_s = sch.dauer(clean)
+            dauer_s = sch.dauer(tts_marken.entfernen(clean))
             while not turn_stopped(self.turn):
                 _, fertig = puffer.ab(0)
                 if fertig:

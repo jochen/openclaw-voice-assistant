@@ -394,6 +394,21 @@ Daten warten darf; für so einen Dienst höher setzen. Je Satz steht im Journal,
 wie lange er gewartet hat, das gemessene Tempo und ob der Strom in ihm doch
 auffüllen musste (`voice_assistant/services/satz_planer.py`).
 
+**Klang-Marken (`tts_marken: true`, optional, braucht einen Antwort-Dienst
+mit CosyVoice3).** Der Brain darf einem Satz einen Lacher, einen Atemzug oder
+eine Betonung mitgeben, als deutsche Marken: `[lachen]`, `[atmen]`,
+`[luftholen]`, `[seufzen]`, `[husten]`, `[hm]`, `[psst]`, `[äh]`,
+`[schnalzen]`, `<lachend>…</lachend>` für lachend Gesprochenes, `**Wort**` für
+eine Betonung. Sie überstehen die Textbereinigung und werden nur für den
+Antwort-Dienst in CosyVoice3s eigene Tags übersetzt (`[laughter]`, `[breath]`,
+`<strong>` …); jede andere Stimme (Piper, Speaches) bekommt sie entfernt, damit
+nichts wörtlich vorgelesen wird. Mit dem Schalter hängt eine kurze Regel mit
+den Marken an der Voice-Anweisung (`locale.openclaw_marken_regel`). Nach Gehör
+ausgewählt: `[clucking]` und `[noise]` waren nicht zu hören. CosyVoices
+Stil-Anweisungen („sag es fröhlich“) wurden probiert und verworfen — bei einem
+deutschen Satz brachten sie einen starken englischen Akzent
+(`voice_assistant/services/tts_marken.py`).
+
 **Neue Stimmen aus dem Chat (`voice_stimme_einreichen`,
 `voice_stimme_waehlen`).** Eine Audiodatei oder Sprachnachricht in den Chat
 des Assistenten schicken und sagen, daraus solle eine Stimme werden. Der

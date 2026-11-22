@@ -387,6 +387,21 @@ data; raise it for such a service. Each sentence logs how long it waited, the
 measured tempo and whether the stream still had to fill a gap inside it
 (`voice_assistant/services/satz_planer.py`).
 
+**Sound marks (`tts_marken: true`, optional, needs a CosyVoice3 reply
+service).** The brain may add a laugh, a breath or an emphasis to a sentence,
+written as German marks: `[lachen]` laugh, `[atmen]` breath, `[luftholen]`
+quick breath, `[seufzen]` sigh, `[husten]` cough, `[hm]` hum, `[psst]` hiss,
+`[äh]` filler sound, `[schnalzen]` lip smack, `<lachend>…</lachend>` spoken
+laughing, `**word**` emphasis. They survive the text clean-up and are turned
+into CosyVoice3's own tags (`[laughter]`, `[breath]`, `<strong>`, …) only for
+the reply service; every other voice (Piper, Speaches) gets them removed, so
+nothing is read out literally. With the switch on, a short rule listing the
+marks is appended to the voice instruction (`locale.openclaw_marken_regel`).
+Chosen by ear: `[clucking]` and `[noise]` had no audible effect. CosyVoice's
+own style instructions ("say it happily") were tried and dropped — with a
+German sentence they brought a strong English accent
+(`voice_assistant/services/tts_marken.py`).
+
 **New voices from the chat (`voice_stimme_einreichen`,
 `voice_stimme_waehlen`).** Send the assistant's chat an audio file or voice
 message and say it should become a voice. The brain passes the received file

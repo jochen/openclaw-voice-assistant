@@ -139,6 +139,20 @@ _DEFAULT_VOICE_INSTRUCTION = (
 )
 
 
+# Nur mit tts_marken (services/tts_marken.py) an die Voice-Regel gehängt: welche
+# Klang-Marken die Stimme kann. Sonst würden sie entfernt — dann soll der Brain
+# sie gar nicht erst schreiben. Seit 2026-11-22.
+_DEFAULT_MARKEN_REGEL = (
+    "[Klang-Marken: Deine Stimme kann Geräusche und Betonung. Setz sie sparsam "
+    "ein, dort wo ein Mensch im Gespräch es auch täte — nicht in jedem Satz und "
+    "nie bei Warnungen, Sicherheitshinweisen oder ernsten Themen. An die Stelle "
+    "im Satz, wo das Geräusch kommen soll: [lachen], [atmen], [luftholen], "
+    "[seufzen], [husten], [hm], [psst], [äh], [schnalzen]. Lachend Gesprochenes "
+    "steht in <lachend>…</lachend>, ein betontes Wort in **Wort**. Das sind die "
+    "einzigen Ausnahmen vom Fließtext ohne Markdown.]"
+)
+
+
 # Kurze Erinnerung je Turn hinter dem Transkript, wenn die Regel als
 # "instructions" geht. Ohne sie schrieb Gaston dort Listen ("1. … 2. …", von der
 # TTS als "ersten … zweiten …" gelesen): 3/6 gegen 0/6 mit der Regel im input
@@ -229,6 +243,7 @@ class LocaleConfig:
     brain_weg: str = "Ich erreiche mein Sprachmodell gerade nicht."
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
     openclaw_voice_erinnerung: str = _DEFAULT_VOICE_ERINNERUNG
+    openclaw_marken_regel: str = _DEFAULT_MARKEN_REGEL
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
     satellit_unklar_hinweis: str = _DEFAULT_SATELLIT_UNKLAR_HINWEIS
@@ -846,6 +861,10 @@ class Profile:
     satz_planer: bool = False
     satz_pause_s: float = 0.35
     antwort_tempo: float = 1.0
+    # Klang-Marken des Brains ([lachen], [atmen], **Wort** …,
+    # services/tts_marken.py) an den Antwort-Dienst geben. Nur fuer CosyVoice3;
+    # sonst (und bei jeder anderen Stimme) werden sie entfernt. Default aus.
+    tts_marken: bool = False
 
     # Telegram
     telegram_bot_token: str = ""
@@ -1340,6 +1359,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         brain_fehler=str(locale_raw.get("brain_fehler", _dloc.brain_fehler)),
         brain_weg=str(locale_raw.get("brain_weg", _dloc.brain_weg)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
+        openclaw_marken_regel=str(locale_raw.get("openclaw_marken_regel", _dloc.openclaw_marken_regel)),
         openclaw_voice_erinnerung=str(locale_raw.get("openclaw_voice_erinnerung", _dloc.openclaw_voice_erinnerung)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
@@ -1401,6 +1421,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         satz_planer=bool(raw.get("satz_planer", False)),
         satz_pause_s=float(raw.get("satz_pause_s", 0.35)),
         antwort_tempo=float(raw.get("antwort_tempo", 1.0)),
+        tts_marken=bool(raw.get("tts_marken", False)),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),

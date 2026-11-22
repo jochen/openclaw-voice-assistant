@@ -1128,6 +1128,27 @@ Pausen ≥ Mindestpause; Schub-Dienst wie CosyVoice (0,5/1/2 s, Tempo 0,8) →
 am Stück — dieser Test scheitert gegen die erste Fassung; Gegenprobe ohne
 Planer reißt auf; schneller Dienst → nur Mindestpause).
 
+### Klang-Marken (`tts_marken`, seit 2026-11-22)
+
+`services/tts_marken.py`: deutsche Marken im Brain-Text → CosyVoice3-Tags, sonst
+weg. `clean_for_tts` ruft zuerst `schuetzen` (Marken → Platzhalter aus Buchstaben,
+überstehen Zeichenfilter und Verbalisierung) und am Ende `wiederherstellen`
+(lesbare deutsche Form). `SpeachesTts._parameter` übersetzt mit `marken=True`
+(nur der Antwort-Dienst, Profil `tts_marken`), sonst `entfernen`; ebenso
+`piper_synth` und `ReplyRecorder` (dessen Text dient der Nachprüfung). Die Regel
+für den Brain (`locale.openclaw_marken_regel`) hängt nur mit Schalter an der
+Voice-Anweisung — Telegram-Chats ohne Sprache bekommen sie nicht.
+
+Hörtest 2026-11-22 (Jochen, Stimme edgar_3, jede Marke einzeln):
+gut — `[laughter]`, `<laughter>…</laughter>` (bei tiefer Stimme dezent),
+`[breath]`, `[quick_breath]`, `[cough]`, `[mn]`, `[hissing]`,
+`[vocalized-noise]`, `<strong>`; `[lipsmack]` klang nach Schnalzer (deshalb
+`[schnalzen]`); `[sigh]` unsicher; nichts zu hören: `[clucking]`, `[noise]`.
+`inference_instruct2` (fröhlich/traurig/wütend/leise) verworfen: starker
+englischer Akzent („loool“), weil instruct2 die Sprach-Token der Stimmprobe für
+das LLM weglässt. Falle dabei: mit `zero_shot_spk_id` verwirft CosyVoice einen
+übergebenen prompt_text still. Tests: `tests/test_tts_marken.py`.
+
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 
 `RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die
