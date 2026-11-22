@@ -1590,6 +1590,9 @@ SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
 STIMMEN_DIR = os.path.join(VOICE_DIR, "stimmen")
 # Gerechnete feste Sätze je Stimme („Ja?“, Denk-Phrasen), abgeleitet, nicht privat.
 STIMMEN_CACHE_DIR = os.path.join(VOICE_DIR, "stimmen_cache")
+# Satz-Planer (services/satz_planer.py): gelernter Stand und Protokoll je Satz.
+SATZ_PLANER_ZUSTAND = os.path.join(VOICE_DIR, "satz_planer_zustand.json")
+SATZ_PLANER_PROTOKOLL = os.path.join(VOICE_DIR, "satz_planer.jsonl")
 # Eingereichte Proben in Arbeit (services/stimmen_eingang.py), privat.
 STIMMEN_EINGANG_DIR = os.path.join(VOICE_DIR, "stimmen_eingang")
 # Wo OpenClaw Telegram-Dateien ablegt; nur von dort nimmt der Eingang Proben.

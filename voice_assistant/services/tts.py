@@ -23,7 +23,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable
 
 from voice_assistant.audio.strom import BYTES_JE_S as STROM_BYTES_JE_S, RATE as STROM_RATE, zu_48k_stereo
-from voice_assistant.services.satz_planer import SatzPuffer, Schaetzer, freigeben
+from voice_assistant.services.satz_planer import SatzPuffer, Schaetzer, freigeben, protokollieren
 from voice_assistant.services import tts_marken
 from voice_assistant.services import aussprache
 from voice_assistant.config import (
@@ -742,6 +742,8 @@ class ReplySpeaker:
         satz_planer: bool = False,
         satz_pause_s: float = 0.35,
         antwort_tempo: float = 1.0,
+        planer_zustand: str | None = None,
+        planer_protokoll: str | None = None,
     ) -> None:
         self.speaches = speaches
         self.play_wav = play_wav
@@ -753,6 +755,14 @@ class ReplySpeaker:
         self.satz_planer = satz_planer
         self.satz_pause_s = max(0.0, satz_pause_s)
         self.planer_schaetzer = Schaetzer(tempo_start=antwort_tempo)
+        # Gedaechtnis ueber Neustarts (Tempo, Sprechdauer, Schuebe, Reserve)
+        # und Protokoll je Satz; None = nichts auf die Platte (Tests).
+        self.planer_zustand = planer_zustand
+        self.planer_protokoll = planer_protokoll
+        if satz_planer and self.planer_schaetzer.laden(planer_zustand):
+            z = self.planer_schaetzer.zustand()
+            print(f"📐 Satz-Planer: gelernter Stand geladen (Tempo {z['tempo']:.2f}, "
+                  f"{z['s_je_zeichen']:.3f} s/Zeichen, Reserve {z['reserve_je_schub']:.0%} je Schub)")
         # Senke.strom_oeffnen (audio/strom.py) oder None = Dateien wie bisher.
         # Nur Brain-Antworten (ReplyStreamSession) gehen als Strom.
         self.strom_oeffnen = strom_oeffnen
@@ -1195,7 +1205,8 @@ class ReplyStreamSession:
                 # solange der Satz nicht fertig ist, kommt mindestens noch ein Schub
                 dauer = max(dauer_s, gepuffert + min(s_schub * sch.wachstum, sch.schub_max))
                 if freigeben(time.monotonic(), strom.vorsprung_s() + pause_rest, gepuffert,
-                             t_schub, s_schub, dauer, tempo, sch.wachstum, sch.schub_max):
+                             t_schub, s_schub, dauer, tempo, sch.wachstum, sch.schub_max,
+                             reserve_je_schub=sch.reserve_je_schub):
                     break
                 puffer.warten(0.05)
             if turn_stopped(self.turn):
@@ -1234,11 +1245,24 @@ class ReplyStreamSession:
                 tempo_satz = puffer.tempo_gemessen()
                 t0_schub = puffer.schuebe[0][0] if puffer.schuebe else 0.0
                 schuebe = [f"{x:.2f}@{t - t0_schub:.1f}" for t, x in puffer.schuebe]
+                reserve_vorher = sch.reserve_je_schub
                 sch.lernen(len(clean), audio_s, tempo_satz, puffer.wachstum_gemessen(), puffer.schub_max())
+                sch.nach_satz(im_satz, puffer.schub_max() or 0.0)
+                sch.speichern(self.sp.planer_zustand)
                 print(f"   ↳ {puffer.dienst or '?'} · geplant: {gewartet:.2f} s gewartet, "
                       f"{audio_s:.1f} s Audio (geschätzt {dauer_s:.1f}), Tempo "
                       f"{tempo_satz if tempo_satz else 0:.2f}, Schübe {' '.join(schuebe)}"
-                      + (f", ⚠️ {im_satz * 1000:.0f} ms im Satz aufgefüllt" if im_satz > 0.001 else ""))
+                      + (f", ⚠️ {im_satz * 1000:.0f} ms im Satz aufgefüllt, Reserve "
+                         f"{reserve_vorher:.0%} → {sch.reserve_je_schub:.0%} je Schub" if im_satz > 0.001 else ""))
+                protokollieren(self.sp.planer_protokoll, {
+                    "zeit": time.strftime("%Y-%m-%dT%H:%M:%S"), "dienst": puffer.dienst,
+                    "text": tts_marken.entfernen(clean)[:200], "zeichen": len(clean),
+                    "gewartet_s": round(gewartet, 2), "audio_s": round(audio_s, 2),
+                    "dauer_geschaetzt_s": round(dauer_s, 2),
+                    "tempo": round(tempo_satz, 3) if tempo_satz else None,
+                    "schuebe": [[round(t - t0_schub, 2), round(x, 2)] for t, x in puffer.schuebe],
+                    "luecke_ms": round(im_satz * 1000), "reserve_je_schub": round(reserve_vorher, 3),
+                })
             self._pos_nach_satz = strom.position_s()
         finally:
             strom.beenden()

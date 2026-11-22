@@ -1121,6 +1121,17 @@ Schübe [...]` und `⚠️ N ms im Satz aufgefüllt` — **gemessen** am neuen Z
 (die erste Fassung schätzte mit einer Schwelle von 0,05 s und übersah die
 50-ms-Stücke, die der Strom schon unter 0,15 s Vorsprung einschiebt).
 
+**Lernt aus eigenen Aussetzern (seit 2026-11-22 abends):** die Reserve je Schub
+(Start 15 %, Grenzen 5–60 %) wächst nach einer gemessenen Lücke um
+Lücke/größter Schub und sinkt nach sauberen Sätzen mit Schub ≥ 1,5 s um 0,5
+Prozentpunkte. Tempo, s/Zeichen, Schub-Wachstum/-Max und Reserve überleben
+Neustarts: `<workspace>/voice/satz_planer_zustand.json` (atomar geschrieben,
+Werte beim Laden begrenzt, kaputt → Startwerte). Protokoll je Satz:
+`<workspace>/voice/satz_planer.jsonl` (zeit, dienst, text, gewartet_s, audio_s,
+dauer_geschaetzt_s, tempo, schuebe [[s seit erstem, größe]], luecke_ms,
+reserve_je_schub), ab 5 MB einmal nach `.1`. Eine tägliche Zusammenfassung über
+den Dienst-Wächter ist angedacht, aber erst nach ein paar Tagen Daten.
+
 Hörprobe 2026-11-22 (gerechnet aus gemessenen Zeiten des Dienstes): naiv 12
 Aussetzer im Satz; mit Planer keine, Pausen an den Satzgrenzen. Jochen: „mit
 Pausen sogar besser als durchgesprochen, macht die Trennung klarer und

@@ -38,6 +38,8 @@ from voice_assistant.config import (
     PIPER_OUT,
     STIMMEN_DIR,
     STIMMEN_CACHE_DIR,
+    SATZ_PLANER_PROTOKOLL,
+    SATZ_PLANER_ZUSTAND,
     STIMMEN_EINGANG_DIR,
     OPENCLAW_MEDIA_DIRS,
     RATE_OW,
@@ -1332,6 +1334,8 @@ def run() -> None:
         satz_planer=profile.satz_planer,
         satz_pause_s=profile.satz_pause_s,
         antwort_tempo=profile.antwort_tempo,
+        planer_zustand=SATZ_PLANER_ZUSTAND,
+        planer_protokoll=SATZ_PLANER_PROTOKOLL,
     )
     if profile.tts_strom:
         print("🔊 TTS als Strom: " + ("an" if speaker.strom_oeffnen else "Senke kann keinen Strom, Dateien wie bisher")

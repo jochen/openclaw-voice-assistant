@@ -385,7 +385,11 @@ than real time over the whole reply even when single sentences are not.
 `antwort_tts_timeout` (default 8 s) is how long a reply request may wait for
 data; raise it for such a service. Each sentence logs how long it waited, the
 measured tempo and whether the stream still had to fill a gap inside it
-(`voice_assistant/services/satz_planer.py`).
+The safety margin per burst is learned: it grows by exactly what a
+measured gap was short and shrinks slowly after clean sentences; together with
+the tempo and speaking rate it survives restarts
+(`<workspace>/voice/satz_planer_zustand.json`), and every sentence is logged to
+`<workspace>/voice/satz_planer.jsonl` (`voice_assistant/services/satz_planer.py`).
 
 **Sound marks (`tts_marken: true`, optional, needs a CosyVoice3 reply
 service).** The brain may add a laugh, a breath or an emphasis to a sentence,

@@ -34,6 +34,9 @@ Die Klassen hier kennen weder Strom noch HTTP; die Verdrahtung steht in
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import threading
 import time
 from typing import Callable
@@ -56,6 +59,16 @@ RESERVE_S = 0.3
 # als das bisherige Tempo, weil der Flow je Abschnitt den ganzen bisherigen Satz
 # neu rechnet. Gehört 2026-11-22: ein erwarteter 3,84-s-Schub kam ~0,6 s zu spät.
 RESERVE_JE_SCHUB = 0.15
+# Die Reserve je Schub lernt der Planer aus den eigenen Aussetzern (seit
+# 2026-11-22): nach einer gemessenen Lücke wächst sie um genau den Fehlbetrag,
+# nach sauberen Sätzen mit großen Schüben sinkt sie langsam — so pendelt sie
+# sich zwischen „keine Aussetzer“ und „nicht unnötig lange warten“ ein.
+RESERVE_JE_SCHUB_MIN = 0.05
+RESERVE_JE_SCHUB_MAX = 0.6
+_RESERVE_SENKEN = 0.005          # je sauberem Satz mit großem Schub
+_GROSSER_SCHUB_S = 1.5
+# Protokoll je Satz (JSONL); größer → einmal umbenennen nach .1
+_PROTOKOLL_MAX_BYTES = 5 * 1024 * 1024
 
 
 def freigeben(jetzt: float, vorsprung_s: float, gepuffert_s: float, letzter_schub_t: float | None,
@@ -107,6 +120,7 @@ class Schaetzer:
         self._s_je_zeichen = s_je_zeichen
         self._wachstum = STANDARD_WACHSTUM
         self._schub_max = STANDARD_SCHUB_MAX_S
+        self._reserve_je_schub = RESERVE_JE_SCHUB
         self._gewicht = gewicht
 
     @property
@@ -128,6 +142,61 @@ class Schaetzer:
     def schub_max(self) -> float:
         with self._lock:
             return self._schub_max
+
+    @property
+    def reserve_je_schub(self) -> float:
+        with self._lock:
+            return self._reserve_je_schub
+
+    def nach_satz(self, luecke_s: float, groesster_schub_s: float) -> None:
+        """Aus der gemessenen Lücke im Satz lernen: wachsen um den Fehlbetrag
+        (bezogen auf den größten Schub, der ihn verursacht hat), sonst nach
+        sauberen Sätzen mit großem Schub langsam sinken."""
+        with self._lock:
+            if luecke_s > 0.02:
+                self._reserve_je_schub = min(RESERVE_JE_SCHUB_MAX, self._reserve_je_schub
+                                             + luecke_s / max(groesster_schub_s, 0.5))
+            elif groesster_schub_s >= _GROSSER_SCHUB_S:
+                self._reserve_je_schub = max(RESERVE_JE_SCHUB_MIN,
+                                             self._reserve_je_schub - _RESERVE_SENKEN)
+
+    # --- Gedächtnis über Neustarts -------------------------------------------
+    def zustand(self) -> dict:
+        with self._lock:
+            return {"tempo": self._tempo, "s_je_zeichen": self._s_je_zeichen,
+                    "wachstum": self._wachstum, "schub_max": self._schub_max,
+                    "reserve_je_schub": self._reserve_je_schub}
+
+    def laden(self, pfad: str | None) -> bool:
+        """Gespeicherten Zustand übernehmen; fehlt oder ist kaputt → Startwerte."""
+        if not pfad:
+            return False
+        try:
+            with open(pfad, encoding="utf-8") as f:
+                z = json.load(f)
+        except (OSError, ValueError):
+            return False
+        grenzen = {"tempo": (0.05, 20.0), "s_je_zeichen": (0.02, 0.3), "wachstum": (1.0, 4.0),
+                   "schub_max": (0.1, 30.0),
+                   "reserve_je_schub": (RESERVE_JE_SCHUB_MIN, RESERVE_JE_SCHUB_MAX)}
+        with self._lock:
+            for name, (lo, hi) in grenzen.items():
+                wert = z.get(name)
+                if isinstance(wert, (int, float)):
+                    setattr(self, "_" + name, min(hi, max(lo, float(wert))))
+        return True
+
+    def speichern(self, pfad: str | None) -> None:
+        if not pfad:
+            return
+        try:
+            os.makedirs(os.path.dirname(pfad) or ".", exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(pfad) or ".", suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self.zustand(), f)
+            os.replace(tmp, pfad)
+        except OSError as e:
+            print(f"⚠️  Satz-Planer: Zustand nicht gespeichert: {e}")
 
     def dauer(self, text: str) -> float:
         return len(text) * self.s_je_zeichen
@@ -242,3 +311,18 @@ class SatzPuffer:
         """Blöcke ab index und ob der Satz vollständig ist."""
         with self._cv:
             return self.bloecke[index:], self.fertig
+
+
+def protokollieren(pfad: str | None, eintrag: dict) -> None:
+    """Eine Zeile je Satz anhängen (JSONL). Wird die Datei zu groß, wandert sie
+    einmal nach .1 (die vorige .1 fällt weg)."""
+    if not pfad:
+        return
+    try:
+        os.makedirs(os.path.dirname(pfad) or ".", exist_ok=True)
+        if os.path.exists(pfad) and os.path.getsize(pfad) > _PROTOKOLL_MAX_BYTES:
+            os.replace(pfad, pfad + ".1")
+        with open(pfad, "a", encoding="utf-8") as f:
+            f.write(json.dumps(eintrag, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(f"⚠️  Satz-Planer: Protokoll nicht geschrieben: {e}")

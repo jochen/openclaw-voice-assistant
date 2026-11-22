@@ -392,7 +392,12 @@ schneller als Echtzeit, auch wenn es einzelne Sätze nicht sind.
 `antwort_tts_timeout` (Standard 8 s) ist, wie lange eine Antwort-Anfrage auf
 Daten warten darf; für so einen Dienst höher setzen. Je Satz steht im Journal,
 wie lange er gewartet hat, das gemessene Tempo und ob der Strom in ihm doch
-auffüllen musste (`voice_assistant/services/satz_planer.py`).
+auffüllen musste Die Reserve je Schub lernt er selbst: nach einer gemessenen Lücke wächst sie
+um genau den Fehlbetrag, nach sauberen Sätzen sinkt sie langsam; zusammen mit
+Tempo und Sprechdauer übersteht sie Neustarts
+(`<workspace>/voice/satz_planer_zustand.json`), und jeder Satz landet im
+Protokoll `<workspace>/voice/satz_planer.jsonl`
+(`voice_assistant/services/satz_planer.py`).
 
 **Klang-Marken (`tts_marken: true`, optional, braucht einen Antwort-Dienst
 mit CosyVoice3).** Der Brain darf einem Satz einen Lacher, einen Atemzug oder
