@@ -119,6 +119,31 @@ class LangsamerDienst:
                 yield _block(self.pegel[text])
 
 
+class ZaehlDienst(LangsamerDienst):
+    """Rechnet gleichzeitige Anfragen parallel und zählt, wie viele es höchstens waren."""
+
+    def __init__(self, tempo, laengen):
+        super().__init__(tempo, laengen)
+        self._z = threading.Lock()
+        self.laufend = 0
+        self.max_gleichzeitig = 0
+        self.fertig: list[tuple[str, float]] = []
+
+    def synth_strom(self, text):
+        self.angefragt.append((text, time.monotonic()))
+        with self._z:
+            self.laufend += 1
+            self.max_gleichzeitig = max(self.max_gleichzeitig, self.laufend)
+        try:
+            for _ in range(int(round(self.laengen[text] / BLOCK_S))):
+                time.sleep(BLOCK_S / self.tempo)
+                yield _block(self.pegel[text])
+        finally:
+            with self._z:
+                self.laufend -= 1
+            self.fertig.append((text, time.monotonic()))
+
+
 class SchubDienst(LangsamerDienst):
     """Wie CosyVoice: ein Satz kommt in verdoppelnden Schüben (erst nichts,
     dann ein ganzer Abschnitt auf einmal), im Mittel mit tempo."""
@@ -214,6 +239,31 @@ class AblaufTest(unittest.TestCase):
                          f"jeder Satz am Stück trotz Schüben: {teile}")
         for (_, a, b), dauer in zip(teile, laengen.values()):
             self.assertAlmostEqual(b - a, dauer, delta=0.011)
+
+    def test_zwei_ausgaben_rechnen_nicht_gleichzeitig(self):
+        """Bestätigung und Antwort sind zwei Sitzungen: die zweite fragt erst an,
+        wenn die erste die Wiedergabe abgegeben hat — wie vor dem Planer."""
+        laengen = {"Bestätigung eins.": 0.3, "Bestätigung zwei.": 0.3,
+                   "Antwort eins.": 0.3, "Antwort zwei.": 0.3}
+        dienst = ZaehlDienst(1.5, laengen)
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(dienst, senke.play_wav, FakeLeds(), strom_oeffnen=senke.strom_oeffnen,
+                              satz_planer=True, satz_pause_s=0.1, antwort_tempo=1.0)
+        a = sp.stream_session(restore_leds=False, turn=None)
+        a.feed("Bestätigung eins.", bereinigt=True)
+        a.feed("Bestätigung zwei.", bereinigt=True)
+        b = sp.stream_session(restore_leds=True, turn=None)
+        b.feed("Antwort eins.", bereinigt=True)
+        b.feed("Antwort zwei.", bereinigt=True)
+        t = threading.Thread(target=a.end)
+        t.start()
+        b.end()
+        t.join(5)
+        self.assertFalse(tts_lock.locked())
+        self.assertLessEqual(dienst.max_gleichzeitig, 2, "höchstens ein Satz voraus, eine Ausgabe zur Zeit")
+        erste_antwort = next(z for txt, z in dienst.angefragt if txt.startswith("Antwort"))
+        letzte_bestaetigung = max(z for txt, z in dienst.fertig if txt.startswith("Bestätigung"))
+        self.assertGreaterEqual(erste_antwort, letzte_bestaetigung)
 
     def test_ohne_planer_reisst_der_satz_auf(self):
         laengen = {"Eins.": 0.5, "Zwei ist länger.": 0.8}

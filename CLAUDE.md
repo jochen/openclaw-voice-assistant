@@ -1089,6 +1089,11 @@ nicht mehr, sondern legt einen `SatzPuffer` an und startet dessen Erzeuger
 (`_erzeugen`, dieselbe Rückfall-Kette wie `_satz_in_strom`). Ein Erzeuger fragt
 erst an, wenn der vorige Satz erstes Audio hat (`unterwegs`) — höchstens einer
 voraus; sonst wartet eine Anfrage beim Dienst bis zum Timeout auf dessen LLM.
+Der **erste** Satz einer Sitzung fragt erst an, wenn die Sitzung die Wiedergabe
+hat (`_erzeugen_frei`, gesetzt nach `_strom_holen`): Bestätigung und Antwort
+sind zwei Sitzungen, und ohne diese Sperre rechneten sie gleichzeitig beim
+Dienst (bis zu 4 Anfragen, Tempo 0,3–0,5, Aussetzer bis 1,3 s im ersten echten
+Gespräch 2026-11-22) — vor dem Planer serialisierte `tts_lock` das von selbst.
 Ein Schreiber-Faden (`_planer_schreiben`) nimmt die Sätze der Reihe nach, holt
 den Strom (`_strom_holen`, tts_lock wie bisher) und wartet, bis `freigeben()`
 sagt, dass der Satz ohne Leerlauf durchspielt. **Schübe:** CosyVoice liefert

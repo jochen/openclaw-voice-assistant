@@ -965,6 +965,12 @@ class ReplyStreamSession:
         self._letzter_puffer: SatzPuffer | None = None
         self._plan_strom = None          # Strom, auf den sich _pos_nach_satz bezieht
         self._pos_nach_satz: float | None = None
+        # Der erste Satz wird erst angefragt, wenn diese Sitzung die Wiedergabe
+        # hat (tts_lock ueber den Strom). Sonst rechnen Bestaetigung und Antwort
+        # gleichzeitig beim Dienst, nehmen sich gegenseitig das Tempo, und der
+        # Planer verschaetzt sich (bis zu 4 Anfragen gleichzeitig, Aussetzer bis
+        # 1,3 s, 2026-11-22).
+        self._erzeugen_frei = threading.Event()
 
     def _strom_abwarten(self) -> None:
         if self._strom_ende is not None:
@@ -1103,10 +1109,10 @@ class ReplyStreamSession:
         Rueckfall-Kette wie _satz_in_strom."""
         clean = puffer.text
         try:
-            if vorher is not None:
-                while not vorher.unterwegs.wait(0.1):
-                    if turn_stopped(self.turn) or puffer.abgebrochen:
-                        return
+            warten_auf = vorher.unterwegs if vorher is not None else self._erzeugen_frei
+            while not warten_auf.wait(0.1):
+                if turn_stopped(self.turn) or puffer.abgebrochen:
+                    return
             for dienst in self.sp.strom_kandidaten():
                 try:
                     for block in dienst.synth_strom(clean):
@@ -1157,6 +1163,7 @@ class ReplyStreamSession:
             puffer.abbrechen()
             return
         strom = self._strom_holen()
+        self._erzeugen_frei.set()        # ab jetzt gehoert die Wiedergabe uns
         if strom == "stop":
             puffer.abbrechen()
             return
@@ -1328,6 +1335,7 @@ class ReplyStreamSession:
             self._plan_q.put(None)
             self._planer_schreiber.join()
             self._planer_schreiber = None
+        self._erzeugen_frei.set()        # keinen Erzeuger haengen lassen
         if self._strom is not None:
             self._strom.schliessen()
         self._strom_abwarten()
