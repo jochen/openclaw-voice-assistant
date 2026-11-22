@@ -360,6 +360,52 @@ predicted which one a listener prefers, so choose by ear:
 `tools/stimmprobe_zerlegen.py` cuts a clip at its pauses and serves a local
 page with each piece and test sentences spoken with it.
 
+**Pauses between sentences (`satz_planer: true`, optional, needs `tts_strom`).**
+For a reply service that is slower than real time per sentence (a voice clone
+on an older GPU), the stream would catch up with the synthesis in the middle
+of a sentence and you would hear it stutter. The planner moves those gaps to
+the sentence boundaries: `feed()` only queues a sentence and starts its
+synthesis (at most one sentence ahead, so a request never waits too long at
+a service that works through sentences one after another), and a writer puts
+each sentence into the stream only once it can play through without running
+dry — estimated from what is already buffered, how much is still playing
+before it, the expected length (characters × seconds per character) and the
+service's tempo (audio seconds per second, measured per sentence and averaged
+across replies; `antwort_tempo` is the starting value). Services like
+CosyVoice deliver a sentence in growing bursts (0.5, 1, 2, 4 s of audio at
+once, nothing in between), so the planner groups arriving blocks into bursts,
+learns how they grow and plays the missing ones through: before each
+expected burst there must still be enough buffered audio. Until then the stream
+fills with silence, as it always does, so the wait becomes a pause before the
+sentence. There is always at least `satz_pause_s` (default 0.35 s) between
+two sentences — in a listening test this was **clearer than speaking
+straight through**, so it is worth having even with a fast service. A
+service that synthesises concurrent requests as a pipeline is then faster
+than real time over the whole reply even when single sentences are not.
+`antwort_tts_timeout` (default 8 s) is how long a reply request may wait for
+data; raise it for such a service. Each sentence logs how long it waited, the
+measured tempo and whether the stream still had to fill a gap inside it
+The safety margin per burst is learned: it grows by exactly what a
+measured gap was short and shrinks slowly after clean sentences; together with
+the tempo and speaking rate it survives restarts
+(`<workspace>/voice/satz_planer_zustand.json`), and every sentence is logged to
+`<workspace>/voice/satz_planer.jsonl` (`voice_assistant/services/satz_planer.py`).
+
+**Sound marks (`tts_marken: true`, optional, needs a CosyVoice3 reply
+service).** The brain may add a laugh, a breath or an emphasis to a sentence,
+written as German marks: `[lachen]` laugh, `[atmen]` breath, `[luftholen]`
+quick breath, `[seufzen]` sigh, `[husten]` cough, `[hm]` hum, `[psst]` hiss,
+`[äh]` filler sound, `[schnalzen]` lip smack, `<lachend>…</lachend>` spoken
+laughing, `**word**` emphasis. They survive the text clean-up and are turned
+into CosyVoice3's own tags (`[laughter]`, `[breath]`, `<strong>`, …) only for
+the reply service; every other voice (Piper, Speaches) gets them removed, so
+nothing is read out literally. With the switch on, a short rule listing the
+marks is appended to the voice instruction (`locale.openclaw_marken_regel`).
+Chosen by ear: `[clucking]` and `[noise]` had no audible effect. CosyVoice's
+own style instructions ("say it happily") were tried and dropped — with a
+German sentence they brought a strong English accent
+(`voice_assistant/services/tts_marken.py`).
+
 **New voices from the chat (`voice_stimme_einreichen`,
 `voice_stimme_waehlen`).** Send the assistant's chat an audio file or voice
 message and say it should become a voice. The brain passes the received file

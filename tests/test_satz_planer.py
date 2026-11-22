@@ -1,0 +1,395 @@
+"""Satz-Planer (services/satz_planer.py) — Regel, Schätzer, Puffer und der
+Ablauf in ReplyStreamSession mit echtem Strom (ohne Gerät, mit echter Uhr).
+
+Der Strom füllt Lücken mit Stille (audio/strom.py), die ausgelieferten Bytes
+sind also die Zeitachse der Wiedergabe. Jeder Satz bekommt hier einen eigenen,
+konstanten Pegel; so lässt sich im Ausgang ablesen, ob ein Satz am Stück lief
+und wie lang die Pausen dazwischen waren.
+"""
+
+import os
+import sys
+import threading
+import time
+import unittest
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from voice_assistant.audio.strom import BYTES_JE_S, RATE  # noqa: E402
+from voice_assistant.services import tts  # noqa: E402
+import json  # noqa: E402
+import tempfile  # noqa: E402
+from voice_assistant.services import satz_planer  # noqa: E402
+from voice_assistant.services.satz_planer import SatzPuffer, Schaetzer, freigeben, protokollieren  # noqa: E402
+from voice_assistant.services.speaches import SpeachesState  # noqa: E402
+from voice_assistant.state import tts_lock  # noqa: E402
+from test_tts_strom import FakeLeds, FakeSenke  # noqa: E402
+
+BLOCK_S = 0.05
+
+
+def _block(pegel: int, sekunden: float = BLOCK_S) -> bytes:
+    n = int(sekunden * RATE)
+    return np.full(2 * n, pegel, dtype=np.int16).tobytes()
+
+
+class RegelTest(unittest.TestCase):
+    def test_ohne_audio_nie(self):
+        self.assertFalse(freigeben(0.0, 10.0, 0.0, None, 0.0, 1.0, 5.0))
+
+    def test_schneller_dienst_sofort(self):
+        # Tempo 10: sobald die Reserve (0,3 s + 15 % des nächsten Schubs) da ist
+        self.assertTrue(freigeben(0.0, 0.0, 0.7, 0.0, 0.7, 4.0, 10.0))
+        self.assertFalse(freigeben(0.0, 0.0, 0.3, 0.0, 0.3, 4.0, 10.0))
+
+    def test_gleichmaessig_wie_vorher(self):
+        # Wachstum 1, kleine Schübe ≈ gleichmäßiger Fluss: Tempo 0,8, Satz 5 s
+        args = dict(letzter_schub_t=0.0, letzter_schub_s=0.05, dauer_s=5.0, tempo=0.8,
+                    wachstum=1.0, schub_max_s=0.05, reserve_s=0.2)
+        self.assertFalse(freigeben(0.0, 0.0, 1.0, **args))
+        self.assertTrue(freigeben(0.0, 0.0, 1.3, **args))
+
+    def test_grosser_schub_verlangt_mehr_vorrat(self):
+        # 1 s gepuffert, nächster Schub 2 s bei Tempo 0,8 kommt erst nach 2,5 s
+        self.assertFalse(freigeben(0.0, 0.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
+        # mit 2 s Rest im Strom davor reicht es nur ohne schubabhängige Reserve
+        self.assertTrue(freigeben(0.0, 2.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3, 0.0))
+        # mit 15 % der Schubgröße (2 s → +0,3 s) braucht es 2,5 s davor
+        self.assertFalse(freigeben(0.0, 2.0, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
+        self.assertTrue(freigeben(0.0, 2.5, 1.0, 0.0, 1.0, 3.0, 0.8, 2.0, 4.0, 0.3))
+
+    def test_alles_da_sofort(self):
+        self.assertTrue(freigeben(0.0, 0.0, 3.0, 0.0, 1.0, 3.0, 0.5))
+
+
+class SchaetzerTest(unittest.TestCase):
+    def test_lernt_tempo_und_sprechdauer(self):
+        s = Schaetzer(tempo_start=1.0, s_je_zeichen=0.1, gewicht=0.5)
+        s.lernen(zeichen=50, audio_s=6.0, tempo=0.8)
+        self.assertAlmostEqual(s.tempo, 0.9)
+        self.assertAlmostEqual(s.s_je_zeichen, 0.11)
+        s.lernen(zeichen=5, audio_s=0.3, tempo=None)    # zu kurz: nichts lernen
+        self.assertAlmostEqual(s.s_je_zeichen, 0.11)
+        self.assertAlmostEqual(s.tempo, 0.9)
+
+
+class LernenTest(unittest.TestCase):
+    def test_reserve_waechst_nach_luecke_und_sinkt_langsam(self):
+        s = Schaetzer()
+        start = s.reserve_je_schub
+        s.nach_satz(luecke_s=0.6, groesster_schub_s=3.0)       # 0,6 s bei 3-s-Schub → +20 %
+        self.assertAlmostEqual(s.reserve_je_schub, start + 0.2)
+        s.nach_satz(0.0, 3.0)
+        self.assertAlmostEqual(s.reserve_je_schub, start + 0.2 - 0.005)
+        s.nach_satz(0.0, 0.5)                                  # kleiner Schub: kein Beweis
+        self.assertAlmostEqual(s.reserve_je_schub, start + 0.2 - 0.005)
+        for _ in range(500):
+            s.nach_satz(0.0, 3.0)
+        self.assertAlmostEqual(s.reserve_je_schub, satz_planer.RESERVE_JE_SCHUB_MIN)
+        for _ in range(50):
+            s.nach_satz(5.0, 1.0)
+        self.assertAlmostEqual(s.reserve_je_schub, satz_planer.RESERVE_JE_SCHUB_MAX)
+
+    def test_zustand_speichern_laden_und_kaputte_datei(self):
+        with tempfile.TemporaryDirectory() as d:
+            pfad = os.path.join(d, "voice", "zustand.json")
+            a = Schaetzer(tempo_start=0.8)
+            a.lernen(60, 3.0, 0.9)
+            a.nach_satz(0.4, 2.0)
+            a.speichern(pfad)
+            b = Schaetzer()
+            self.assertTrue(b.laden(pfad))
+            self.assertEqual(a.zustand(), b.zustand())
+            with open(pfad, "w") as f:
+                f.write("{kaputt")
+            c = Schaetzer(tempo_start=0.7)
+            self.assertFalse(c.laden(pfad))
+            self.assertAlmostEqual(c.tempo, 0.7)
+            with open(pfad, "w") as f:
+                json.dump({"tempo": 99, "reserve_je_schub": -1, "s_je_zeichen": "x"}, f)
+            self.assertTrue(c.laden(pfad))
+            self.assertEqual(c.tempo, 20.0)
+            self.assertEqual(c.reserve_je_schub, satz_planer.RESERVE_JE_SCHUB_MIN)
+            self.assertAlmostEqual(c.s_je_zeichen, satz_planer.STANDARD_S_JE_ZEICHEN)
+
+    def test_protokoll_haengt_an_und_rotiert(self):
+        with tempfile.TemporaryDirectory() as d:
+            pfad = os.path.join(d, "p.jsonl")
+            alt = satz_planer._PROTOKOLL_MAX_BYTES
+            satz_planer._PROTOKOLL_MAX_BYTES = 100
+            try:
+                for i in range(5):
+                    protokollieren(pfad, {"i": i, "text": "x" * 30})
+            finally:
+                satz_planer._PROTOKOLL_MAX_BYTES = alt
+            self.assertTrue(os.path.exists(pfad + ".1"))
+            zeilen = [json.loads(z) for z in open(pfad)]
+            self.assertEqual(zeilen[-1]["i"], 4)
+
+
+class PufferTest(unittest.TestCase):
+    def test_schuebe_und_tempo(self):
+        uhr = [100.0]
+        p = SatzPuffer("Satz.", BYTES_JE_S, uhr=lambda: uhr[0])
+        p.dazu(_block(1, 0.25))
+        uhr[0] += 0.01
+        p.dazu(_block(1, 0.25))               # dicht dahinter: derselbe Schub
+        self.assertEqual(len(p.schuebe), 1)
+        self.assertIsNone(p.tempo_gemessen(), "erst ab dem zweiten Schub")
+        uhr[0] += 1.0
+        p.dazu(_block(1, 1.0))
+        uhr[0] += 2.0
+        p.dazu(_block(1, 2.0))
+        self.assertEqual([round(x, 2) for _, x in p.schuebe], [0.5, 1.0, 2.0])
+        self.assertAlmostEqual(p.tempo_gemessen(), 3.0 / 3.0, places=3)
+        self.assertAlmostEqual(p.wachstum_gemessen(), 2.0, places=3)
+        self.assertAlmostEqual(p.schub_max(), 2.0, places=3)
+        self.assertEqual(p.letzter_schub()[1], 2.0)
+
+    def test_ab_und_ende(self):
+        p = SatzPuffer("Satz.", BYTES_JE_S)
+        p.dazu(b"ab")
+        p.dazu(b"cd")
+        self.assertEqual(p.ab(1), ([b"cd"], False))
+        p.ende()
+        self.assertEqual(p.ab(2), ([], True))
+
+
+class LangsamerDienst:
+    """Erzeugt Sätze langsamer als Echtzeit (tempo < 1), einer nach dem
+    anderen wie ein Dienst ohne Pipeline — der schwierigste Fall."""
+
+    def __init__(self, tempo: float, laengen: dict[str, float], model: str = "cosyvoice3") -> None:
+        self.state = SpeachesState()
+        self.model = model
+        self.voice = "test"
+        self.tempo = tempo
+        self.laengen = laengen
+        self.pegel = {t: 1000 * (i + 1) for i, t in enumerate(laengen)}
+        self._nacheinander = threading.Lock()
+        self.angefragt: list[tuple[str, float]] = []
+
+    def synth_strom(self, text):
+        self.angefragt.append((text, time.monotonic()))
+        with self._nacheinander:
+            n = int(round(self.laengen[text] / BLOCK_S))
+            for _ in range(n):
+                time.sleep(BLOCK_S / self.tempo)
+                yield _block(self.pegel[text])
+
+
+class ZaehlDienst(LangsamerDienst):
+    """Rechnet gleichzeitige Anfragen parallel und zählt, wie viele es höchstens waren."""
+
+    def __init__(self, tempo, laengen):
+        super().__init__(tempo, laengen)
+        self._z = threading.Lock()
+        self.laufend = 0
+        self.max_gleichzeitig = 0
+        self.fertig: list[tuple[str, float]] = []
+
+    def synth_strom(self, text):
+        self.angefragt.append((text, time.monotonic()))
+        with self._z:
+            self.laufend += 1
+            self.max_gleichzeitig = max(self.max_gleichzeitig, self.laufend)
+        try:
+            for _ in range(int(round(self.laengen[text] / BLOCK_S))):
+                time.sleep(BLOCK_S / self.tempo)
+                yield _block(self.pegel[text])
+        finally:
+            with self._z:
+                self.laufend -= 1
+            self.fertig.append((text, time.monotonic()))
+
+
+class SchubDienst(LangsamerDienst):
+    """Wie CosyVoice: ein Satz kommt in verdoppelnden Schüben (erst nichts,
+    dann ein ganzer Abschnitt auf einmal), im Mittel mit tempo."""
+
+    def __init__(self, tempo: float, laengen: dict[str, float], erster_s: float = 0.1,
+                 schub_max_s: float = 0.8) -> None:
+        super().__init__(tempo, laengen)
+        self.erster_s = erster_s
+        self.schub_max_s = schub_max_s
+
+    def synth_strom(self, text):
+        self.angefragt.append((text, time.monotonic()))
+        with self._nacheinander:
+            rest = self.laengen[text]
+            schub = self.erster_s
+            while rest > 1e-6:
+                schub = min(schub, rest)
+                time.sleep(schub / self.tempo)
+                for _ in range(int(round(schub / BLOCK_S))):
+                    yield _block(self.pegel[text])
+                rest -= schub
+                schub = min(2 * schub, self.schub_max_s)
+
+
+class SpaeterSchubDienst(SchubDienst):
+    """Wie CosyVoice: spätere, größere Schübe kommen langsamer als das Tempo
+    der frühen (der Flow rechnet je Abschnitt den ganzen Satz neu)."""
+
+    def __init__(self, *a, bremse: float = 0.5, **k):
+        super().__init__(*a, **k)
+        self.bremse = bremse
+
+    def synth_strom(self, text):
+        self.angefragt.append((text, time.monotonic()))
+        with self._nacheinander:
+            rest = self.laengen[text]
+            schub = self.erster_s
+            nr = 0
+            while rest > 1e-6:
+                schub = min(schub, rest)
+                time.sleep(schub / self.tempo * (1 + self.bremse * max(0, nr - 1)))
+                for _ in range(int(round(schub / BLOCK_S))):
+                    yield _block(self.pegel[text])
+                rest -= schub
+                nr += 1
+                schub = min(2 * schub, self.schub_max_s)
+
+
+def _abschnitte(daten: bytes) -> list[tuple[int, float, float]]:
+    """(pegel, start_s, ende_s) zusammenhängender Strecken gleichen Pegels im
+    linken Kanal; Stille (0) dazwischen trennt."""
+    s = np.frombuffer(bytes(daten[44:]), dtype=np.int16)[0::2]
+    if not len(s):
+        return []
+    wechsel = np.flatnonzero(np.diff(s)) + 1
+    grenzen = np.concatenate(([0], wechsel, [len(s)]))
+    out = []
+    for a, b in zip(grenzen[:-1], grenzen[1:]):
+        if s[a] != 0:
+            out.append((int(s[a]), a / RATE, b / RATE))
+    return out
+
+
+class AblaufTest(unittest.TestCase):
+    def _lauf(self, dienst, planer: bool, pause: float = 0.2, tempo_start: float = 0.7):
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(dienst, senke.play_wav, FakeLeds(), strom_oeffnen=senke.strom_oeffnen,
+                              satz_planer=planer, satz_pause_s=pause, antwort_tempo=tempo_start)
+        sitz = sp.stream_session(restore_leds=False, turn=None)
+        t0 = time.monotonic()
+        for satz in dienst.laengen:
+            sitz.feed(satz, bereinigt=True)
+        feed_dauer = time.monotonic() - t0
+        self.assertTrue(sitz.end())
+        self.assertFalse(tts_lock.locked())
+        self.assertEqual(len(senke.stroeme), 1)
+        strom, aus = senke.stroeme[0]
+        strom.fertig.wait(3)
+        return _abschnitte(aus.daten), feed_dauer, dienst
+
+    def test_langsamer_dienst_ohne_luecke_im_satz_und_mit_pausen(self):
+        laengen = {"Eins.": 0.5, "Zwei ist länger.": 0.8, "Drei.": 0.4}
+        teile, feed_dauer, dienst = self._lauf(LangsamerDienst(0.7, laengen), planer=True, pause=0.2)
+        self.assertLess(feed_dauer, 0.3, "feed() stellt nur ein, blockiert nicht")
+        pegel = [p for p, _, _ in teile]
+        self.assertEqual(pegel, list(dienst.pegel.values()), f"jeder Satz am Stück, in Reihenfolge: {teile}")
+        for (_, a, b), (_, c, _) in zip(teile, teile[1:]):
+            self.assertGreaterEqual(c - b, 0.2 - 0.01, f"Mindestpause: {teile}")
+        for (p, a, b), dauer in zip(teile, laengen.values()):
+            self.assertAlmostEqual(b - a, dauer, delta=0.011)
+        # höchstens einer voraus: Satz 3 wird erst angefragt, wenn Satz 2 Audio hat
+        t2 = dienst.angefragt[1][1]
+        t3 = dienst.angefragt[2][1]
+        self.assertGreater(t3 - t2, 0.0)
+
+    def test_kein_fehlalarm_bevor_der_player_abholt(self):
+        laengen = {"Eins.": 0.4}
+        ausgabe = []
+        orig = print
+        try:
+            import builtins
+            builtins.print = lambda *a, **k: ausgabe.append(" ".join(map(str, a)))
+            self._lauf(LangsamerDienst(0.7, laengen), planer=True)
+        finally:
+            builtins.print = orig
+        self.assertFalse([z for z in ausgabe if "aufgefüllt" in z], ausgabe)
+
+    def test_schuebe_wie_cosyvoice_ohne_aussetzer(self):
+        # Verhältnisse wie beim echten Dienst: Schübe 0,5 / 1 / 2 s, Tempo 0,8,
+        # Textlänge passt zur Schätzung (35 Zeichen ≈ 3,5 s). Ein Planer, der
+        # nur das mittlere Tempo kennt, gibt nach dem zweiten Schub frei und
+        # läuft vor dem dritten rund 1 s leer (live gehört 2026-11-22).
+        laengen = {"Ein Satz mit gut drei Sekunden Ton.": 3.5}
+        teile, _, dienst = self._lauf(SchubDienst(0.8, laengen, erster_s=0.5, schub_max_s=2.0),
+                                      planer=True, pause=0.2)
+        self.assertEqual([p for p, _, _ in teile], list(dienst.pegel.values()),
+                         f"jeder Satz am Stück trotz Schüben: {teile}")
+        for (_, a, b), dauer in zip(teile, laengen.values()):
+            self.assertAlmostEqual(b - a, dauer, delta=0.011)
+
+    def test_zwei_ausgaben_rechnen_nicht_gleichzeitig(self):
+        """Bestätigung und Antwort sind zwei Sitzungen: die zweite fragt erst an,
+        wenn die erste die Wiedergabe abgegeben hat — wie vor dem Planer."""
+        laengen = {"Bestätigung eins.": 0.3, "Bestätigung zwei.": 0.3,
+                   "Antwort eins.": 0.3, "Antwort zwei.": 0.3}
+        dienst = ZaehlDienst(1.5, laengen)
+        senke = FakeSenke()
+        sp = tts.ReplySpeaker(dienst, senke.play_wav, FakeLeds(), strom_oeffnen=senke.strom_oeffnen,
+                              satz_planer=True, satz_pause_s=0.1, antwort_tempo=1.0)
+        a = sp.stream_session(restore_leds=False, turn=None)
+        a.feed("Bestätigung eins.", bereinigt=True)
+        a.feed("Bestätigung zwei.", bereinigt=True)
+        b = sp.stream_session(restore_leds=True, turn=None)
+        b.feed("Antwort eins.", bereinigt=True)
+        b.feed("Antwort zwei.", bereinigt=True)
+        t = threading.Thread(target=a.end)
+        t.start()
+        b.end()
+        t.join(5)
+        self.assertFalse(tts_lock.locked())
+        self.assertLessEqual(dienst.max_gleichzeitig, 2, "höchstens ein Satz voraus, eine Ausgabe zur Zeit")
+        erste_antwort = next(z for txt, z in dienst.angefragt if txt.startswith("Antwort"))
+        letzte_bestaetigung = max(z for txt, z in dienst.fertig if txt.startswith("Bestätigung"))
+        self.assertGreaterEqual(erste_antwort, letzte_bestaetigung)
+
+    def test_lernt_aus_eigenem_aussetzer_und_protokolliert(self):
+        """Erster Satz: späte Schübe langsamer als erwartet → Lücke, Reserve wächst.
+        Derselbe Satz danach läuft ohne Lücke. Protokoll + Zustand liegen auf der Platte."""
+        text = "Ein Satz mit gut drei Sekunden Ton."
+        with tempfile.TemporaryDirectory() as d:
+            zustand, protokoll = os.path.join(d, "z.json"), os.path.join(d, "p.jsonl")
+            for runde in range(2):
+                dienst = SpaeterSchubDienst(1.0, {text: 3.5}, erster_s=0.5, schub_max_s=2.0, bremse=0.8)
+                senke = FakeSenke()
+                sp = tts.ReplySpeaker(dienst, senke.play_wav, FakeLeds(), strom_oeffnen=senke.strom_oeffnen,
+                                      satz_planer=True, satz_pause_s=0.2, antwort_tempo=1.0,
+                                      planer_zustand=zustand, planer_protokoll=protokoll)
+                if runde == 0:
+                    sp.planer_schaetzer._reserve_je_schub = 0.0     # absichtlich zu knapp
+                    sp.planer_schaetzer._tempo = 1.0
+                sitz = sp.stream_session(restore_leds=False, turn=None)
+                sitz.feed(text, bereinigt=True)
+                sitz.end()
+            zeilen = [json.loads(z) for z in open(protokoll)]
+            self.assertEqual(len(zeilen), 2)
+            self.assertGreater(zeilen[0]["luecke_ms"], 50, zeilen[0])
+            self.assertEqual(zeilen[1]["luecke_ms"], 0, zeilen[1])
+            self.assertGreater(zeilen[1]["reserve_je_schub"], zeilen[0]["reserve_je_schub"])
+            for feld in ("zeit", "dienst", "text", "gewartet_s", "audio_s", "tempo", "schuebe"):
+                self.assertIn(feld, zeilen[0])
+            self.assertTrue(os.path.exists(zustand))
+
+    def test_ohne_planer_reisst_der_satz_auf(self):
+        laengen = {"Eins.": 0.5, "Zwei ist länger.": 0.8}
+        teile, _, dienst = self._lauf(LangsamerDienst(0.7, laengen), planer=False)
+        self.assertGreater(len(teile), len(laengen), f"Gegenprobe: Lücken mitten im Satz: {teile}")
+
+    def test_schneller_dienst_nur_mindestpause(self):
+        laengen = {"Eins.": 0.3, "Zwei.": 0.3, "Drei.": 0.3}
+        teile, _, dienst = self._lauf(LangsamerDienst(6.0, laengen), planer=True, pause=0.25, tempo_start=1.0)
+        self.assertEqual([p for p, _, _ in teile], list(dienst.pegel.values()), teile)
+        for (_, a, b), (_, c, _) in zip(teile, teile[1:]):
+            self.assertAlmostEqual(c - b, 0.25, delta=0.06, msg=f"nur die Mindestpause: {teile}")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -22,7 +22,9 @@ import wave
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable
 
-from voice_assistant.audio.strom import RATE as STROM_RATE, zu_48k_stereo
+from voice_assistant.audio.strom import BYTES_JE_S as STROM_BYTES_JE_S, RATE as STROM_RATE, zu_48k_stereo
+from voice_assistant.services.satz_planer import SatzPuffer, Schaetzer, freigeben, protokollieren
+from voice_assistant.services import tts_marken
 from voice_assistant.services import aussprache
 from voice_assistant.config import (
     ABORT_BEEP_PATH,
@@ -189,6 +191,9 @@ def _apply_verbalization(text: str) -> str:
 # Text-Aufbereitung
 # ---------------------------------------------------------------------------
 def clean_for_tts(text: str) -> str:
+    # 0. Klang-Marken ([lachen], **Wort** …) vor dem Zeichenfilter schuetzen
+    #    (services/tts_marken.py); der Dienst setzt sie um oder entfernt sie.
+    text = tts_marken.schuetzen(text)
     # 1. Markdown entfernen
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
@@ -200,7 +205,7 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"\n+", " ", text)
     # 2. Verbalisierung (Abkürzungen, Zahlen, Zeiten, Ordinalia)
     text = _apply_verbalization(text)
-    return text.strip()
+    return tts_marken.wiederherstellen(text)
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +317,7 @@ FREMDE_MODELLE: set[str] = set()
 
 class SpeachesTts:
     def __init__(self, state: SpeachesState, base: str, model: str, voice: str,
-                 fest: bool = False, timeout: float = SPEACHES_TIMEOUT) -> None:
+                 fest: bool = False, timeout: float = SPEACHES_TIMEOUT, marken: bool = False) -> None:
         """fest=True: Modell und Stimme immer aus dem Konstruktor, nicht aus
         voice_state (fuer den Antwort-Dienst, der die Piper-Stimmen nicht
         kennt). timeout: kurz fuer einen Dienst auf einem anderen Rechner —
@@ -323,6 +328,9 @@ class SpeachesTts:
         self.voice = voice
         self.fest = fest
         self.timeout = timeout
+        # Klang-Marken (services/tts_marken.py) an den Dienst geben, sonst entfernen.
+        # Nur fuer einen Antwort-Dienst mit CosyVoice3 (Profil tts_marken).
+        self.marken = marken
 
     def _parameter(self, text: str) -> tuple[str, str, float, str]:
         from voice_assistant.state import voice_state
@@ -331,6 +339,7 @@ class SpeachesTts:
         model = (vm or self.model) if eigen else self.model
         voice = (vv or self.voice) if eigen else self.voice
         speed = vsp if vsp else 1.0
+        text = tts_marken.fuer_cosyvoice(text) if self.marken else tts_marken.entfernen(text)
         # Problemwoerter als [[Phoneme]] (services/aussprache.py). Erst HIER,
         # nach clean_for_tts — das entfernt eckige Klammern.
         return model, voice, speed, aussprache.fuer_piper(text, model)
@@ -494,7 +503,7 @@ class SpeachesTts:
 # ---------------------------------------------------------------------------
 def piper_synth(text: str, model: str = PIPER_MODEL) -> str | None:
     """Rendert Text in eine WAV-Datei mit Piper und gibt den Pfad zurück."""
-    text = aussprache.fuer_piper(text, "piper")
+    text = aussprache.fuer_piper(tts_marken.entfernen(text), "piper")
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             tmp_wav = f.name
@@ -672,7 +681,7 @@ class ReplyRecorder:
             print("⚠️  last-reply buffer: Sample-Rate-Mismatch, Teil verworfen")
             return
         if text and text.strip():
-            self._texts.append(text.strip())
+            self._texts.append(tts_marken.entfernen(text))
         self._frames.append(frames)
 
     def add_pcm(self, text: str, pcm: bytes, params: tuple[int, int, int]) -> None:
@@ -685,7 +694,7 @@ class ReplyRecorder:
             print("⚠️  last-reply buffer: Sample-Rate-Mismatch, Teil verworfen")
             return
         if text and text.strip():
-            self._texts.append(text.strip())
+            self._texts.append(tts_marken.entfernen(text))
         self._frames.append(pcm)
 
     def add_file(self, text: str, path: str) -> None:
@@ -730,11 +739,30 @@ class ReplySpeaker:
         tts_prefix: str = "",
         strom_oeffnen: Callable | None = None,
         antwort_tts: "SpeachesTts | None" = None,
+        satz_planer: bool = False,
+        satz_pause_s: float = 0.35,
+        antwort_tempo: float = 1.0,
+        planer_zustand: str | None = None,
+        planer_protokoll: str | None = None,
     ) -> None:
         self.speaches = speaches
         self.play_wav = play_wav
         self.leds = leds
         self.tts_prefix = tts_prefix
+        # Satz-Planer (services/satz_planer.py): nur im Strom wirksam. Der
+        # Schaetzer lernt ueber die Antworten hinweg, wie schnell der Dienst
+        # ist und wie lang die Stimme spricht.
+        self.satz_planer = satz_planer
+        self.satz_pause_s = max(0.0, satz_pause_s)
+        self.planer_schaetzer = Schaetzer(tempo_start=antwort_tempo)
+        # Gedaechtnis ueber Neustarts (Tempo, Sprechdauer, Schuebe, Reserve)
+        # und Protokoll je Satz; None = nichts auf die Platte (Tests).
+        self.planer_zustand = planer_zustand
+        self.planer_protokoll = planer_protokoll
+        if satz_planer and self.planer_schaetzer.laden(planer_zustand):
+            z = self.planer_schaetzer.zustand()
+            print(f"📐 Satz-Planer: gelernter Stand geladen (Tempo {z['tempo']:.2f}, "
+                  f"{z['s_je_zeichen']:.3f} s/Zeichen, Reserve {z['reserve_je_schub']:.0%} je Schub)")
         # Senke.strom_oeffnen (audio/strom.py) oder None = Dateien wie bisher.
         # Nur Brain-Antworten (ReplyStreamSession) gehen als Strom.
         self.strom_oeffnen = strom_oeffnen
@@ -938,6 +966,21 @@ class ReplyStreamSession:
         self._rechner: ThreadPoolExecutor | None = None
         self._spiel_q: "queue.Queue[tuple[str, Future] | None]" = queue.Queue()
         self._spieler: threading.Thread | None = None
+        # Satz-Planer (services/satz_planer.py, seit 2026-11-22): feed()
+        # stellt den Satz nur ein und stoesst seine Erzeugung an; ein
+        # Schreiber gibt die Saetze der Reihe nach in den Strom, jeden erst,
+        # wenn er ohne Luecke durchlaeuft, mit Mindestpause dazwischen.
+        self._plan_q: "queue.Queue[SatzPuffer | None]" = queue.Queue()
+        self._planer_schreiber: threading.Thread | None = None
+        self._letzter_puffer: SatzPuffer | None = None
+        self._plan_strom = None          # Strom, auf den sich _pos_nach_satz bezieht
+        self._pos_nach_satz: float | None = None
+        # Der erste Satz wird erst angefragt, wenn diese Sitzung die Wiedergabe
+        # hat (tts_lock ueber den Strom). Sonst rechnen Bestaetigung und Antwort
+        # gleichzeitig beim Dienst, nehmen sich gegenseitig das Tempo, und der
+        # Planer verschaetzt sich (bis zu 4 Anfragen gleichzeitig, Aussetzer bis
+        # 1,3 s, 2026-11-22).
+        self._erzeugen_frei = threading.Event()
 
     def _strom_abwarten(self) -> None:
         if self._strom_ende is not None:
@@ -1027,6 +1070,9 @@ class ReplyStreamSession:
         self._first = False
         if not clean.strip():
             return
+        if self.sp.satz_planer and self.sp.strom_oeffnen is not None and not self._lock_gehalten:
+            self._planen(clean)
+            return
         strom = self._strom_holen()
         if strom == "stop":
             return
@@ -1053,6 +1099,204 @@ class ReplyStreamSession:
             self._spieler = threading.Thread(target=self._spielen, daemon=True, name="tts-datei")
             self._spieler.start()
         self._spiel_q.put((clean, self._rechner.submit(self._rechnen, clean)))
+
+    # --- Satz-Planer -------------------------------------------------------
+    def _planen(self, clean: str) -> None:
+        puffer = SatzPuffer(clean, STROM_BYTES_JE_S)
+        vorher, self._letzter_puffer = self._letzter_puffer, puffer
+        threading.Thread(target=self._erzeugen, args=(puffer, vorher), daemon=True,
+                         name="tts-satz").start()
+        if self._planer_schreiber is None:
+            self._planer_schreiber = threading.Thread(target=self._planer_schreiben, daemon=True,
+                                                      name="tts-planer")
+            self._planer_schreiber.start()
+        self._plan_q.put(puffer)
+
+    def _erzeugen(self, puffer: SatzPuffer, vorher: SatzPuffer | None) -> None:
+        """Erzeuger eines Satzes: fragt erst an, wenn der vorige Satz erstes
+        Audio hat (hoechstens einer voraus — eine Anfrage, die beim Dienst
+        lange auf dessen LLM wartet, liefe sonst in den Timeout). Dieselbe
+        Rueckfall-Kette wie _satz_in_strom."""
+        clean = puffer.text
+        try:
+            warten_auf = vorher.unterwegs if vorher is not None else self._erzeugen_frei
+            while not warten_auf.wait(0.1):
+                if turn_stopped(self.turn) or puffer.abgebrochen:
+                    return
+            for dienst in self.sp.strom_kandidaten():
+                try:
+                    for block in dienst.synth_strom(clean):
+                        if turn_stopped(self.turn) or puffer.abgebrochen:
+                            return
+                        puffer.dazu(block)
+                    puffer.dienst = f"{dienst.model}/{dienst.voice}"
+                    return
+                except Exception as e:
+                    print(f"⚠️  TTS-Strom ({dienst.model}) fehlgeschlagen: {e}")
+                    if puffer.gepuffert_s > 0:
+                        return
+            if turn_stopped(self.turn) or puffer.abgebrochen:
+                return
+            print("⚠️  → Piper fallback (in den Strom)")
+            tmp_wav = piper_synth(clean)
+            if not tmp_wav:
+                return
+            try:
+                with wave.open(tmp_wav, "rb") as wf:
+                    pcm = wf.readframes(wf.getnframes())
+                    puffer.dazu(zu_48k_stereo(pcm, wf.getframerate(), wf.getnchannels()))
+                puffer.dienst = "piper"
+            finally:
+                os.unlink(tmp_wav)
+        except Exception as e:
+            print(f"⚠️  Satz-Erzeugung fehlgeschlagen: {e}")
+        finally:
+            puffer.ende()
+
+    def _planer_schreiben(self) -> None:
+        while True:
+            puffer = self._plan_q.get()
+            if puffer is None:
+                return
+            try:
+                self._satz_planen(puffer)
+            except Exception as e:
+                print(f"⚠️  Satz-Planer: {e}")
+                puffer.abbrechen()
+
+    def _satz_planen(self, puffer: SatzPuffer) -> None:
+        from voice_assistant.services.leds import (
+            LED_ANSWER_GLOW, LED_AUDIO_OUT, LED_CONFIRMATION,
+        )
+        clean = puffer.text
+        if turn_stopped(self.turn):
+            puffer.abbrechen()
+            return
+        strom = self._strom_holen()
+        self._erzeugen_frei.set()        # ab jetzt gehoert die Wiedergabe uns
+        if strom == "stop":
+            puffer.abbrechen()
+            return
+        if strom is None:
+            self._planer_datei(puffer)
+            return
+        if strom is not self._plan_strom:
+            # neuer Strom (erster Satz, oder der alte schloss im Leerlauf):
+            # dessen Anlauf ist schon Pause genug
+            self._plan_strom, self._pos_nach_satz = strom, None
+        sch = self.sp.planer_schaetzer
+        try:
+            if not self._led_set:
+                self.sp.leds.set_phase(LED_CONFIRMATION if not self.restore_leds else LED_ANSWER_GLOW)
+                self._led_set = True
+            if self.restore_leds:
+                self.sp.leds.set_phase(LED_AUDIO_OUT)
+            print(f"🔊 Sentence (Strom, geplant): '{clean}'")
+            t_warte = time.monotonic()
+            dauer_s = sch.dauer(tts_marken.entfernen(clean))
+            while not turn_stopped(self.turn):
+                _, fertig = puffer.ab(0)
+                if fertig:
+                    break
+                pause_rest = self._pause_rest(strom)
+                tempo = puffer.tempo_gemessen() or sch.tempo
+                t_schub, s_schub = puffer.letzter_schub()
+                gepuffert = puffer.gepuffert_s
+                # solange der Satz nicht fertig ist, kommt mindestens noch ein Schub
+                dauer = max(dauer_s, gepuffert + min(s_schub * sch.wachstum, sch.schub_max))
+                if freigeben(time.monotonic(), strom.vorsprung_s() + pause_rest, gepuffert,
+                             t_schub, s_schub, dauer, tempo, sch.wachstum, sch.schub_max,
+                             reserve_je_schub=sch.reserve_je_schub):
+                    break
+                puffer.warten(0.05)
+            if turn_stopped(self.turn):
+                puffer.abbrechen()
+                return
+            gewartet = time.monotonic() - t_warte
+            pause_rest = self._pause_rest(strom)
+            if pause_rest > 0:
+                strom.schreiben(bytes(int(STROM_BYTES_JE_S * pause_rest) // 4 * 4))
+            geschrieben: list[bytes] = []
+            # Aufgefuellte Stille des Stroms zwischen erstem und letztem Block
+            # dieses Satzes = Aussetzer im Satz (der Strom fuellt nur, wenn alles
+            # Geschriebene gespielt ist). Gemessen, nicht geschaetzt.
+            aufgefuellt_vorher: float | None = None
+            index = 0
+            while True:
+                bloecke, fertig = puffer.ab(index)
+                for block in bloecke:
+                    if aufgefuellt_vorher is None:
+                        aufgefuellt_vorher = strom.aufgefuellt_s
+                    if turn_stopped(self.turn) or not strom.schreiben(block):
+                        puffer.abbrechen()
+                        return
+                    geschrieben.append(block)
+                index += len(bloecke)
+                if fertig and not bloecke:
+                    break
+                if not bloecke:
+                    puffer.warten(0.05)
+            im_satz = strom.aufgefuellt_s - aufgefuellt_vorher if aufgefuellt_vorher is not None else 0.0
+            if geschrieben:
+                pcm = b"".join(geschrieben)
+                self.rec.add_pcm(clean, pcm, (2, 2, STROM_RATE))
+                self.spoke = True
+                audio_s = len(pcm) / STROM_BYTES_JE_S
+                tempo_satz = puffer.tempo_gemessen()
+                t0_schub = puffer.schuebe[0][0] if puffer.schuebe else 0.0
+                schuebe = [f"{x:.2f}@{t - t0_schub:.1f}" for t, x in puffer.schuebe]
+                reserve_vorher = sch.reserve_je_schub
+                sch.lernen(len(clean), audio_s, tempo_satz, puffer.wachstum_gemessen(), puffer.schub_max())
+                sch.nach_satz(im_satz, puffer.schub_max() or 0.0)
+                sch.speichern(self.sp.planer_zustand)
+                print(f"   ↳ {puffer.dienst or '?'} · geplant: {gewartet:.2f} s gewartet, "
+                      f"{audio_s:.1f} s Audio (geschätzt {dauer_s:.1f}), Tempo "
+                      f"{tempo_satz if tempo_satz else 0:.2f}, Schübe {' '.join(schuebe)}"
+                      + (f", ⚠️ {im_satz * 1000:.0f} ms im Satz aufgefüllt, Reserve "
+                         f"{reserve_vorher:.0%} → {sch.reserve_je_schub:.0%} je Schub" if im_satz > 0.001 else ""))
+                protokollieren(self.sp.planer_protokoll, {
+                    "zeit": time.strftime("%Y-%m-%dT%H:%M:%S"), "dienst": puffer.dienst,
+                    "text": tts_marken.entfernen(clean)[:200], "zeichen": len(clean),
+                    "gewartet_s": round(gewartet, 2), "audio_s": round(audio_s, 2),
+                    "dauer_geschaetzt_s": round(dauer_s, 2),
+                    "tempo": round(tempo_satz, 3) if tempo_satz else None,
+                    "schuebe": [[round(t - t0_schub, 2), round(x, 2)] for t, x in puffer.schuebe],
+                    "luecke_ms": round(im_satz * 1000), "reserve_je_schub": round(reserve_vorher, 3),
+                })
+            self._pos_nach_satz = strom.position_s()
+        finally:
+            strom.beenden()
+
+    def _pause_rest(self, strom) -> float:
+        """Wie viel Mindestpause vor dem naechsten Satz noch fehlt (die vom
+        Strom aufgefuellte Stille seit dem letzten Satz zaehlt mit)."""
+        if self._pos_nach_satz is None:
+            return 0.0
+        return max(0.0, self.sp.satz_pause_s - (strom.position_s() - self._pos_nach_satz))
+
+    def _planer_datei(self, puffer: SatzPuffer) -> None:
+        """Senke kann gerade keinen Strom: den fertigen Satz als Datei spielen."""
+        while not puffer.ab(0)[1]:
+            if turn_stopped(self.turn):
+                puffer.abbrechen()
+                return
+            puffer.warten(0.1)
+        pcm = b"".join(puffer.bloecke)
+        if not pcm:
+            return
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(2)
+            wf.setsampwidth(2)
+            wf.setframerate(STROM_RATE)
+            wf.writeframes(pcm)
+        fut: Future = Future()
+        fut.set_result(buf.getvalue())
+        if self._rechner is None:
+            self._rechner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts-voraus")
+            self._spieler = threading.Thread(target=self._spielen, daemon=True, name="tts-datei")
+            self._spieler.start()
+        self._spiel_q.put((puffer.text, fut))
 
     def _rechnen(self, clean: str) -> bytes | None:
         if turn_stopped(self.turn) or not self.sp.speaches.state.tts_ok():
@@ -1112,6 +1356,11 @@ class ReplyStreamSession:
     def end(self) -> bool:
         """Gibt True zurück, wenn mindestens ein Satz gesprochen wurde."""
         from voice_assistant.services.leds import LED_OPENCLAW
+        if self._planer_schreiber is not None:
+            self._plan_q.put(None)
+            self._planer_schreiber.join()
+            self._planer_schreiber = None
+        self._erzeugen_frei.set()        # keinen Erzeuger haengen lassen
         if self._strom is not None:
             self._strom.schliessen()
         self._strom_abwarten()

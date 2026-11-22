@@ -139,6 +139,22 @@ _DEFAULT_VOICE_INSTRUCTION = (
 )
 
 
+# Nur mit tts_marken (services/tts_marken.py) an die Voice-Regel gehängt: welche
+# Klang-Marken die Stimme kann. Sonst würden sie entfernt — dann soll der Brain
+# sie gar nicht erst schreiben. Seit 2026-11-22. Wortlaut mit Jochen: erst was
+# es gibt (die Schreibweise, sonst erfindet er Marken, die vorgelesen würden),
+# dann eine Haltung statt Einzelregeln — der Brain weiß selbst, was ernst ist.
+_DEFAULT_MARKEN_REGEL = (
+    "[Klang-Marken: Deine Stimme kann Geräusche und Betonung: [lachen], [atmen], "
+    "[luftholen], [seufzen], [husten], [hm], [psst], [äh], [schnalzen] an der "
+    "Stelle im Satz, wo sie klingen sollen, <lachend>…</lachend> für lachend "
+    "Gesprochenes und **Wort** für ein betontes Wort. Setz sie sinnvoll und auf "
+    "natürliche Weise ein, nicht übertrieben, damit sie das Gesagte lebendiger "
+    "machen — so wie ein Mensch im Gespräch. Das sind die einzigen Ausnahmen vom "
+    "Fließtext ohne Markdown.]"
+)
+
+
 # Kurze Erinnerung je Turn hinter dem Transkript, wenn die Regel als
 # "instructions" geht. Ohne sie schrieb Gaston dort Listen ("1. … 2. …", von der
 # TTS als "ersten … zweiten …" gelesen): 3/6 gegen 0/6 mit der Regel im input
@@ -229,6 +245,7 @@ class LocaleConfig:
     brain_weg: str = "Ich erreiche mein Sprachmodell gerade nicht."
     openclaw_voice_instruction: str = _DEFAULT_VOICE_INSTRUCTION
     openclaw_voice_erinnerung: str = _DEFAULT_VOICE_ERINNERUNG
+    openclaw_marken_regel: str = _DEFAULT_MARKEN_REGEL
     anrede_hinweis: str = _DEFAULT_ANREDE_HINWEIS
     unklar_hinweis: str = _DEFAULT_UNKLAR_HINWEIS
     satellit_unklar_hinweis: str = _DEFAULT_SATELLIT_UNKLAR_HINWEIS
@@ -835,6 +852,21 @@ class Profile:
     # Dienst; leer = Profilname.
     antwort_tts_stimmen: str = ""
     antwort_tts_namensraum: str = ""
+    # Wartezeit auf den Antwort-Dienst (Sekunden ohne Daten). 8 s passt zu
+    # einem Dienst, der jede Anfrage sofort rechnet; einer, der Saetze als
+    # Pipeline nacheinander abarbeitet, laesst die naechste Anfrage warten.
+    antwort_tts_timeout: float = 8.0
+    # Satz-Planer (services/satz_planer.py, seit 2026-11-22), nur im Strom:
+    # Saetze vorausschicken, jeden erst sprechen, wenn er ohne Luecke
+    # durchlaeuft, Mindestpause dazwischen. antwort_tempo = erwartetes
+    # Tempo des Antwort-Dienstes (1/RTF) bis zur ersten Messung. Default aus.
+    satz_planer: bool = False
+    satz_pause_s: float = 0.35
+    antwort_tempo: float = 1.0
+    # Klang-Marken des Brains ([lachen], [atmen], **Wort** …,
+    # services/tts_marken.py) an den Antwort-Dienst geben. Nur fuer CosyVoice3;
+    # sonst (und bei jeder anderen Stimme) werden sie entfernt. Default aus.
+    tts_marken: bool = False
 
     # Telegram
     telegram_bot_token: str = ""
@@ -1329,6 +1361,7 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         brain_fehler=str(locale_raw.get("brain_fehler", _dloc.brain_fehler)),
         brain_weg=str(locale_raw.get("brain_weg", _dloc.brain_weg)),
         openclaw_voice_instruction=str(locale_raw.get("openclaw_voice_instruction", _dloc.openclaw_voice_instruction)),
+        openclaw_marken_regel=str(locale_raw.get("openclaw_marken_regel", _dloc.openclaw_marken_regel)),
         openclaw_voice_erinnerung=str(locale_raw.get("openclaw_voice_erinnerung", _dloc.openclaw_voice_erinnerung)),
         anrede_hinweis=str(locale_raw.get("anrede_hinweis", _dloc.anrede_hinweis)),
         satellit_hinweis=str(locale_raw.get("satellit_hinweis", _dloc.satellit_hinweis)),
@@ -1386,6 +1419,11 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> Profile:
         antwort_tts_voice=str(raw.get("antwort_tts_voice", "")),
         antwort_tts_stimmen=str(raw.get("antwort_tts_stimmen", "")),
         antwort_tts_namensraum=str(raw.get("antwort_tts_namensraum", "")),
+        antwort_tts_timeout=float(raw.get("antwort_tts_timeout", 8.0)),
+        satz_planer=bool(raw.get("satz_planer", False)),
+        satz_pause_s=float(raw.get("satz_pause_s", 0.35)),
+        antwort_tempo=float(raw.get("antwort_tempo", 1.0)),
+        tts_marken=bool(raw.get("tts_marken", False)),
         telegram_bot_token=str(raw.get("telegram_bot_token", "")),
         telegram_chat_id=str(raw.get("telegram_chat_id", "")),
         tts_prefix=str(raw.get("tts_prefix", "")),
@@ -1552,6 +1590,9 @@ SPEAKER_VOICES_PATH = os.path.join(VOICE_DIR, "speaker_voices.json")
 STIMMEN_DIR = os.path.join(VOICE_DIR, "stimmen")
 # Gerechnete feste Sätze je Stimme („Ja?“, Denk-Phrasen), abgeleitet, nicht privat.
 STIMMEN_CACHE_DIR = os.path.join(VOICE_DIR, "stimmen_cache")
+# Satz-Planer (services/satz_planer.py): gelernter Stand und Protokoll je Satz.
+SATZ_PLANER_ZUSTAND = os.path.join(VOICE_DIR, "satz_planer_zustand.json")
+SATZ_PLANER_PROTOKOLL = os.path.join(VOICE_DIR, "satz_planer.jsonl")
 # Eingereichte Proben in Arbeit (services/stimmen_eingang.py), privat.
 STIMMEN_EINGANG_DIR = os.path.join(VOICE_DIR, "stimmen_eingang")
 # Wo OpenClaw Telegram-Dateien ablegt; nur von dort nimmt der Eingang Proben.

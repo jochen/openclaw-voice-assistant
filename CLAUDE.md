@@ -1076,6 +1076,95 @@ Brain sollte „für alle“ umstellen, hatte kein Werkzeug dafür und meldete
 trotzdem Vollzug. Ohne `for_speaker`/`fuer_alle` gilt eine Wahl nur
 vorübergehend für den Sprecher. Tests: `tests/test_stimmen_eingang.py`.
 
+### Satz-Planer (`satz_planer`, seit 2026-11-22, Branch `feature/satz-planer`)
+
+Anlass: CosyVoice soll im Fablab auf zwei älteren Rechenkarten laufen (kein
+vLLM/TensorRT dafür). Einzelne Sätze kommen dort mit RTF ~1,2 — im Strom holt
+der Spielkopf die Synthese mitten im Satz ein, der Strom füllt Stille auf, es
+stottert. Der Dienst dort rechnet gleichzeitige Anfragen als Pipeline (LLM
+nacheinander am Stück, Flow parallel), über die ganze Antwort RTF ~0,96.
+
+`ReplyStreamSession` mit Planer (`services/satz_planer.py`): `feed()` blockiert
+nicht mehr, sondern legt einen `SatzPuffer` an und startet dessen Erzeuger
+(`_erzeugen`, dieselbe Rückfall-Kette wie `_satz_in_strom`). Ein Erzeuger fragt
+erst an, wenn der vorige Satz erstes Audio hat (`unterwegs`) — höchstens einer
+voraus; sonst wartet eine Anfrage beim Dienst bis zum Timeout auf dessen LLM.
+Der **erste** Satz einer Sitzung fragt erst an, wenn die Sitzung die Wiedergabe
+hat (`_erzeugen_frei`, gesetzt nach `_strom_holen`): Bestätigung und Antwort
+sind zwei Sitzungen, und ohne diese Sperre rechneten sie gleichzeitig beim
+Dienst (bis zu 4 Anfragen, Tempo 0,3–0,5, Aussetzer bis 1,3 s im ersten echten
+Gespräch 2026-11-22) — vor dem Planer serialisierte `tts_lock` das von selbst.
+Ein Schreiber-Faden (`_planer_schreiben`) nimmt die Sätze der Reihe nach, holt
+den Strom (`_strom_holen`, tts_lock wie bisher) und wartet, bis `freigeben()`
+sagt, dass der Satz ohne Leerlauf durchspielt. **Schübe:** CosyVoice liefert
+einen Satz in wachsenden Schüben (0,5/1/2/4 s Audio auf einmal,
+`token_hop_len` verdoppelt sich); die erste Fassung rechnete mit gleichmäßigem
+Tempo, gab nach dem zweiten Schub frei und lief vor dem großen dritten leer —
+Jochen hörte im ersten Live-Test kurze Aussetzer, das Journal meldete nichts.
+Jetzt fasst `SatzPuffer` Blöcke mit < 0,15 s Abstand zu Schüben zusammen,
+`Schaetzer` lernt Wachstum (Start 2) und Schub-Maximum (Start 4 s), und
+`freigeben()` spielt die fehlenden Schübe durch (nächster = min(Wachstum ×
+letzter, Max), Ankunft + Größe/Tempo): vor jedem muss Gepuffertes + 0,3 s
+Reserve reichen (der Strom füllt schon unter 0,15 s Vorsprung auf). Solange
+der Satz nicht fertig ist, rechnet er mit mindestens einem weiteren Schub.
+`vorsprung` = was im Strom noch vor dem Spielkopf liegt (`strom.vorsprung_s()`)
+plus noch zu schreibende Pause; `dauer` = Zeichen × gelernte s/Zeichen
+(Start 0,10); `tempo` = gemessen ab 1 s Audio, sonst gelernter Mittelwert
+(`Schaetzer` im ReplySpeaker, über Antworten hinweg, Start `antwort_tempo`).
+Danach Mindestpause (`satz_pause_s`, vom Strom schon aufgefüllte Stille seit
+dem letzten Satz zählt mit, `strom.position_s()`), dann der Satz. `end()`
+wartet den Schreiber ab. Kann die Senke keinen Strom, wird der fertige Satz als
+WAV über den Datei-Weg gespielt (`_planer_datei`). Journal je Satz:
+`↳ modell/stimme · geplant: X s gewartet, Y s Audio (geschätzt Z), Tempo T,
+Schübe [...]` und `⚠️ N ms im Satz aufgefüllt` — **gemessen** am neuen Zähler
+`WiedergabeStrom.aufgefuellt_bytes` zwischen erstem und letztem Block des Satzes
+(die erste Fassung schätzte mit einer Schwelle von 0,05 s und übersah die
+50-ms-Stücke, die der Strom schon unter 0,15 s Vorsprung einschiebt).
+
+**Lernt aus eigenen Aussetzern (seit 2026-11-22 abends):** die Reserve je Schub
+(Start 15 %, Grenzen 5–60 %) wächst nach einer gemessenen Lücke um
+Lücke/größter Schub und sinkt nach sauberen Sätzen mit Schub ≥ 1,5 s um 0,5
+Prozentpunkte. Tempo, s/Zeichen, Schub-Wachstum/-Max und Reserve überleben
+Neustarts: `<workspace>/voice/satz_planer_zustand.json` (atomar geschrieben,
+Werte beim Laden begrenzt, kaputt → Startwerte). Protokoll je Satz:
+`<workspace>/voice/satz_planer.jsonl` (zeit, dienst, text, gewartet_s, audio_s,
+dauer_geschaetzt_s, tempo, schuebe [[s seit erstem, größe]], luecke_ms,
+reserve_je_schub), ab 5 MB einmal nach `.1`. Eine tägliche Zusammenfassung über
+den Dienst-Wächter ist angedacht, aber erst nach ein paar Tagen Daten.
+
+Hörprobe 2026-11-22 (gerechnet aus gemessenen Zeiten des Dienstes): naiv 12
+Aussetzer im Satz; mit Planer keine, Pausen an den Satzgrenzen. Jochen: „mit
+Pausen sogar besser als durchgesprochen, macht die Trennung klarer und
+verständlicher … wirkt fast wie ein rhetorisch geübter Sprecher“ — deshalb die
+Mindestpause auch bei schnellem Dienst. `antwort_tts_timeout` (Default 8 s)
+für Dienste, bei denen eine Anfrage in einer Schlange wartet. Default aus.
+Tests: `tests/test_satz_planer.py` (Regel, Schätzer, Puffer; Ablauf mit echtem
+Strom und je Satz eigenem Pegel: langsamer Dienst → jeder Satz am Stück,
+Pausen ≥ Mindestpause; Schub-Dienst wie CosyVoice (0,5/1/2 s, Tempo 0,8) →
+am Stück — dieser Test scheitert gegen die erste Fassung; Gegenprobe ohne
+Planer reißt auf; schneller Dienst → nur Mindestpause).
+
+### Klang-Marken (`tts_marken`, seit 2026-11-22)
+
+`services/tts_marken.py`: deutsche Marken im Brain-Text → CosyVoice3-Tags, sonst
+weg. `clean_for_tts` ruft zuerst `schuetzen` (Marken → Platzhalter aus Buchstaben,
+überstehen Zeichenfilter und Verbalisierung) und am Ende `wiederherstellen`
+(lesbare deutsche Form). `SpeachesTts._parameter` übersetzt mit `marken=True`
+(nur der Antwort-Dienst, Profil `tts_marken`), sonst `entfernen`; ebenso
+`piper_synth` und `ReplyRecorder` (dessen Text dient der Nachprüfung). Die Regel
+für den Brain (`locale.openclaw_marken_regel`) hängt nur mit Schalter an der
+Voice-Anweisung — Telegram-Chats ohne Sprache bekommen sie nicht.
+
+Hörtest 2026-11-22 (Jochen, Stimme edgar_3, jede Marke einzeln):
+gut — `[laughter]`, `<laughter>…</laughter>` (bei tiefer Stimme dezent),
+`[breath]`, `[quick_breath]`, `[cough]`, `[mn]`, `[hissing]`,
+`[vocalized-noise]`, `<strong>`; `[lipsmack]` klang nach Schnalzer (deshalb
+`[schnalzen]`); `[sigh]` unsicher; nichts zu hören: `[clucking]`, `[noise]`.
+`inference_instruct2` (fröhlich/traurig/wütend/leise) verworfen: starker
+englischer Akzent („loool“), weil instruct2 die Sprach-Token der Stimmprobe für
+das LLM weglässt. Falle dabei: mit `zero_shot_spk_id` verwirft CosyVoice einen
+übergebenen prompt_text still. Tests: `tests/test_tts_marken.py`.
+
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 
 `RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die

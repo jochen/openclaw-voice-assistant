@@ -368,6 +368,52 @@ voraus, welcher gefällt — also nach Gehör wählen:
 `tools/stimmprobe_zerlegen.py` schneidet eine Probe an ihren Pausen und zeigt
 auf einer lokalen Seite jedes Stück samt Testsätzen damit.
 
+**Pausen zwischen den Sätzen (`satz_planer: true`, optional, braucht `tts_strom`).**
+Ist ein Antwort-Dienst je Satz langsamer als Echtzeit (ein Stimmklon auf einer
+älteren GPU), holt der Strom die Synthese mitten im Satz ein, und es stottert.
+Der Planer verschiebt diese Lücken an die Satzgrenzen: `feed()` stellt einen
+Satz nur ein und stößt seine Synthese an (höchstens einen Satz voraus, damit
+eine Anfrage bei einem Dienst, der Sätze nacheinander abarbeitet, nicht zu
+lange wartet), und ein Schreiber gibt jeden Satz erst in den Strom, wenn er
+ohne Leerlauf durchspielen kann — geschätzt aus dem schon Gepufferten, dem,
+was davor noch spielt, der erwarteten Länge (Zeichen × Sekunden je Zeichen)
+und dem Tempo des Dienstes (Audio-Sekunden je Sekunde, je Satz gemessen und
+über die Antworten gemittelt; `antwort_tempo` ist der Startwert). Dienste wie
+CosyVoice liefern einen Satz in wachsenden Schüben (0,5, 1, 2, 4 s Audio auf
+einmal, dazwischen nichts), deshalb fasst der Planer ankommende Blöcke zu
+Schüben zusammen, lernt, wie sie wachsen, und spielt die fehlenden durch: vor
+jedem erwarteten Schub muss noch genug gepuffert sein. Bis dahin
+füllt der Strom wie immer mit Stille, aus dem Warten wird eine Pause vor dem
+Satz. Zwischen zwei Sätzen liegt immer mindestens `satz_pause_s` (Standard
+0,35 s) — in einer Hörprobe war das **verständlicher als durchgesprochen**,
+es lohnt sich also auch bei einem schnellen Dienst. Ein Dienst, der
+gleichzeitige Anfragen als Pipeline rechnet, ist so über die ganze Antwort
+schneller als Echtzeit, auch wenn es einzelne Sätze nicht sind.
+`antwort_tts_timeout` (Standard 8 s) ist, wie lange eine Antwort-Anfrage auf
+Daten warten darf; für so einen Dienst höher setzen. Je Satz steht im Journal,
+wie lange er gewartet hat, das gemessene Tempo und ob der Strom in ihm doch
+auffüllen musste Die Reserve je Schub lernt er selbst: nach einer gemessenen Lücke wächst sie
+um genau den Fehlbetrag, nach sauberen Sätzen sinkt sie langsam; zusammen mit
+Tempo und Sprechdauer übersteht sie Neustarts
+(`<workspace>/voice/satz_planer_zustand.json`), und jeder Satz landet im
+Protokoll `<workspace>/voice/satz_planer.jsonl`
+(`voice_assistant/services/satz_planer.py`).
+
+**Klang-Marken (`tts_marken: true`, optional, braucht einen Antwort-Dienst
+mit CosyVoice3).** Der Brain darf einem Satz einen Lacher, einen Atemzug oder
+eine Betonung mitgeben, als deutsche Marken: `[lachen]`, `[atmen]`,
+`[luftholen]`, `[seufzen]`, `[husten]`, `[hm]`, `[psst]`, `[äh]`,
+`[schnalzen]`, `<lachend>…</lachend>` für lachend Gesprochenes, `**Wort**` für
+eine Betonung. Sie überstehen die Textbereinigung und werden nur für den
+Antwort-Dienst in CosyVoice3s eigene Tags übersetzt (`[laughter]`, `[breath]`,
+`<strong>` …); jede andere Stimme (Piper, Speaches) bekommt sie entfernt, damit
+nichts wörtlich vorgelesen wird. Mit dem Schalter hängt eine kurze Regel mit
+den Marken an der Voice-Anweisung (`locale.openclaw_marken_regel`). Nach Gehör
+ausgewählt: `[clucking]` und `[noise]` waren nicht zu hören. CosyVoices
+Stil-Anweisungen („sag es fröhlich“) wurden probiert und verworfen — bei einem
+deutschen Satz brachten sie einen starken englischen Akzent
+(`voice_assistant/services/tts_marken.py`).
+
 **Neue Stimmen aus dem Chat (`voice_stimme_einreichen`,
 `voice_stimme_waehlen`).** Eine Audiodatei oder Sprachnachricht in den Chat
 des Assistenten schicken und sagen, daraus solle eine Stimme werden. Der
