@@ -152,6 +152,18 @@ class AblaufTest(unittest.TestCase):
         t3 = dienst.angefragt[2][1]
         self.assertGreater(t3 - t2, 0.0)
 
+    def test_kein_fehlalarm_bevor_der_player_abholt(self):
+        laengen = {"Eins.": 0.4}
+        ausgabe = []
+        orig = print
+        try:
+            import builtins
+            builtins.print = lambda *a, **k: ausgabe.append(" ".join(map(str, a)))
+            self._lauf(LangsamerDienst(0.7, laengen), planer=True)
+        finally:
+            builtins.print = orig
+        self.assertFalse([z for z in ausgabe if "aufgefüllt" in z], ausgabe)
+
     def test_ohne_planer_reisst_der_satz_auf(self):
         laengen = {"Eins.": 0.5, "Zwei ist länger.": 0.8}
         teile, _, dienst = self._lauf(LangsamerDienst(0.7, laengen), planer=False)

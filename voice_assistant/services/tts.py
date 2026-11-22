@@ -1200,8 +1200,11 @@ class ReplyStreamSession:
                 if fertig and not bloecke:
                     break
                 if not bloecke:
-                    if strom.vorsprung_s() <= 0.05 and geschrieben:
-                        luecken += 1   # Spielkopf holt ein: der Strom fuellt mitten im Satz auf
+                    if geschrieben and strom.erstes_audio is not None and strom.vorsprung_s() <= 0.05:
+                        # Spielkopf holt ein: der Strom fuellt mitten im Satz auf.
+                        # Erst zaehlen, wenn der Player abgeholt hat — davor meldet
+                        # der Strom keinen Vorsprung (Fehlalarm im Lab 2026-11-22).
+                        luecken += 1
                     puffer.warten(0.05)
             if geschrieben:
                 pcm = b"".join(geschrieben)
