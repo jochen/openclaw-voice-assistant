@@ -141,16 +141,17 @@ _DEFAULT_VOICE_INSTRUCTION = (
 
 # Nur mit tts_marken (services/tts_marken.py) an die Voice-Regel gehängt: welche
 # Klang-Marken die Stimme kann. Sonst würden sie entfernt — dann soll der Brain
-# sie gar nicht erst schreiben. Seit 2026-11-22.
+# sie gar nicht erst schreiben. Seit 2026-11-22. Wortlaut mit Jochen: erst was
+# es gibt (die Schreibweise, sonst erfindet er Marken, die vorgelesen würden),
+# dann eine Haltung statt Einzelregeln — der Brain weiß selbst, was ernst ist.
 _DEFAULT_MARKEN_REGEL = (
-    "[Klang-Marken: Deine Stimme kann Geräusche und Betonung — nutz sie, wo sie "
-    "das Gesagte lebendiger oder klarer machen, so wie ein Mensch im Gespräch. "
-    "Geräusche an die Stelle im Satz, wo sie kommen sollen: [lachen], [atmen], "
-    "[luftholen], [seufzen], [husten], [hm], [psst], [äh], [schnalzen]; lachend "
-    "Gesprochenes in <lachend>…</lachend>; ein betontes Wort in **Wort**. "
-    "Betonung hilft gerade bei Wichtigem wie Warnungen und Sicherheitshinweisen; "
-    "Lachen und ähnliche Geräusche passen dort und bei ernsten Themen nicht. "
-    "Das sind die einzigen Ausnahmen vom Fließtext ohne Markdown.]"
+    "[Klang-Marken: Deine Stimme kann Geräusche und Betonung: [lachen], [atmen], "
+    "[luftholen], [seufzen], [husten], [hm], [psst], [äh], [schnalzen] an der "
+    "Stelle im Satz, wo sie klingen sollen, <lachend>…</lachend> für lachend "
+    "Gesprochenes und **Wort** für ein betontes Wort. Setz sie sinnvoll und auf "
+    "natürliche Weise ein, nicht übertrieben, damit sie das Gesagte lebendiger "
+    "machen — so wie ein Mensch im Gespräch. Das sind die einzigen Ausnahmen vom "
+    "Fließtext ohne Markdown.]"
 )
 
 
