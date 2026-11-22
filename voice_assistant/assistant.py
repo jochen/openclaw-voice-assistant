@@ -1307,7 +1307,7 @@ def run() -> None:
     if profile.tts_strom and profile.antwort_tts_url:
         if stimmen_lager is not None:
             antwort_tts = AntwortTts(
-                stimmen_lager, SpeachesState(), timeout=8, cache=STIMMEN_CACHE_DIR,
+                stimmen_lager, SpeachesState(), timeout=profile.antwort_tts_timeout, cache=STIMMEN_CACHE_DIR,
                 # feste Sätze nur, wenn Qwen-ASR sie als diesen Text hört
                 pruefen=stt_pruefer(LlamaCppAsrStt(profile.stt_llamacpp_url, timeout=15,
                                                    sprache="German"))
@@ -1321,16 +1321,21 @@ def run() -> None:
             antwort_tts = SpeachesTts(
                 SpeachesState(), profile.antwort_tts_url,
                 profile.antwort_tts_model, profile.antwort_tts_voice,
-                fest=True, timeout=8,
+                fest=True, timeout=profile.antwort_tts_timeout,
             )
     speaker = ReplySpeaker(
         speaches_tts, audio_sink.play_wav, leds, profile.tts_prefix,
         strom_oeffnen=getattr(audio_sink, "strom_oeffnen", None) if profile.tts_strom else None,
         antwort_tts=antwort_tts,
+        satz_planer=profile.satz_planer,
+        satz_pause_s=profile.satz_pause_s,
+        antwort_tempo=profile.antwort_tempo,
     )
     if profile.tts_strom:
         print("🔊 TTS als Strom: " + ("an" if speaker.strom_oeffnen else "Senke kann keinen Strom, Dateien wie bisher")
-              + (f", Antworten über {profile.antwort_tts_url} ({profile.antwort_tts_voice})" if antwort_tts else ""))
+              + (f", Antworten über {profile.antwort_tts_url} ({profile.antwort_tts_voice})" if antwort_tts else "")
+              + (f", Satz-Planer an (Pause {profile.satz_pause_s:.2f} s, Tempo-Start {profile.antwort_tempo:.2f})"
+                 if profile.satz_planer and speaker.strom_oeffnen else ""))
     def _fest(text: str) -> str | None:
         """Gespeicherte Fassung in der Stimme des Antwort-Dienstes, solange der
         dran ist (sonst None → Piper wie bisher)."""

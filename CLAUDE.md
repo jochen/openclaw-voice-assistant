@@ -1076,6 +1076,45 @@ Brain sollte „für alle“ umstellen, hatte kein Werkzeug dafür und meldete
 trotzdem Vollzug. Ohne `for_speaker`/`fuer_alle` gilt eine Wahl nur
 vorübergehend für den Sprecher. Tests: `tests/test_stimmen_eingang.py`.
 
+### Satz-Planer (`satz_planer`, seit 2026-11-22, Branch `feature/satz-planer`)
+
+Anlass: CosyVoice soll im Fablab auf zwei älteren Rechenkarten laufen (kein
+vLLM/TensorRT dafür). Einzelne Sätze kommen dort mit RTF ~1,2 — im Strom holt
+der Spielkopf die Synthese mitten im Satz ein, der Strom füllt Stille auf, es
+stottert. Der Dienst dort rechnet gleichzeitige Anfragen als Pipeline (LLM
+nacheinander am Stück, Flow parallel), über die ganze Antwort RTF ~0,96.
+
+`ReplyStreamSession` mit Planer (`services/satz_planer.py`): `feed()` blockiert
+nicht mehr, sondern legt einen `SatzPuffer` an und startet dessen Erzeuger
+(`_erzeugen`, dieselbe Rückfall-Kette wie `_satz_in_strom`). Ein Erzeuger fragt
+erst an, wenn der vorige Satz erstes Audio hat (`unterwegs`) — höchstens einer
+voraus; sonst wartet eine Anfrage beim Dienst bis zum Timeout auf dessen LLM.
+Ein Schreiber-Faden (`_planer_schreiben`) nimmt die Sätze der Reihe nach, holt
+den Strom (`_strom_holen`, tts_lock wie bisher) und wartet, bis `freigeben()`
+sagt, dass der Satz ohne Leerlauf durchspielt: gepuffert + tempo·vorsprung ≥
+(1−tempo)·dauer + 0,2 s (konstantes Tempo, knappste Stelle = Satzende).
+`vorsprung` = was im Strom noch vor dem Spielkopf liegt (`strom.vorsprung_s()`)
+plus noch zu schreibende Pause; `dauer` = Zeichen × gelernte s/Zeichen
+(Start 0,10); `tempo` = gemessen ab 1 s Audio, sonst gelernter Mittelwert
+(`Schaetzer` im ReplySpeaker, über Antworten hinweg, Start `antwort_tempo`).
+Danach Mindestpause (`satz_pause_s`, vom Strom schon aufgefüllte Stille seit
+dem letzten Satz zählt mit, `strom.position_s()`), dann der Satz. `end()`
+wartet den Schreiber ab. Kann die Senke keinen Strom, wird der fertige Satz als
+WAV über den Datei-Weg gespielt (`_planer_datei`). Journal je Satz:
+`↳ modell/stimme · geplant: X s gewartet, Y s Audio (geschätzt Z), Tempo T`,
+und `⚠️ n× aufgefüllt`, falls der Strom im Satz doch Stille einschieben musste.
+
+Hörprobe 2026-11-22 (gerechnet aus gemessenen Zeiten des Dienstes): naiv 12
+Aussetzer im Satz; mit Planer keine, Pausen an den Satzgrenzen. Jochen: „mit
+Pausen sogar besser als durchgesprochen, macht die Trennung klarer und
+verständlicher … wirkt fast wie ein rhetorisch geübter Sprecher“ — deshalb die
+Mindestpause auch bei schnellem Dienst. `antwort_tts_timeout` (Default 8 s)
+für Dienste, bei denen eine Anfrage in einer Schlange wartet. Default aus.
+Tests: `tests/test_satz_planer.py` (Regel, Schätzer, Puffer; Ablauf mit echtem
+Strom und je Satz eigenem Pegel: langsamer Dienst → jeder Satz am Stück,
+Pausen ≥ Mindestpause; Gegenprobe ohne Planer reißt auf; schneller Dienst →
+nur Mindestpause).
+
 ### Nebenwirkung: ReSpeaker-Wiedergabe läuft jetzt über den Media-Player
 
 `RespeakerSink.play_wav` benutzte die ESPHome-**Announce-API**. Die beendet die

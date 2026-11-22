@@ -149,6 +149,23 @@ class WiedergabeStrom:
     def gesendet_s(self) -> float:
         return self.gesendet_bytes / BYTES_JE_S
 
+    def position_s(self) -> float:
+        """Länge alles bisher Geschriebenen (gesendet + noch im Puffer), auch
+        nachgeschobene Stille. Der Satz-Planer (services/satz_planer.py) misst
+        daran, wie viel Pause seit dem letzten Satz schon im Strom liegt."""
+        with self._cv:
+            return (self.gesendet_bytes + sum(len(b) for b in self._puffer)) / BYTES_JE_S
+
+    def vorsprung_s(self) -> float:
+        """So viel Geschriebenes liegt noch vor dem geschätzten Spielkopf.
+        0, solange nichts gesendet ist (der Player hat dann noch nichts)."""
+        with self._cv:
+            if self.erstes_audio is None:
+                return 0.0
+            spielkopf = max(0.0, self._uhr() - self.erstes_audio - _START_ANNAHME_S)
+            geschrieben = (self.gesendet_bytes + sum(len(b) for b in self._puffer)) / BYTES_JE_S
+            return max(0.0, geschrieben - spielkopf)
+
     def ende_geschaetzt(self) -> float | None:
         """Uhrzeit, zu der der Player das Gesendete fertig gespielt haben sollte."""
         if self.erstes_audio is None:

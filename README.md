@@ -360,6 +360,29 @@ predicted which one a listener prefers, so choose by ear:
 `tools/stimmprobe_zerlegen.py` cuts a clip at its pauses and serves a local
 page with each piece and test sentences spoken with it.
 
+**Pauses between sentences (`satz_planer: true`, optional, needs `tts_strom`).**
+For a reply service that is slower than real time per sentence (a voice clone
+on an older GPU), the stream would catch up with the synthesis in the middle
+of a sentence and you would hear it stutter. The planner moves those gaps to
+the sentence boundaries: `feed()` only queues a sentence and starts its
+synthesis (at most one sentence ahead, so a request never waits too long at
+a service that works through sentences one after another), and a writer puts
+each sentence into the stream only once it can play through without running
+dry — estimated from what is already buffered, how much is still playing
+before it, the expected length (characters × seconds per character) and the
+service's tempo (audio seconds per second, measured per sentence and averaged
+across replies; `antwort_tempo` is the starting value). Until then the stream
+fills with silence, as it always does, so the wait becomes a pause before the
+sentence. There is always at least `satz_pause_s` (default 0.35 s) between
+two sentences — in a listening test this was **clearer than speaking
+straight through**, so it is worth having even with a fast service. A
+service that synthesises concurrent requests as a pipeline is then faster
+than real time over the whole reply even when single sentences are not.
+`antwort_tts_timeout` (default 8 s) is how long a reply request may wait for
+data; raise it for such a service. Each sentence logs how long it waited, the
+measured tempo and whether the stream still had to fill a gap inside it
+(`voice_assistant/services/satz_planer.py`).
+
 **New voices from the chat (`voice_stimme_einreichen`,
 `voice_stimme_waehlen`).** Send the assistant's chat an audio file or voice
 message and say it should become a voice. The brain passes the received file

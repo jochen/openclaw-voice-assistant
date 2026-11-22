@@ -368,6 +368,28 @@ voraus, welcher gefällt — also nach Gehör wählen:
 `tools/stimmprobe_zerlegen.py` schneidet eine Probe an ihren Pausen und zeigt
 auf einer lokalen Seite jedes Stück samt Testsätzen damit.
 
+**Pausen zwischen den Sätzen (`satz_planer: true`, optional, braucht `tts_strom`).**
+Ist ein Antwort-Dienst je Satz langsamer als Echtzeit (ein Stimmklon auf einer
+älteren GPU), holt der Strom die Synthese mitten im Satz ein, und es stottert.
+Der Planer verschiebt diese Lücken an die Satzgrenzen: `feed()` stellt einen
+Satz nur ein und stößt seine Synthese an (höchstens einen Satz voraus, damit
+eine Anfrage bei einem Dienst, der Sätze nacheinander abarbeitet, nicht zu
+lange wartet), und ein Schreiber gibt jeden Satz erst in den Strom, wenn er
+ohne Leerlauf durchspielen kann — geschätzt aus dem schon Gepufferten, dem,
+was davor noch spielt, der erwarteten Länge (Zeichen × Sekunden je Zeichen)
+und dem Tempo des Dienstes (Audio-Sekunden je Sekunde, je Satz gemessen und
+über die Antworten gemittelt; `antwort_tempo` ist der Startwert). Bis dahin
+füllt der Strom wie immer mit Stille, aus dem Warten wird eine Pause vor dem
+Satz. Zwischen zwei Sätzen liegt immer mindestens `satz_pause_s` (Standard
+0,35 s) — in einer Hörprobe war das **verständlicher als durchgesprochen**,
+es lohnt sich also auch bei einem schnellen Dienst. Ein Dienst, der
+gleichzeitige Anfragen als Pipeline rechnet, ist so über die ganze Antwort
+schneller als Echtzeit, auch wenn es einzelne Sätze nicht sind.
+`antwort_tts_timeout` (Standard 8 s) ist, wie lange eine Antwort-Anfrage auf
+Daten warten darf; für so einen Dienst höher setzen. Je Satz steht im Journal,
+wie lange er gewartet hat, das gemessene Tempo und ob der Strom in ihm doch
+auffüllen musste (`voice_assistant/services/satz_planer.py`).
+
 **Neue Stimmen aus dem Chat (`voice_stimme_einreichen`,
 `voice_stimme_waehlen`).** Eine Audiodatei oder Sprachnachricht in den Chat
 des Assistenten schicken und sagen, daraus solle eine Stimme werden. Der
